@@ -1,0 +1,27 @@
+# FastAPI core
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+python-multipart==0.0.20
+
+# Authentication
+python-jose[cryptography]==3.4.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.3.0
+
+# AI - Google Gemini (CURRENT SDK - not deprecated google.generativeai)
+google-genai==1.14.0
+
+# Document processing
+python-docx==1.1.2
+PyPDF2==3.0.1
+Pillow==11.2.1
+
+# HTTP client
+httpx==0.28.1
+
+# Data validation
+pydantic==2.11.3
+pydantic-settings==2.9.1
+
+# Logging
+loguru==0.7.3

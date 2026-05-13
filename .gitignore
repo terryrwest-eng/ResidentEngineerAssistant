@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/venv/
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Build output
+frontend/dist/
+
+# Data (persistent on Railway volume, not in git)
+backend/data/
+
+# Environment secrets
+.env
+backend/.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+*.log
