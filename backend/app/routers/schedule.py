@@ -390,6 +390,39 @@ async def upload_schedule(file: UploadFile = File(...)):
 
 
 # ============================================
+# HELPER: Infer schedule type for legacy data
+# WHY: Schedules stored before the schedule_type field was added
+# don't have it. We retroactively detect: if ALL rows across
+# ALL shifts have width=0 and length=0, it's grind_overlay.
+# ============================================
+
+def _infer_schedule_type(schedule_data: dict[str, Any]) -> str:
+    """Infer schedule type from row data if not explicitly set."""
+    explicit = schedule_data.get("schedule_type")
+    if explicit and explicit in ("digout", "grind_overlay"):
+        return explicit
+
+    # Check all rows — if every row has width=0 and length=0, it's G&O
+    shifts = schedule_data.get("shifts", {})
+    if not shifts:
+        return "digout"
+
+    all_zero = True
+    for shift_data in shifts.values():
+        for row in shift_data.get("rows", []):
+            if row.get("width", 0) != 0 or row.get("length", 0) != 0:
+                all_zero = False
+                break
+        if not all_zero:
+            break
+
+    inferred = "grind_overlay" if all_zero else "digout"
+    if not explicit:
+        logger.info(f"[schedule] Inferred schedule_type='{inferred}' for legacy schedule {schedule_data.get('id', '?')}")
+    return inferred
+
+
+# ============================================
 # ENDPOINT: Get Active (Most Recent) Schedule
 # ============================================
 
@@ -435,6 +468,10 @@ async def get_active_schedule():
             f"[schedule/active] Returning schedule {active['id']} "
             f"(uploaded {active.get('uploaded_at', 'unknown')})"
         )
+
+        # Retroactively infer schedule_type for legacy data
+        active['schedule_type'] = _infer_schedule_type(active)
+
         return active
 
     except HTTPException:
@@ -475,7 +512,7 @@ async def list_schedules():
                     "filename": data.get("filename", "Unknown"),
                     "uploaded_at": data.get("uploaded_at", ""),
                     "total_shifts": data.get("total_shifts", 0),
-                    "schedule_type": data.get("schedule_type", "digout"),
+                    "schedule_type": _infer_schedule_type(data),
                 })
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"[schedule/list] Failed to read {json_path}: {e}")
