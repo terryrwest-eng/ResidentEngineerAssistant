@@ -4,6 +4,11 @@ Daily Reporter V3 — Export Router
 Endpoints:
   GET /api/export/{report_id}/word    → Download .docx
   GET /api/export/{report_id}/pmweb   → JSON rows for PMWeb Combined table
+
+Chrome Extension endpoints live in reports.py:
+  POST /api/extension/context         → Set active report ID
+  GET  /api/extension/context         → Get active report ID
+  GET  /api/reports/{report_id}/consolidated → Flat array for extension auto-fill
 """
 
 import logging
@@ -50,7 +55,7 @@ async def get_pmweb_combined(report_id: str):
     Return the PMWeb Combined resource table rows (11 columns).
     Used by:
       - Frontend PMWeb Combined preview panel
-      - Chrome extension auto-fill (via setExtensionContext)
+      - (Chrome extension uses /api/reports/{id}/consolidated instead)
     """
     report = await get_report(report_id)
     if not report:

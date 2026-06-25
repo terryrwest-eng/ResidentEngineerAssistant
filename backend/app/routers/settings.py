@@ -78,6 +78,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         ],
     },
     "user_templates": [],
+    "resource_aliases": {"equipment": {}, "manpower": {}},
+    "default_company": "",
+    "default_zip_code": "",
+    "dispatch_folder_path": "",
+    "tc_plan_path": "",
     "updated_at": "",
 }
 
@@ -172,6 +177,38 @@ def update_master_lists(lists: MasterLists) -> dict[str, Any]:
     data["master_lists"] = lists.model_dump()
     _save(data)
     return {"status": "success", "master_lists": data["master_lists"]}
+
+
+class ResourceAliasesPayload(BaseModel):
+    equipment: dict[str, str] = {}
+    manpower: dict[str, str] = {}
+
+
+@router.put("/resource-aliases")
+def update_resource_aliases(payload: ResourceAliasesPayload) -> dict[str, Any]:
+    """
+    Merge new resource aliases into existing ones.
+    Each alias maps a raw name (AI output) → canonical PMWeb code.
+    Incoming aliases are merged — existing keys not in the payload are preserved.
+    """
+    data = _load()
+    existing: dict[str, dict[str, str]] = data.get("resource_aliases", {"equipment": {}, "manpower": {}})
+
+    incoming = payload.model_dump()
+    merged_equipment = {**existing.get("equipment", {}), **incoming.get("equipment", {})}
+    merged_manpower = {**existing.get("manpower", {}), **incoming.get("manpower", {})}
+
+    data["resource_aliases"] = {
+        "equipment": merged_equipment,
+        "manpower": merged_manpower,
+    }
+    _save(data)
+
+    logger.info(
+        f"[settings] Resource aliases merged — equipment: {len(merged_equipment)}, "
+        f"manpower: {len(merged_manpower)}"
+    )
+    return {"status": "success", "resource_aliases": data["resource_aliases"]}
 
 
 @router.post("/templates")

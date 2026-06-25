@@ -53,6 +53,9 @@ interface ReportStoreState {
   // --- Auto-save timer ---
   _autoSaveTimer: ReturnType<typeof setTimeout> | null;
 
+  /** Revision counter — incremented when AI applies changes. Used as React key to force remount. */
+  revision: number;
+
   // --- Actions ---
   /** Create a new blank report (NOT saved to disk) */
   newReport: (defaults?: Partial<GeneralInfo>) => void;
@@ -70,6 +73,8 @@ interface ReportStoreState {
   reorderActivities: (fromIndex: number, toIndex: number) => void;
   /** Replace all activities (from AI Co-Pilot) */
   replaceActivities: (activities: Activity[]) => void;
+  /** Bump revision counter to force remount of defaultValue components (AI use only) */
+  bumpRevision: () => void;
   /** First-time save (creates the report file) */
   saveReport: () => Promise<string | null>;
   /** Save As (creates a copy with a new ID) */
@@ -95,6 +100,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
   isLoading: false,
   loadError: null,
   _autoSaveTimer: null,
+  revision: 0,
 
   // --- Actions ---
 
@@ -242,6 +248,12 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     });
 
     get()._scheduleAutoSave();
+  },
+
+  bumpRevision: () => {
+    const { revision } = get();
+    set({ revision: revision + 1 });
+    console.debug('[ReportStore] Revision bumped to', revision + 1);
   },
 
   saveReport: async () => {

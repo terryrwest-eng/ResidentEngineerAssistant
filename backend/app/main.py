@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.services.database import init_database
-from app.routers import reports, auth, export, ai, trackers, settings
+from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches
 
 # --- Logging ---
 logging.basicConfig(
@@ -27,8 +27,10 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 SPECS_DIR = os.path.join(DATA_DIR, "specs")
+SCHEDULES_DIR = os.path.join(DATA_DIR, "schedules")
+DISPATCHES_DIR = os.path.join(DATA_DIR, "dispatches")
 
-for directory in [DATA_DIR, REPORTS_DIR, PHOTOS_DIR, SPECS_DIR]:
+for directory in [DATA_DIR, REPORTS_DIR, PHOTOS_DIR, SPECS_DIR, SCHEDULES_DIR, DISPATCHES_DIR]:
     os.makedirs(directory, exist_ok=True)
 
 
@@ -72,6 +74,10 @@ app.include_router(ai.router)
 app.include_router(export.router)
 app.include_router(trackers.router)
 app.include_router(settings.router)
+app.include_router(weather.router)
+app.include_router(pdf_search.router)
+app.include_router(schedule.router)
+app.include_router(dispatches.router)
 
 
 @app.get("/api/health")

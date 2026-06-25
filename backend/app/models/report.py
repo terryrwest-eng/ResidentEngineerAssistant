@@ -2,36 +2,55 @@
 Daily Reporter V3 — Pydantic Models for Reports
 
 These models validate ALL incoming data. No bad data gets through.
+Uses model_config extra='ignore' so unknown fields from AI/frontend don't cause 422.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 
 
 class ManpowerRowModel(BaseModel):
+    """Manpower row — tolerant of extra fields from AI or frontend."""
+    model_config = {"extra": "ignore"}
+
     id: str = ""
     trade: str = ""
     name: str = ""
-    qty: int = 0
-    hours: float = 0.0
+    qty: Any = 0        # Accept string or int from AI, coerce later
+    hours: Any = 0.0    # Accept string or float from AI, coerce later
     company: str = ""
     classification: str = ""
+    start_time: str = ""
+    stop_time: str = ""
     is_extra_work: bool = False
     is_consultant: bool = False
+    is_3rd_party: bool = False
+    locked: bool = False
 
 
 class EquipmentRowModel(BaseModel):
+    """Equipment row — tolerant of extra fields from AI or frontend."""
+    model_config = {"extra": "ignore"}
+
     id: str = ""
     name: str = ""
     description: str = ""
-    qty: int = 0
-    hours: float = 0.0
+    qty: Any = 0        # Accept string or int from AI, coerce later
+    hours: Any = 0.0    # Accept string or float from AI, coerce later
     company: str = ""
+    start_time: str = ""
+    stop_time: str = ""
     is_extra_work: bool = False
+    is_3rd_party: bool = False
+    is_consultant: bool = False
+    is_rental: bool = False
+    locked: bool = False
 
 
 class PhotoModel(BaseModel):
+    model_config = {"extra": "ignore"}
+
     id: str = ""
     filename: str = ""
     caption: str = ""
@@ -40,12 +59,16 @@ class PhotoModel(BaseModel):
 
 
 class SkyConditionModel(BaseModel):
+    model_config = {"extra": "ignore"}
+
     id: str
     label: str
     emoji: str
 
 
 class GeneralInfoModel(BaseModel):
+    model_config = {"extra": "ignore"}
+
     project_name: str = ""
     project_number: str = ""
     project_location: str = ""
@@ -62,6 +85,8 @@ class GeneralInfoModel(BaseModel):
 
 
 class ActivityModel(BaseModel):
+    model_config = {"extra": "ignore"}
+
     id: str = ""
     work_area: str = ""
     stations: str = ""
@@ -75,6 +100,8 @@ class ActivityModel(BaseModel):
 
 class ReportModel(BaseModel):
     """Full report model for create/update."""
+    model_config = {"extra": "ignore"}
+
     id: str = ""
     general: GeneralInfoModel = Field(default_factory=GeneralInfoModel)
     activities: list[ActivityModel] = []

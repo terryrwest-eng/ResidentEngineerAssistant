@@ -13,16 +13,26 @@
  * No forms that disappear when you tap outside.
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { pdfApi } from '@/lib/api';
+import type { PdfDocument } from '@/lib/api';
+
 import {
   Droplets,
   Shovel,
   ArrowLeftRight,
   Box,
+
   Calculator,
+  Search,
+  Upload,
+  Trash2,
+  FileText,
+  Send,
+  Loader2,
 } from 'lucide-react';
 
-type ToolTab = 'pipe' | 'excavation' | 'converter' | 'concrete';
+type ToolTab = 'pipe' | 'excavation' | 'converter' | 'concrete' | 'pdf';
 
 export function ToolsPage() {
   const [activeTab, setActiveTab] = useState<ToolTab>('pipe');
@@ -32,6 +42,7 @@ export function ToolsPage() {
     { id: 'excavation', label: 'Excavation', icon: <Shovel size={18} /> },
     { id: 'converter', label: 'Converter', icon: <ArrowLeftRight size={18} /> },
     { id: 'concrete', label: 'Concrete', icon: <Box size={18} /> },
+    { id: 'pdf', label: 'PDF Search', icon: <Search size={18} /> },
   ];
 
   return (
@@ -86,6 +97,7 @@ export function ToolsPage() {
       {activeTab === 'excavation' && <ExcavationCalculator />}
       {activeTab === 'converter' && <UnitConverter />}
       {activeTab === 'concrete' && <ConcreteCalculator />}
+      {activeTab === 'pdf' && <PDFSearchTool />}
     </div>
   );
 }
@@ -584,6 +596,376 @@ function ResultCard({ label, value, accent }: { label: string; value: string; ac
         marginTop: '4px',
       }}>
         {label}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================
+// TOOL 5: PDF Search (Smart Document Search)
+// ============================================
+
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+function PDFSearchTool() {
+  const [documents, setDocuments] = useState<PdfDocument[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isUploading, setIsUploading] = useState(false);
+  const [isAsking, setIsAsking] = useState(false);
+  const [question, setQuestion] = useState('');
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Load documents on mount
+  useEffect(() => {
+    loadDocuments();
+  }, []);
+
+  // Scroll chat to bottom
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, isAsking]);
+
+  const loadDocuments = useCallback(async () => {
+    try {
+      const result = await pdfApi.list();
+      setDocuments(result.documents || []);
+      console.debug('[PDF] Loaded documents:', result.count);
+    } catch (err) {
+      console.error('[PDF] Failed to load documents:', err);
+    }
+  }, []);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      const result = await pdfApi.upload(files);
+      console.debug('[PDF] Upload result:', result);
+      await loadDocuments();
+
+      // Auto-select newly uploaded docs
+      const newIds = (result.files || [])
+        .filter((f: { id?: string }) => f.id)
+        .map((f: { id?: string }) => f.id as string);
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        newIds.forEach((id: string) => next.add(id));
+        return next;
+      });
+    } catch (err) {
+      console.error('[PDF] Upload failed:', err);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDelete = async (docId: string) => {
+    if (!confirm('Delete this document?')) return;
+    try {
+      await pdfApi.delete(docId);
+      setDocuments(prev => prev.filter(d => d.id !== docId));
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(docId);
+        return next;
+      });
+    } catch (err) {
+      console.error('[PDF] Delete failed:', err);
+    }
+  };
+
+  const toggleSelect = (docId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(docId)) {
+        next.delete(docId);
+      } else {
+        next.add(docId);
+      }
+      return next;
+    });
+  };
+
+  const handleAsk = async () => {
+    if (!question.trim() || selectedIds.size === 0) return;
+
+    const userQ = question.trim();
+    setQuestion('');
+    setChatHistory(prev => [...prev, { role: 'user', content: userQ }]);
+    setIsAsking(true);
+
+    try {
+      const result = await pdfApi.ask(
+        userQ,
+        Array.from(selectedIds),
+        chatHistory,
+      );
+
+      setChatHistory(prev => [...prev, {
+        role: 'assistant',
+        content: result.answer,
+      }]);
+    } catch (err) {
+      console.error('[PDF] Ask failed:', err);
+      setChatHistory(prev => [...prev, {
+        role: 'assistant',
+        content: 'Sorry, I encountered an error analyzing the documents. Please try again.',
+      }]);
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+          <Search size={20} style={{ color: 'var(--color-accent)' }} />
+          <h3 style={{ margin: 0 }}>Smart PDF Search</h3>
+        </div>
+        <span style={{ fontSize: '0.8125rem', color: 'var(--color-text-tertiary)' }}>
+          Upload PDFs and ask questions — AI reads the documents for you
+        </span>
+      </div>
+      <div className="card-body">
+
+        {/* Upload + Document List */}
+        <div style={{ marginBottom: 'var(--space-lg)' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginBottom: 'var(--space-sm)',
+          }}>
+            <label className="label" style={{ margin: 0 }}>
+              Documents ({documents.length})
+            </label>
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                multiple
+                onChange={handleUpload}
+                style={{ display: 'none' }}
+              />
+              <button
+                className="btn btn-outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                style={{ fontSize: '0.8rem', padding: '4px 12px' }}
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 size={14} style={{ animation: 'spin 0.6s linear infinite' }} />
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    Upload PDFs
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Document list */}
+          {documents.length === 0 ? (
+            <div style={{
+              padding: 'var(--space-lg)',
+              textAlign: 'center',
+              color: 'var(--color-text-tertiary)',
+              fontSize: '0.875rem',
+              background: 'var(--color-bg)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px dashed var(--color-border)',
+            }}>
+              <FileText size={32} style={{ opacity: 0.3, marginBottom: 'var(--space-sm)' }} />
+              <p style={{ margin: 0 }}>No documents uploaded yet</p>
+              <p style={{ margin: '4px 0 0', fontSize: '0.75rem' }}>
+                Upload spec books, submittals, or drawings to search them
+              </p>
+            </div>
+          ) : (
+            <div style={{
+              maxHeight: '200px', overflowY: 'auto',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+            }}>
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+                    padding: 'var(--space-sm) var(--space-md)',
+                    borderBottom: '1px solid var(--color-border)',
+                    background: selectedIds.has(doc.id) ? 'var(--color-accent-light)' : 'transparent',
+                    cursor: 'pointer',
+                    transition: 'background 0.12s ease',
+                  }}
+                  onClick={() => toggleSelect(doc.id)}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(doc.id)}
+                    onChange={() => toggleSelect(doc.id)}
+                    style={{ flexShrink: 0 }}
+                  />
+                  <FileText size={16} style={{
+                    color: selectedIds.has(doc.id) ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+                    flexShrink: 0,
+                  }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: '0.8125rem', fontWeight: 500,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {doc.filename}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--color-text-tertiary)' }}>
+                      {doc.page_count} pages • {formatFileSize(doc.file_size)}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-icon"
+                    onClick={(e) => { e.stopPropagation(); handleDelete(doc.id); }}
+                    title="Delete document"
+                    style={{ flexShrink: 0 }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {selectedIds.size > 0 && (
+            <div style={{
+              marginTop: 'var(--space-xs)',
+              fontSize: '0.7rem',
+              color: 'var(--color-accent)',
+              fontWeight: 500,
+            }}>
+              {selectedIds.size} document{selectedIds.size > 1 ? 's' : ''} selected for search
+            </div>
+          )}
+        </div>
+
+        {/* Chat area */}
+        <div style={{
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-md)',
+          overflow: 'hidden',
+        }}>
+          {/* Messages */}
+          <div style={{
+            height: '300px', overflowY: 'auto',
+            padding: 'var(--space-md)',
+            display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)',
+            background: 'var(--color-bg)',
+          }}>
+            {chatHistory.length === 0 && (
+              <div style={{
+                textAlign: 'center', color: 'var(--color-text-tertiary)',
+                marginTop: 'var(--space-xl)', fontSize: '0.8125rem',
+              }}>
+                <Search size={32} style={{ opacity: 0.2, marginBottom: 'var(--space-sm)' }} />
+                <p style={{ margin: 0 }}>Select documents and ask a question</p>
+                <p style={{ margin: '4px 0 0', fontSize: '0.75rem' }}>
+                  "What are the pipe material specs?" • "Find the compaction requirements"
+                </p>
+              </div>
+            )}
+
+            {chatHistory.map((msg, idx) => (
+              <div key={idx} style={{
+                alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                maxWidth: '90%',
+                padding: 'var(--space-sm) var(--space-md)',
+                borderRadius: 'var(--radius)',
+                backgroundColor: msg.role === 'user' ? 'var(--primary, var(--color-accent))' : 'var(--color-surface)',
+                color: msg.role === 'user' ? 'white' : 'var(--color-text-primary)',
+                border: msg.role === 'assistant' ? '1px solid var(--color-border)' : 'none',
+                fontSize: '0.85rem',
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap',
+              }}>
+                {msg.content}
+              </div>
+            ))}
+
+            {isAsking && (
+              <div style={{
+                alignSelf: 'flex-start',
+                padding: 'var(--space-sm) var(--space-md)',
+                borderRadius: 'var(--radius)',
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                display: 'flex', gap: 'var(--space-sm)', alignItems: 'center',
+              }}>
+                <Loader2 size={14} style={{ animation: 'spin 0.6s linear infinite', color: 'var(--color-accent)' }} />
+                <span style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>
+                  Analyzing documents...
+                </span>
+              </div>
+            )}
+
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Input */}
+          <form
+            onSubmit={(e) => { e.preventDefault(); handleAsk(); }}
+            style={{
+              display: 'flex', gap: 'var(--space-xs)',
+              padding: 'var(--space-sm)',
+              borderTop: '1px solid var(--color-border)',
+              background: 'var(--color-surface)',
+            }}
+          >
+            <input
+              type="text"
+              className="input"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder={selectedIds.size === 0 ? 'Select documents above first...' : 'Ask a question about the selected documents...'}
+              disabled={isAsking || selectedIds.size === 0}
+              style={{ flex: 1, fontSize: '0.85rem' }}
+            />
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={!question.trim() || isAsking || selectedIds.size === 0}
+              style={{ padding: 'var(--space-xs) var(--space-sm)', flexShrink: 0 }}
+            >
+              <Send size={16} />
+            </button>
+          </form>
+        </div>
+
+        {chatHistory.length > 0 && (
+          <button
+            className="btn btn-ghost"
+            onClick={() => setChatHistory([])}
+            style={{ marginTop: 'var(--space-sm)', fontSize: '0.75rem' }}
+          >
+            Clear conversation
+          </button>
+        )}
       </div>
     </div>
   );

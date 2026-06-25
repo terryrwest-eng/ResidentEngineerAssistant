@@ -84,6 +84,7 @@ export function ScanPage() {
       icon: <HardHat size={20} />,
       description: 'Site visit records — resources flagged as Consultant',
     },
+    
     {
       id: 'dictation',
       label: 'Voice Dictation',
@@ -263,20 +264,48 @@ export function ScanPage() {
   // ──────────────────────────────────────
 
   function _mapActivities(rawList: Record<string, unknown>[]): Activity[] {
-    return rawList.map((raw) => ({
-      id: generateId(),
-      work_area: String(raw.work_area || ''),
-      stations: '',
-      summary: String(raw.summary_html || raw.summary || ''),
-      manpower: _mapManpower(raw.manpower as Record<string, unknown>[] || []),
-      equipment: _mapEquipment(raw.equipment as Record<string, unknown>[] || []),
-      extra_work_manpower: [],
-      extra_work_equipment: [],
-      consultant_manpower: [],
-    }));
+    return rawList.map((raw, idx) => {
+      // DEBUG: Log each raw activity's keys and values
+      console.debug(`[ScanPage] Raw activity ${idx} keys:`, Object.keys(raw));
+      console.debug(`[ScanPage] Raw activity ${idx} summary_html:`, raw.summary_html);
+      console.debug(`[ScanPage] Raw activity ${idx} manpower:`, raw.manpower);
+      console.debug(`[ScanPage] Raw activity ${idx} equipment:`, raw.equipment);
+
+      // Safely extract arrays — handle both undefined and non-array cases
+      const rawManpower = Array.isArray(raw.manpower) ? raw.manpower as Record<string, unknown>[] : [];
+      const rawEquipment = Array.isArray(raw.equipment) ? raw.equipment as Record<string, unknown>[] : [];
+
+      if (rawManpower.length === 0) {
+        console.warn(`[ScanPage] Activity ${idx}: manpower is EMPTY or not an array. raw.manpower =`, raw.manpower);
+      }
+      if (rawEquipment.length === 0) {
+        console.warn(`[ScanPage] Activity ${idx}: equipment is EMPTY or not an array. raw.equipment =`, raw.equipment);
+      }
+
+      const summary = String(raw.summary_html || raw.summary || raw.description || '');
+      if (!summary) {
+        console.warn(`[ScanPage] Activity ${idx}: summary is BLANK.`);
+      }
+
+      return {
+        id: generateId(),
+        work_area: String(raw.work_area || raw.location || ''),
+        stations: String(raw.stations || ''),
+        summary,
+        manpower: _mapManpower(rawManpower),
+        equipment: _mapEquipment(rawEquipment),
+        extra_work_manpower: [],
+        extra_work_equipment: [],
+        consultant_manpower: [],
+      };
+    });
   }
 
   function _mapExtraWorkResult(raw: Record<string, unknown>): Activity[] {
+    console.debug('[ScanPage] Extra work raw keys:', Object.keys(raw));
+    const rawManpower = Array.isArray(raw.manpower) ? raw.manpower as Record<string, unknown>[] : [];
+    const rawEquipment = Array.isArray(raw.equipment) ? raw.equipment as Record<string, unknown>[] : [];
+
     return [{
       id: generateId(),
       work_area: 'Extra Work',
@@ -284,13 +313,16 @@ export function ScanPage() {
       summary: String(raw.summary_html || raw.description || ''),
       manpower: [],
       equipment: [],
-      extra_work_manpower: _mapManpower(raw.manpower as Record<string, unknown>[] || []),
-      extra_work_equipment: _mapEquipment(raw.equipment as Record<string, unknown>[] || []),
+      extra_work_manpower: _mapManpower(rawManpower),
+      extra_work_equipment: _mapEquipment(rawEquipment),
       consultant_manpower: [],
     }];
   }
 
   function _mapConsultantResult(raw: Record<string, unknown>): Activity[] {
+    console.debug('[ScanPage] Consultant raw keys:', Object.keys(raw));
+    const rawManpower = Array.isArray(raw.manpower) ? raw.manpower as Record<string, unknown>[] : [];
+
     return [{
       id: generateId(),
       work_area: 'Consultant Visit',
@@ -300,34 +332,45 @@ export function ScanPage() {
       equipment: [],
       extra_work_manpower: [],
       extra_work_equipment: [],
-      consultant_manpower: _mapManpower(raw.manpower as Record<string, unknown>[] || []),
+      consultant_manpower: _mapManpower(rawManpower),
     }];
   }
 
   function _mapManpower(list: Record<string, unknown>[]): ManpowerRow[] {
+    if (!Array.isArray(list)) return [];
     return list.map((r) => ({
       id: generateId(),
       trade: String(r.trade || r.name || ''),
       name: String(r.name || ''),
       qty: Number(r.qty) || 1,
       hours: Number(r.hours) || 8,
+      start_time: String(r.start_time || ''),
+      stop_time: String(r.stop_time || ''),
       company: String(r.company || ''),
       classification: String(r.classification || ''),
+      is_3rd_party: Boolean(r.is_3rd_party),
       is_extra_work: Boolean(r.is_extra_work),
       is_consultant: Boolean(r.is_consultant),
+      locked: false,
     }));
   }
 
   function _mapEquipment(list: Record<string, unknown>[]): EquipmentRow[] {
+    if (!Array.isArray(list)) return [];
     return list.map((r) => ({
       id: generateId(),
-      name: String(r.description || r.name || ''),
+      name: String(r.name || r.description || ''),
       description: String(r.description || ''),
       qty: Number(r.qty) || 1,
       hours: Number(r.hours) || 8,
+      start_time: String(r.start_time || ''),
+      stop_time: String(r.stop_time || ''),
       company: String(r.company || ''),
+      is_3rd_party: Boolean(r.is_3rd_party),
       is_extra_work: Boolean(r.is_extra_work),
+      is_consultant: Boolean(r.is_consultant),
       is_rental: Boolean(r.is_rental),
+      locked: false,
     }));
   }
 

@@ -1,0 +1,16 @@
+{
+	"appId": "com.ohla.dailyreporter",
+	"appName": "Daily Reporter",
+	"webDir": "dist",
+	"plugins": {
+		"SplashScreen": {
+			"launchShowDuration": 1500,
+			"backgroundColor": "#ffffff",
+			"showSpinner": false
+		}
+	},
+	"android": {
+		"allowMixedContent": false,
+		"webContentsDebuggingEnabled": true
+	}
+}

@@ -552,6 +552,21 @@ p {
   to { transform: rotate(360deg); }
 }
 
+@keyframes flash-fade {
+  from { opacity: 0.7; }
+  to { opacity: 0; }
+}
+
+/* Recording pulse for dictate button */
+.btn-recording {
+  animation: recording-pulse 1s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+
 .spinner {
   width: 20px;
   height: 20px;
@@ -565,6 +580,17 @@ p {
   width: 32px;
   height: 32px;
   border-width: 3px;
+}
+
+/* Utility: apply spin animation to any element (e.g., Loader2 icons) */
+.spin {
+  animation: spin 0.6s linear infinite;
+}
+
+/* Modal/dialog entrance animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* --- Toast / Notification --- */

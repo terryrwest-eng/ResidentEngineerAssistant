@@ -1,0 +1,973 @@
+// PMWeb Auto-Fill Extension - Injected Main World Script
+// This script has access to Sys, Telerik, and the Page Context
+
+(function () {
+    // Guard: prevent double-initialization if injected multiple times
+    if (window.__pmwebWorkerLoaded) {
+        console.log("💉 PMWeb Extension: Worker already loaded, skipping re-init");
+        return;
+    }
+    window.__pmwebWorkerLoaded = true;
+    console.log("💉 PMWeb Extension: Pro Mode Worker Loaded");
+
+    // --- BACKGROUND-SAFE WAIT ---
+    // Chrome throttles setTimeout to 1s+ in background tabs, killing automation.
+    // postMessage is NOT throttled, so we use it for precise timing.
+    const _waitCallbacks = new Map();
+    let _waitId = 0;
+    window.addEventListener('message', (e) => {
+        if (e.data && e.data.__pmwebWaitId !== undefined) {
+            const cb = _waitCallbacks.get(e.data.__pmwebWaitId);
+            if (cb) { _waitCallbacks.delete(e.data.__pmwebWaitId); cb(); }
+        }
+    });
+    function bgWait(ms) {
+        return new Promise(resolve => {
+            const id = ++_waitId;
+            _waitCallbacks.set(id, resolve);
+            setTimeout(() => window.postMessage({ __pmwebWaitId: id }, '*'), ms);
+        });
+    }
+
+    // STOP MECHANISM: Press Escape to cancel, or click stop button
+    let shouldStop = false;
+    let stopButton = null;
+
+    function showStopButton() {
+        if (stopButton) return;
+        stopButton = document.createElement('button');
+        stopButton.id = 'pmweb-stop-btn';
+        stopButton.innerHTML = '⏹️ STOP';
+        stopButton.style.cssText = `
+            position: fixed; top: 20px; right: 20px; z-index: 999999;
+            padding: 10px 20px; background: #dc2626; color: white;
+            border: none; border-radius: 8px; cursor: pointer;
+            font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        `;
+        stopButton.onclick = () => { shouldStop = true; console.log('🛑 STOP requested!'); };
+        document.body.appendChild(stopButton);
+    }
+
+    function hideStopButton() {
+        if (stopButton) { stopButton.remove(); stopButton = null; }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { shouldStop = true; console.log('🛑 STOP via Escape key!'); }
+    });
+
+    // Listen for data from the content script
+    window.addEventListener('PMWEB_FILL_TRIGGER', async (event) => {
+        shouldStop = false; // Reset stop flag
+        const rows = event.detail;
+        console.log('📥 Worker received', rows.length, 'rows');
+        await fillAllRows(rows);
+    });
+
+    async function fillAllRows(appRows) {
+        console.log('🎯 Starting active ADD-FILL-SAVE automation for', appRows.length, 'items... (Press ESC to stop)');
+        showStopButton();
+        const wait = bgWait; // Uses postMessage — not throttled in background tabs
+
+        // Get Buttons
+
+
+
+
+        // Helper to map data
+        const mapRow = (row) => {
+            const isSub = row.subcontractor === true || row.Subcontractor === 'Yes' || row.is_3rd_party === true;
+            // Extract company from multiple possible locations
+            let rawCompany = row.company || row.Company || row.subcontractor_company || row.sub_company || '';
+
+            // Map company names to match PMWeb's dropdown values
+            const companyMap = {
+                'OHLA': 'OHL NA',
+                'ohla': 'OHL NA',
+                'Ohla': 'OHL NA',
+                'hms': 'HMS',
+                'Hms': 'HMS',
+            };
+            if (companyMap[rawCompany]) {
+                console.log('🏢 Company mapped:', rawCompany, '→', companyMap[rawCompany]);
+                rawCompany = companyMap[rawCompany];
+            }
+
+            // Log company data for debugging
+            if (isSub) {
+                console.log('🏢 SUB Company Debug:', {
+                    'row.company': row.company,
+                    'row.Company': row.Company,
+                    'row.subcontractor_company': row.subcontractor_company,
+                    'isSub': isSub,
+                    'finalCompany': rawCompany
+                });
+            }
+
+            return {
+                resource: row.resource || row.Resource,
+                payType: row.pay_type || row[' Pay Type'] || 'CS - Cost',
+                classification: row.classification || row.Classification || 'LR - Labor Regular Time',
+                specialist: row.specialist === true || row.Specialist === 'Yes',
+                subcontractor: isSub,
+                quantity: String(row.qty || row.Qty || 0),
+                company: rawCompany,
+                hours: String(row.total_hours || row.Hours || 0),
+                startTime: row.start_time || row['Start Time'] || '7:00 AM',
+                finishTime: row.finish_time || row['Finish Time'] || '3:30 PM',
+                remarks: row.remarks || row.Remarks || ''
+            };
+        };
+
+        // Ask user where to start
+        let startIndex = 0;
+        const userInput = prompt(`Resume from a specific row?\n\nTotal rows: ${appRows.length}\n\nEnter row number to start from (1-${appRows.length}), or press Cancel/enter 0 to start from beginning:`, '1');
+
+        if (userInput !== null && userInput.trim() !== '') {
+            const rowNum = parseInt(userInput, 10);
+            if (rowNum >= 1 && rowNum <= appRows.length) {
+                startIndex = rowNum - 1; // Convert to 0-based index
+                console.log(`▶️ Resuming from row ${rowNum} (${appRows.length - startIndex} rows remaining)`);
+            } else if (rowNum === 0) {
+                console.log(`▶️ Starting from the beginning (${appRows.length} rows)`);
+            } else {
+                alert(`Invalid row number. Starting from beginning.`);
+                console.log(`▶️ Invalid input, starting from the beginning (${appRows.length} rows)`);
+            }
+        } else {
+            console.log(`▶️ Starting from the beginning (${appRows.length} rows)`);
+        }
+
+        // Loop items
+        for (let i = startIndex; i < appRows.length; i++) {
+            if (shouldStop) { console.log('🛑 Stopped by user at item ' + (i + 1)); break; }
+
+            const rowData = mapRow(appRows[i]);
+            console.log(`🎬 Processing Item ${i + 1}/${appRows.length}: ${rowData.resource}`);
+
+            // 1. Click Add — POLL for the button (grid may still be reloading after postback)
+            const ADD_BTN_ID = 'ctl00_CPH1_DailyReportTimeSheet1_rdgDailyReportTimesheet_ctl00_ctl02_ctl00_lblAddLine';
+            try {
+                let currentAddBtn = null;
+                for (let pollAttempt = 0; pollAttempt < 20; pollAttempt++) {
+                    currentAddBtn = document.getElementById(ADD_BTN_ID);
+                    if (currentAddBtn && currentAddBtn.offsetParent !== null) break;
+                    if (pollAttempt === 0) console.log('  ⏳ Waiting for Add button (grid reloading)...');
+                    await wait(500);
+                }
+
+                if (currentAddBtn) {
+                    currentAddBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    await wait(300);
+                    currentAddBtn.click();
+                    if (currentAddBtn.parentElement && currentAddBtn.parentElement.tagName === 'A') {
+                        currentAddBtn.parentElement.click();
+                    }
+                    console.log('  Testing Add Click...');
+                } else {
+                    console.error("  ❌ Add button not found after 10s polling. Skipping item " + (i + 1));
+                    continue; // Skip this item, try next instead of stopping
+                }
+            } catch (e) {
+                console.error('  Add Click Failed', e);
+                continue; // Skip and try next item
+            }
+
+            // 2. Wait for NEW row — poll for it instead of hardcoded wait
+            await wait(1500);
+
+            // 3. Find the new input — retry up to 15 attempts (7.5s total)
+            const MAX_ROW_ATTEMPTS = 15;
+            let attempts = 0;
+            let targetInput = null;
+
+            while (attempts < MAX_ROW_ATTEMPTS) {
+                const inputs = document.querySelectorAll('input[id*="ddlResources_Input"]:not([id*="Filter"])');
+                if (inputs.length > 0) {
+                    targetInput = inputs[inputs.length - 1];
+                    if (targetInput && targetInput.offsetParent !== null) {
+                        break;
+                    }
+                }
+                await wait(500);
+                attempts++;
+                if (attempts % 5 === 0) {
+                    console.log('  ⏳ Still waiting for new row... (' + attempts + '/' + MAX_ROW_ATTEMPTS + ')');
+                }
+            }
+
+            if (!targetInput) {
+                console.warn('⚠️ Could not find new row input for item ' + (i + 1) + ' — skipping to next');
+                continue; // SKIP instead of BREAK — try the next item
+            }
+
+            // Scroll to it
+            targetInput.scrollIntoView({ behavior: 'auto', block: 'center' });
+            await wait(200);
+
+            // 4. Fill Row
+            const freshRowPrefix = targetInput.id.replace('ddlResources_Input', '');
+            await fillSingleRow(freshRowPrefix, rowData, i + 1);
+
+            // 5. Click Save
+            if (shouldStop) break;
+
+            // RE-FIND SAVE BUTTON — poll for it
+            const SAVE_BTN_ID = 'ctl00_CPH1_DailyReportTimeSheet1_rdgDailyReportTimesheet_ctl00_ctl02_ctl00_lblSave';
+            let currentSaveBtn = null;
+            for (let sp = 0; sp < 10; sp++) {
+                currentSaveBtn = document.getElementById(SAVE_BTN_ID);
+                if (currentSaveBtn) break;
+                await wait(500);
+            }
+
+            if (currentSaveBtn) {
+                console.log("  💾 Saving...");
+                currentSaveBtn.click();
+                if (currentSaveBtn.parentElement && currentSaveBtn.parentElement.tagName === 'A') {
+                    currentSaveBtn.parentElement.click();
+                }
+
+                // Wait for postback: poll for Add button to reappear (grid reload complete)
+                console.log('  ⏳ Waiting for grid to reload after save...');
+                let reloadDone = false;
+                for (let rp = 0; rp < 20; rp++) {
+                    await wait(500);
+                    const addCheck = document.getElementById(ADD_BTN_ID);
+                    if (addCheck && addCheck.offsetParent !== null) {
+                        reloadDone = true;
+                        break;
+                    }
+                }
+                if (!reloadDone) {
+                    console.warn('  ⚠️ Grid did not reload within 10s, continuing anyway...');
+                    await wait(2000); // Extra fallback wait
+                }
+            } else {
+                console.warn("  ⚠️ Save button not found — row may not have been added properly, skipping.");
+                continue; // Skip to next item instead of continuing with bad state
+            }
+        }
+
+        hideStopButton();
+        console.log('🎉 Batch Complete!');
+        alert('✅ Data Entry Complete!');
+    }
+
+    async function fillSingleRow(BASE, data, rowNum) {
+        console.log('=== ROW ' + rowNum + ': ' + data.resource + ' ===');
+        console.log('  📋 Full Row Data:', JSON.stringify({
+            resource: data.resource,
+            company: data.company,
+            subcontractor: data.subcontractor,
+            payType: data.payType,
+            classification: data.classification,
+            hours: data.hours
+        }, null, 2));
+        const wait = bgWait; // Uses postMessage — not throttled in background tabs
+
+        // Telerik Finder
+        function findComponentByInputId(inputId) {
+            if (typeof Sys === 'undefined' || !Sys.Application) return null;
+            const components = Sys.Application.getComponents();
+            for (let i = 0; i < components.length; i++) {
+                const c = components[i];
+                if (c.get_inputDomElement && c.get_inputDomElement().id === inputId) return c;
+            }
+            return null;
+        }
+
+        // Set Dropdown (Robust: trigger filtering, request items, retry with multiple strategies)
+        async function setDropdown(suffix, value, retryCount = 0) {
+            const inputId = BASE + suffix + "_Input";
+            const input = document.getElementById(inputId);
+            const MAX_RETRIES = 2;
+
+            // CRITICAL FIX: Try both formats (DOM ID vs Component ID)
+            // Telerik sometimes uses ClientID (underscores) or UniqueID (dollars) for $find
+            const idUnderscore = BASE + suffix;
+            const idDollar = (BASE + suffix).replace(/_/g, '$');
+
+            // Try $find with both
+            let combo = null;
+            if (typeof $find === 'function') {
+                combo = $find(idUnderscore) || $find(idDollar);
+            }
+
+            // Fallback to Sys.Application
+            if (!combo && typeof Sys !== 'undefined' && Sys.Application) {
+                combo = Sys.Application.findComponent(idUnderscore) || Sys.Application.findComponent(idDollar);
+            }
+
+            if (!combo) {
+                console.error('  ❌ Combo NOT FOUND. Tried: ' + idUnderscore + ' AND ' + idDollar);
+                return false;
+            }
+
+            try {
+                // Focus input first
+                if (input) {
+                    input.focus();
+                    await wait(50); // Reduced from 100ms
+                }
+
+                // Strategy 1: Try requestItems if available (loads ALL items from server)
+                if (combo.requestItems && retryCount === 0) {
+                    try {
+                        console.log('  📡 Requesting all items for: ' + suffix);
+                        combo.requestItems('', false); // Empty filter = all items
+                        await wait(800); // Reduced from 1200ms
+                    } catch (e) {
+                        console.log('  ℹ️ requestItems not available');
+                    }
+                }
+
+                // Different search text strategies based on retry count
+                let typeText = '';
+                if (value.includes('-')) {
+                    // Format like "LE-42- Utility Truck" or "CS - Cost"
+                    const parts = value.split('-');
+                    if (retryCount === 0) {
+                        // First try: type the code prefix (e.g., "LE-42")
+                        typeText = parts.slice(0, 2).join('-').trim();
+                    } else if (retryCount === 1) {
+                        // Second try: type just the letters (e.g., "LE")
+                        typeText = parts[0].trim();
+                    } else {
+                        // Third try: type the description part
+                        typeText = parts.slice(-1)[0].trim().substring(0, 6);
+                    }
+                } else {
+                    typeText = value.substring(0, Math.min(6, value.length));
+                }
+
+                // Set text directly instead of char-by-char (MAJOR SPEED IMPROVEMENT)
+                if (input && typeText) {
+                    input.value = '';
+                    await wait(30);
+                    input.value = typeText; // Direct paste instead of loop
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: typeText.slice(-1) }));
+                    console.log('  ⌨️ Typed: "' + typeText + '"');
+                    await wait(600); // Reduced from 1000ms
+                }
+
+                // Show dropdown to ensure items are visible
+                if (combo.showDropDown) combo.showDropDown();
+                await wait(300); // Reduced from 500ms
+
+                // Try to find the item
+                let item = null;
+
+                // Strategy A: Exact text match
+                item = combo.findItemByText(value);
+
+                // Strategy B: Fuzzy match on loaded items
+                if (!item) {
+                    const items = combo.get_items();
+                    if (items && items.get_count() > 0) {
+                        console.log('  📋 ' + items.get_count() + ' items loaded');
+
+                        // Build search keys from value
+                        const valueLower = value.toLowerCase();
+                        const searchKeys = [];
+
+                        // Add full value
+                        searchKeys.push(valueLower);
+
+                        // Add parts split by dash
+                        if (value.includes('-')) {
+                            const parts = value.split('-').map(p => p.trim().toLowerCase());
+                            searchKeys.push(...parts.filter(p => p.length > 1));
+                            // Add code like "LE-42" or "LL-02"
+                            if (parts.length >= 2) {
+                                searchKeys.push(parts[0] + '-' + parts[1]);
+                            }
+                        }
+
+                        // Search through all items
+                        for (let i = 0; i < items.get_count(); i++) {
+                            const itemText = items.getItem(i).get_text();
+                            const itemLower = itemText.toLowerCase();
+
+                            // Check if item text matches any search key
+                            for (const key of searchKeys) {
+                                if (itemLower.includes(key) || key.includes(itemLower)) {
+                                    item = items.getItem(i);
+                                    console.log('  🔍 Matched: "' + itemText + '" via key "' + key + '"');
+                                    break;
+                                }
+                            }
+                            if (item) break;
+                        }
+                    } else {
+                        console.warn('  ⚠️ No items loaded for: ' + suffix);
+
+                        // If no items and we haven't retried, try again
+                        if (retryCount < MAX_RETRIES) {
+                            if (combo.hideDropDown) combo.hideDropDown();
+                            await wait(300);
+                            console.log('  🔄 Retrying... (attempt ' + (retryCount + 2) + ')');
+                            return await setDropdown(suffix, value, retryCount + 1);
+                        }
+                    }
+                }
+
+                if (item) {
+                    // Select the item using Telerik API
+                    item.select();
+
+                    // Also highlight and commit
+                    if (combo.set_selectedIndex) {
+                        combo.set_selectedIndex(item.get_index());
+                    }
+
+                    await wait(100);
+                    if (combo.hideDropDown) combo.hideDropDown();
+                    if (combo.commitChanges) combo.commitChanges();
+
+                    // Trigger change events
+                    if (input) {
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+
+                    console.log('  ✅ ' + value);
+                    return true;
+                } else {
+                    // Final fallback: If we've typed text, try pressing Enter to accept first match
+                    if (input && retryCount >= MAX_RETRIES) {
+                        console.log('  🎯 Fallback: Pressing Down+Enter to select first filtered item');
+                        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'ArrowDown', keyCode: 40 }));
+                        await wait(200);
+                        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter', keyCode: 13 }));
+                        await wait(200);
+                        if (combo.hideDropDown) combo.hideDropDown();
+                        return true; // Assume success
+                    }
+
+                    console.warn('  ⚠️ NOT FOUND: ' + value);
+                    if (combo.hideDropDown) combo.hideDropDown();
+
+                    // Retry if we have attempts left
+                    if (retryCount < MAX_RETRIES) {
+                        await wait(300);
+                        console.log('  🔄 Retrying with different search... (attempt ' + (retryCount + 2) + ')');
+                        return await setDropdown(suffix, value, retryCount + 1);
+                    }
+
+                    return false;
+                }
+
+            } catch (e) {
+                console.error('  ❌ Dropdown error: ' + suffix, e);
+                if (combo && combo.hideDropDown) combo.hideDropDown();
+                return false;
+            }
+        }
+
+        // Set Time/Date properly
+        async function setTime(suffix, timeStr) {
+            const inputId = BASE + suffix + "_dateInput"; // TimePickers usually have _dateInput
+            // Attempt to find the DatePicker/TimePicker component
+            // It often has ID = BASE + suffix
+            let picker = null;
+
+            if (typeof Sys !== 'undefined') {
+                // Try finding by component ID directly (often without _Input)
+                const componentId = BASE + suffix;
+                picker = Sys.Application.findComponent(componentId);
+
+                // If not found, try by input ID
+                if (!picker) picker = findComponentByInputId(inputId);
+            }
+
+            // Parse time
+            let dateObj = null;
+            try {
+                const d = new Date(); // Today
+                const [time, period] = timeStr.split(' ');
+                let [hours, minutes] = time.split(':');
+                hours = parseInt(hours);
+                minutes = parseInt(minutes);
+                if (period === 'PM' && hours < 12) hours += 12;
+                if (period === 'AM' && hours === 12) hours = 0;
+                d.setHours(hours);
+                d.setMinutes(minutes);
+                d.setSeconds(0);
+                dateObj = d;
+            } catch (e) { }
+
+            if (picker && dateObj && picker.set_selectedDate) {
+                try {
+                    picker.set_selectedDate(dateObj);
+                    console.log('  ✅ Time ' + timeStr + ' set via Telerik Picker');
+                    return;
+                } catch (e) { console.log("TimePicker Set Error", e); }
+            }
+
+            // Fallback to text input if picker fails (Time inputs are usually forgiving)
+            const inp = document.getElementById(inputId);
+            if (inp) {
+                inp.focus();
+                inp.value = timeStr;
+                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                inp.dispatchEvent(new Event('blur', { bubbles: true }));
+                console.log('  ✅ Time ' + timeStr + ' set via Input (Fallback)');
+            }
+        }
+
+        // Text Input (Robust)
+        function setText(suffix, value) {
+            // Check for Telerik TextBox first
+            const compId = BASE + suffix;
+            let comp = Sys.Application.findComponent(compId);
+            if (comp && comp.set_value) {
+                comp.set_value(value);
+                console.log('  ✅ Text set via Telerik: ' + suffix);
+                return;
+            }
+
+            // Standard DOM
+            const inp = document.getElementById(BASE + suffix);
+            if (inp) {
+                inp.value = value;
+                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                inp.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+        }
+
+        // Execute Field Fills ============================================
+
+        // 1. Resource (CRITICAL: Pay Type and Classification depend on this selection)
+        const resourceSuccess = await setDropdown("ddlResources", data.resource);
+        // Wait for server to populate dependent dropdowns
+        await wait(800); // Reduced from 1200ms
+
+        // 2. Pay Type (Only try if Resource was set - depends on Resource selection)
+        if (resourceSuccess) {
+            const payTypeSuccess = await setDropdown("ddlResourcePayTypes", data.payType);
+            await wait(300); // Reduced from 600ms
+
+            // 3. Classification (depends on Resource + Pay Type)
+            // Only try if Pay Type succeeded (chain dependency)
+            if (payTypeSuccess) {
+                await setDropdown("ddlResourceClasses", data.classification);
+                await wait(100); // Reduced from 200ms
+            } else {
+                console.warn('  ⚠️ Skipping Classification (Pay Type failed)');
+                // Try setting class anyway, sometimes it populates even if Pay Type confirmation fails
+                await setDropdown("ddlResourceClasses", data.classification);
+            }
+        } else {
+            console.warn('  ⚠️ Skipping Pay Type & Classification (Resource failed)');
+        }
+
+        // 4. Checkboxes
+        const chkSpecial = document.getElementById(BASE + "EditUserDefinedFields4_chkData");
+        if (chkSpecial && chkSpecial.checked !== data.specialist) chkSpecial.click();
+
+        const chkSub = document.getElementById(BASE + "EditUserDefinedFields3_chkData");
+        if (chkSub && chkSub.checked !== data.subcontractor) chkSub.click();
+
+        // 5. Quantity
+        setText("EditUserDefinedFields1_txtData", data.quantity);
+
+        // 6. Company & Remarks — All contractors use Company dropdown
+        let finalRemarks = data.remarks || '';
+
+        console.log("  🔍 DEBUG Company Data: '" + data.company + "'");
+        console.log("  🔍 DEBUG Resource Data: '" + data.resource + "'");
+
+        // Set Company dropdown for ALL rows (GC and subs alike)
+        const compVal = data.company || 'OHL NA';
+        const companySuccess = await setDropdown("EditUserDefinedFields5_ddlData", compVal);
+
+        // FALLBACK: If company not found in PMWeb dropdown (new contractor),
+        // append company name to Remarks so the data isn't lost
+        if (!companySuccess && compVal && compVal !== 'OHL NA') {
+            const companyNote = '[Company: ' + compVal + ']';
+            finalRemarks = finalRemarks ? finalRemarks + ' | ' + companyNote : companyNote;
+            console.log('  ⚠️ Company "' + compVal + '" not in PMWeb dropdown — moved to Remarks');
+        }
+
+        // 7. Time & Hours
+        // Parse start and finish times
+        const parseTime = (timeStr) => {
+            // Try with minutes: "7:30 PM", "8:30 AM"
+            const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+            if (match) {
+                let [_, hours, minutes, period] = match;
+                hours = parseInt(hours);
+                minutes = parseInt(minutes);
+                if (period.toUpperCase() === 'PM' && hours < 12) hours += 12;
+                if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
+                return hours * 60 + minutes;
+            }
+            // Try bare hour: "8 PM", "8PM", "10AM"
+            const matchBare = timeStr.match(/(\d+)\s*(AM|PM)/i);
+            if (matchBare) {
+                let hours = parseInt(matchBare[1]);
+                const period = matchBare[2].toUpperCase();
+                if (period === 'PM' && hours < 12) hours += 12;
+                if (period === 'AM' && hours === 12) hours = 0;
+                return hours * 60;
+            }
+            return null;
+        };
+
+        const startMinutes = parseTime(data.startTime);
+        const finishMinutes = parseTime(data.finishTime);
+
+        // Enter actual start/finish times first
+        await setTime("tpStartTime", data.startTime);
+        await setTime("tpFinishTime", data.finishTime);
+
+        await wait(200); // Brief wait for PMWeb to finish auto-calculating
+
+        // Set txtHours field - calculated from start/stop time difference WITH lunch deduction
+        if (startMinutes !== null && finishMinutes !== null) {
+            let rawMinutes = finishMinutes - startMinutes;
+            if (rawMinutes < 0) rawMinutes += 1440; // Crosses midnight (night shift)
+            const rawHours = rawMinutes / 60;
+            // Only subtract lunch if shift is >= 5 hours
+            const calcHours = rawHours >= 5 ? rawHours - 0.5 : rawHours;
+            setText("txtHours", calcHours.toFixed(2));
+            console.log(`  ⏰ txtHours: ${calcHours.toFixed(2)} (${rawHours} raw ${rawHours >= 5 ? '- 0.5 lunch' : ''})`);
+        }
+
+        // Set total hours field (EditUserDefinedFields6) - qty × hours from app, NO lunch deduction
+        setText("EditUserDefinedFields6_txtData", data.hours);
+        console.log(`  ⏰ Total Hours: ${data.hours} (qty × hours from app)`);
+
+        // Memo
+        setText("EditUserDefinedFields2_txtMemo", finalRemarks);
+    }
+
+    // ============================================
+    // ACTIVITIES (OnSite) — FILL AUTOMATION
+    // Grid: ctl00_CPH1_DailyReportDetails_rdgOnSite
+    // ============================================
+
+    window.addEventListener('PMWEB_FILL_ACTIVITIES_TRIGGER', async (event) => {
+        shouldStop = false;
+        const rows = event.detail;
+        console.log('📥 Activities Worker received', rows.length, 'activity rows');
+        await fillAllActivities(rows);
+    });
+
+    async function fillAllActivities(actRows) {
+        console.log('🎯 Starting ACTIVITIES ADD-FILL-SAVE automation for', actRows.length, 'items... (Press ESC to stop)');
+        showStopButton();
+        const wait = bgWait;
+
+        // OnSite grid IDs
+        const ADD_BTN_ID = 'ctl00_CPH1_DailyReportDetails_rdgOnSite_ctl00_ctl02_ctl00_lblAddLine';
+        const SAVE_BTN_ID = 'ctl00_CPH1_DailyReportDetails_rdgOnSite_ctl00_ctl02_ctl00_lblSave';
+
+        // Company name aliases
+        const companyMap = {
+            'OHLA': 'OHL NA',
+            'ohla': 'OHL NA',
+            'Ohla': 'OHL NA',
+            'hms': 'HMS',
+            'Hms': 'HMS',
+        };
+
+        // Ask user where to start
+        let startIndex = 0;
+        const userInput = prompt(
+            `Resume from a specific activity?\n\nTotal activities: ${actRows.length}\n\nEnter number to start from (1-${actRows.length}), or press Cancel/enter 0 to start from beginning:`,
+            '1'
+        );
+
+        if (userInput !== null && userInput.trim() !== '') {
+            const rowNum = parseInt(userInput, 10);
+            if (rowNum >= 1 && rowNum <= actRows.length) {
+                startIndex = rowNum - 1;
+                console.log(`▶️ Activities: Resuming from row ${rowNum} (${actRows.length - startIndex} remaining)`);
+            } else if (rowNum === 0) {
+                console.log(`▶️ Activities: Starting from the beginning (${actRows.length} rows)`);
+            } else {
+                alert('Invalid number. Starting from beginning.');
+            }
+        }
+
+        for (let i = startIndex; i < actRows.length; i++) {
+            if (shouldStop) { console.log('🛑 Activities: Stopped by user at item ' + (i + 1)); break; }
+
+            const row = actRows[i];
+            let company = row.company || '';
+            if (companyMap[company]) company = companyMap[company];
+
+            console.log(`🎬 Activity ${i + 1}/${actRows.length}: "${row.title}" @ ${row.location} (${company})`);
+
+            // 1. Click Add — poll for button
+            try {
+                let addBtn = null;
+                for (let p = 0; p < 20; p++) {
+                    addBtn = document.getElementById(ADD_BTN_ID);
+                    if (addBtn && addBtn.offsetParent !== null) break;
+                    if (p === 0) console.log('  ⏳ Waiting for Activities Add button...');
+                    await wait(500);
+                }
+
+                if (addBtn) {
+                    addBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    await wait(300);
+                    addBtn.click();
+                    if (addBtn.parentElement && addBtn.parentElement.tagName === 'A') {
+                        addBtn.parentElement.click();
+                    }
+                    console.log('  ✅ Clicked Add');
+                } else {
+                    console.error('  ❌ Activities Add button not found after 10s. Skipping item ' + (i + 1));
+                    continue;
+                }
+            } catch (e) {
+                console.error('  ❌ Activities Add Click Failed', e);
+                continue;
+            }
+
+            // 2. Wait for edit row to appear — poll for txtLocation input
+            await wait(1500);
+
+            const MAX_ATTEMPTS = 15;
+            let attempts = 0;
+            let locationInput = null;
+
+            while (attempts < MAX_ATTEMPTS) {
+                // Find txtLocation inputs in the OnSite grid (not filter row)
+                const inputs = document.querySelectorAll('input[id*="DailyReportDetails_rdgOnSite"][id*="txtLocation"]:not([id*="Filter"])');
+                if (inputs.length > 0) {
+                    locationInput = inputs[inputs.length - 1];
+                    if (locationInput && locationInput.offsetParent !== null) break;
+                }
+                await wait(500);
+                attempts++;
+                if (attempts % 5 === 0) {
+                    console.log('  ⏳ Still waiting for new activity row... (' + attempts + '/' + MAX_ATTEMPTS + ')');
+                }
+            }
+
+            if (!locationInput) {
+                console.warn('  ⚠️ Could not find activity edit row for item ' + (i + 1) + ' — skipping');
+                continue;
+            }
+
+            // Derive base prefix from the location input
+            const BASE = locationInput.id.replace('txtLocation', '');
+            console.log('  📍 Edit row base: ' + BASE);
+
+            locationInput.scrollIntoView({ behavior: 'auto', block: 'center' });
+            await wait(200);
+
+            // 3. Fill the row
+            await fillSingleActivity(BASE, row, company, i + 1);
+
+            // 4. Click Save
+            if (shouldStop) break;
+
+            let saveBtn = null;
+            for (let sp = 0; sp < 10; sp++) {
+                saveBtn = document.getElementById(SAVE_BTN_ID);
+                if (saveBtn) break;
+                await wait(500);
+            }
+
+            if (saveBtn) {
+                console.log('  💾 Saving activity...');
+                saveBtn.click();
+                if (saveBtn.parentElement && saveBtn.parentElement.tagName === 'A') {
+                    saveBtn.parentElement.click();
+                }
+
+                // Wait for grid reload — poll for Add button to reappear
+                console.log('  ⏳ Waiting for grid to reload after save...');
+                let reloadDone = false;
+                for (let rp = 0; rp < 20; rp++) {
+                    await wait(500);
+                    const addCheck = document.getElementById(ADD_BTN_ID);
+                    if (addCheck && addCheck.offsetParent !== null) {
+                        reloadDone = true;
+                        break;
+                    }
+                }
+                if (!reloadDone) {
+                    console.warn('  ⚠️ Activities grid did not reload within 10s, continuing anyway...');
+                    await wait(2000);
+                }
+            } else {
+                console.warn('  ⚠️ Activities Save button not found — skipping');
+                continue;
+            }
+        }
+
+        hideStopButton();
+        console.log('🎉 Activities Batch Complete!');
+        alert('✅ Activities Data Entry Complete!');
+    }
+
+    async function fillSingleActivity(BASE, data, company, rowNum) {
+        console.log('=== ACTIVITY ' + rowNum + ': ' + data.title + ' ===');
+        console.log('  📋 Data:', JSON.stringify(data, null, 2));
+        const wait = bgWait;
+
+        // --- Location (text input) ---
+        const locInput = document.getElementById(BASE + 'txtLocation');
+        if (locInput) {
+            locInput.focus();
+            locInput.value = data.location || '';
+            locInput.dispatchEvent(new Event('change', { bubbles: true }));
+            locInput.dispatchEvent(new Event('blur', { bubbles: true }));
+            console.log('  ✅ Location: ' + data.location);
+        } else {
+            console.warn('  ⚠️ Location input not found');
+        }
+
+        // --- Company (Telerik RadComboBox) ---
+        const companyInputId = BASE + 'ddlCompanies_Input';
+        const companyInput = document.getElementById(companyInputId);
+
+        // Try Telerik $find
+        const compIdUnderscore = BASE + 'ddlCompanies';
+        const compIdDollar = compIdUnderscore.replace(/_/g, '$');
+        let combo = null;
+
+        if (typeof $find === 'function') {
+            combo = $find(compIdUnderscore) || $find(compIdDollar);
+        }
+        if (!combo && typeof Sys !== 'undefined' && Sys.Application) {
+            combo = Sys.Application.findComponent(compIdUnderscore) || Sys.Application.findComponent(compIdDollar);
+        }
+
+        if (combo && company) {
+            try {
+                if (companyInput) {
+                    companyInput.focus();
+                    await wait(50);
+                }
+
+                // Request all items
+                if (combo.requestItems) {
+                    combo.requestItems('', false);
+                    await wait(800);
+                }
+
+                // Type company prefix
+                if (companyInput) {
+                    companyInput.value = '';
+                    await wait(30);
+                    companyInput.value = company.substring(0, 6);
+                    companyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    companyInput.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: company.slice(-1) }));
+                    await wait(600);
+                }
+
+                if (combo.showDropDown) combo.showDropDown();
+                await wait(300);
+
+                // Find item
+                let item = combo.findItemByText(company);
+                if (!item) {
+                    const items = combo.get_items();
+                    if (items && items.get_count() > 0) {
+                        const compLower = company.toLowerCase();
+                        for (let ci = 0; ci < items.get_count(); ci++) {
+                            const itemText = items.getItem(ci).get_text().toLowerCase();
+                            if (itemText.includes(compLower) || compLower.includes(itemText)) {
+                                item = items.getItem(ci);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (item) {
+                    item.select();
+                    if (combo.set_selectedIndex) combo.set_selectedIndex(item.get_index());
+                    await wait(100);
+                    if (combo.hideDropDown) combo.hideDropDown();
+                    if (combo.commitChanges) combo.commitChanges();
+                    if (companyInput) {
+                        companyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        companyInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                    console.log('  ✅ Company: ' + company);
+                } else {
+                    console.warn('  ⚠️ Company "' + company + '" not found in dropdown');
+                    if (combo.hideDropDown) combo.hideDropDown();
+                    // Fallback: set text directly
+                    if (companyInput) {
+                        companyInput.value = company;
+                        companyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                        companyInput.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }
+            } catch (e) {
+                console.error('  ❌ Company dropdown error:', e);
+                if (combo && combo.hideDropDown) combo.hideDropDown();
+            }
+        } else if (companyInput && company) {
+            // Fallback to plain text input
+            companyInput.value = company;
+            companyInput.dispatchEvent(new Event('change', { bubbles: true }));
+            companyInput.dispatchEvent(new Event('blur', { bubbles: true }));
+            console.log('  ✅ Company (text fallback): ' + company);
+        }
+
+        // --- Activities/Notes (textarea) ---
+        const notesTA = document.getElementById(BASE + 'txtNotes');
+        if (notesTA) {
+            notesTA.focus();
+            notesTA.value = data.title || '';
+            notesTA.dispatchEvent(new Event('change', { bubbles: true }));
+            notesTA.dispatchEvent(new Event('blur', { bubbles: true }));
+            console.log('  ✅ Activities: ' + data.title);
+        } else {
+            console.warn('  ⚠️ Activities textarea not found');
+        }
+
+        // --- Subcontractor checkbox (EditUserDefinedFields1_chkData) ---
+        const chkSub = document.getElementById(BASE + 'EditUserDefinedFields1_chkData');
+        if (chkSub && chkSub.checked !== data.subcontract) {
+            chkSub.click();
+            console.log('  ✅ Subcontractor: ' + data.subcontract);
+        }
+
+        // --- Extra Work checkbox (EditUserDefinedFields2_chkData) ---
+        const chkEW = document.getElementById(BASE + 'EditUserDefinedFields2_chkData');
+        if (chkEW && chkEW.checked !== data.extra_work) {
+            chkEW.click();
+            console.log('  ✅ Extra Work: ' + data.extra_work);
+        }
+
+        // --- Hours (EditUserDefinedFields4_txtData) ---
+        const hoursInput = document.getElementById(BASE + 'EditUserDefinedFields4_txtData');
+        if (hoursInput) {
+            // Check for Telerik TextBox first
+            let hoursComp = null;
+            const hoursCompId = BASE + 'EditUserDefinedFields4_txtData';
+            if (typeof Sys !== 'undefined' && Sys.Application) {
+                hoursComp = Sys.Application.findComponent(hoursCompId);
+            }
+
+            if (hoursComp && hoursComp.set_value) {
+                hoursComp.set_value(String(data.hours || 0));
+            } else {
+                hoursInput.value = String(data.hours || 0);
+                hoursInput.dispatchEvent(new Event('change', { bubbles: true }));
+                hoursInput.dispatchEvent(new Event('blur', { bubbles: true }));
+            }
+            console.log('  ✅ Hours: ' + data.hours);
+        } else {
+            console.warn('  ⚠️ Hours input not found');
+        }
+
+        // --- Specialist checkbox (EditUserDefinedFields5_chkData) — default unchecked ---
+        // Not setting this — user said to ignore SPECIALIST column
+
+        console.log('  ✅ Activity row ' + rowNum + ' filled');
+    }
+
+})();

@@ -17,7 +17,34 @@ import { NavigationGuard } from '@/components/ui/NavigationGuard';
 import { GeneralInfoForm } from '@/components/report/GeneralInfoForm';
 import { ActivityList } from '@/components/report/ActivityList';
 import { PMWebPreview } from '@/components/report/PMWebPreview';
+import { ReportChat } from '@/components/report/ReportChat';
+import { ScheduleSection } from '@/components/report/ScheduleSection';
 import { reportApi } from '@/lib/api';
+import { settingsApi } from '@/lib/settingsApi';
+
+/**
+ * Convert 12-hour time string ("6:30 AM", "3:00 PM") to 24-hour format ("06:30", "15:00").
+ * HTML <input type="time"> requires HH:mm format.
+ * Passes through values already in 24h format unchanged.
+ */
+function to24h(time12: string): string {
+  if (!time12) return '';
+  // Already in HH:mm format?
+  const match24 = time12.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) return time12;
+  // Parse 12h: "6:30 AM", "3:00 PM", "12:00 PM"
+  const match12 = time12.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match12) {
+    console.warn('[NewReportPage] Could not parse time for 24h conversion:', time12);
+    return time12;
+  }
+  let hrs = parseInt(match12[1]);
+  const mins = match12[2];
+  const period = match12[3].toUpperCase();
+  if (period === 'PM' && hrs !== 12) hrs += 12;
+  if (period === 'AM' && hrs === 12) hrs = 0;
+  return `${hrs.toString().padStart(2, '0')}:${mins}`;
+}
 import {
   Save,
   SaveAll,
@@ -28,6 +55,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
+  Sparkles,
 } from 'lucide-react';
 
 export function NewReportPage() {
@@ -43,22 +71,52 @@ export function NewReportPage() {
     saveError,
     isLoading,
     loadError,
+    revision,
     newReport,
     loadReport,
+    closeReport,
     saveReport,
     saveReportAs,
     submitReport,
   } = useReportStore();
 
   const [showPMWeb, setShowPMWeb] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
   // Load existing report or create new
   useEffect(() => {
     if (id) {
       loadReport(id);
-    } else if (!report) {
-      newReport();
+      // Auto-set Chrome extension context so PMWeb Auto-Fill knows which report is active
+      reportApi.setExtensionContext(id).catch(() => {
+        console.debug('[NewReportPage] Extension context set failed (non-critical)');
+      });
+    } else {
+      // Save current work before starting fresh
+      if (isSaved && isDirty) {
+        saveReport().then(() => console.debug('[NewReportPage] Auto-saved before new report'));
+      }
+      // Always start fresh when navigating to /report/new
+      closeReport();
+      // Fetch settings defaults for new reports
+      settingsApi.get().then((s) => {
+        console.debug('[NewReportPage] Settings loaded, applying defaults:', {
+          project: s.default_project,
+          re: s.default_resident_engineer,
+          start: s.default_start_time,
+          stop: s.default_stop_time,
+        });
+        newReport({
+          project_name: s.default_project || '',
+          resident_engineer: s.default_resident_engineer || '',
+          start_time: to24h(s.default_start_time || ''),
+          end_time: to24h(s.default_stop_time || ''),
+        });
+      }).catch((err) => {
+        console.warn('[NewReportPage] Settings fetch failed, creating blank report:', err);
+        newReport();
+      });
     }
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -66,6 +124,10 @@ export function NewReportPage() {
     const savedId = await saveReport();
     if (savedId && !id) {
       navigate(`/report/${savedId}`, { replace: true });
+    }
+    // Keep extension context in sync after every save
+    if (savedId) {
+      reportApi.setExtensionContext(savedId).catch(() => {});
     }
   }, [saveReport, id, navigate]);
 
@@ -221,12 +283,54 @@ export function NewReportPage() {
       </div>
 
       {/* --- General Info Form --- */}
-      <GeneralInfoForm />
+      <GeneralInfoForm key={`gen-${revision}`} />
+
+      {/* --- Schedule (collapsible, above activities) --- */}
+      <div style={{ marginTop: 'var(--space-lg)' }}>
+        <ScheduleSection />
+      </div>
 
       {/* --- Activities --- */}
-      <div style={{ marginTop: 'var(--space-xl)' }}>
-        <ActivityList />
+      <div style={{ marginTop: 'var(--space-lg)' }}>
+        <ActivityList key={`act-${revision}`} />
       </div>
+
+      {/* --- Floating AI Chat Button --- */}
+      <button
+        onClick={() => setShowChat(true)}
+        aria-label="Open AI Report Assistant"
+        style={{
+          position: 'fixed',
+          bottom: '80px',
+          right: '20px',
+          width: '56px',
+          height: '56px',
+          borderRadius: '50%',
+          backgroundColor: 'var(--color-accent)',
+          color: 'var(--color-accent-text)',
+          border: 'none',
+          boxShadow: '0 4px 14px rgba(59, 111, 224, 0.4)',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100,
+          transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'scale(1.08)';
+          e.currentTarget.style.boxShadow = '0 6px 20px rgba(59, 111, 224, 0.5)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.boxShadow = '0 4px 14px rgba(59, 111, 224, 0.4)';
+        }}
+      >
+        <Sparkles size={24} />
+      </button>
+
+      {/* --- AI Report Chat Overlay --- */}
+      {showChat && <ReportChat onClose={() => setShowChat(false)} />}
     </div>
   );
 }

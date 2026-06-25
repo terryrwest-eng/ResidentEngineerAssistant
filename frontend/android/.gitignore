@@ -1,0 +1,12 @@
+# Android build outputs — do not sync to OneDrive or commit to Git
+.gradle/
+build/
+app/build/
+*.apk
+*.aab
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/

@@ -16,8 +16,10 @@ import {
   Mic,
   FileText,
   TrendingUp,
+  Zap,
 } from 'lucide-react';
 import { reportApi } from '@/lib/api';
+import { AutoCreateDialog } from '@/components/report/AutoCreateDialog';
 
 interface ReportSummary {
   id: string;
@@ -32,8 +34,10 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [recentReports, setRecentReports] = useState<ReportSummary[]>([]);
   const [totalReports, setTotalReports] = useState(0);
+  const [thisWeek, setThisWeek] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showAutoCreate, setShowAutoCreate] = useState(false);
 
   useEffect(() => {
     loadDashboard();
@@ -43,9 +47,17 @@ export function DashboardPage() {
     try {
       setLoading(true);
       setError(null);
-      const data = await reportApi.list({ limit: 5 });
-      setRecentReports(data.reports || []);
+      // Fetch up to 200 so "this week" count is accurate across a reasonable range
+      const data = await reportApi.list({ limit: 200 });
+      setRecentReports((data.reports || []).slice(0, 5));
       setTotalReports(data.total || 0);
+      // Compute this-week count from the fetched index
+      const monday = getThisWeekMonday();
+      const weekCount = (data.reports || []).filter((r: { report_date: string }) => {
+        if (!r.report_date) return false;
+        return r.report_date >= monday;
+      }).length;
+      setThisWeek(weekCount);
     } catch (err) {
       console.error('[Dashboard] Failed to load:', err);
       setError('Unable to connect to server. Is the backend running?');
@@ -70,11 +82,17 @@ export function DashboardPage() {
         marginBottom: 'var(--space-xl)',
       }}>
         <QuickAction
+          icon={<Zap size={24} />}
+          label="Quick Create"
+          description="Auto-create report from dispatch"
+          onClick={() => setShowAutoCreate(true)}
+          accent
+        />
+        <QuickAction
           icon={<FilePlus size={24} />}
           label="New Report"
           description="Start a new daily field report"
           onClick={() => navigate('/report/new')}
-          accent
         />
         <QuickAction
           icon={<Camera size={24} />}
@@ -104,7 +122,7 @@ export function DashboardPage() {
         marginBottom: 'var(--space-xl)',
       }}>
         <StatCard icon={<FileText size={20} />} label="Total Reports" value={totalReports} />
-        <StatCard icon={<TrendingUp size={20} />} label="This Week" value={0} />
+        <StatCard icon={<TrendingUp size={20} />} label="This Week" value={thisWeek} />
       </div>
 
       {/* Recent Reports */}
@@ -184,6 +202,11 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Auto-Create Dialog */}
+      {showAutoCreate && (
+        <AutoCreateDialog onClose={() => setShowAutoCreate(false)} />
+      )}
     </div>
   );
 }
@@ -270,4 +293,14 @@ function StatCard({
       </div>
     </div>
   );
+}
+
+/** Returns YYYY-MM-DD for this week's Monday (ISO week start). */
+function getThisWeekMonday(): string {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun … 6=Sat
+  const diff = (day === 0 ? -6 : 1 - day); // days back to Monday
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diff);
+  return monday.toISOString().split('T')[0];
 }

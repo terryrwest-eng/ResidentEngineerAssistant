@@ -222,8 +222,15 @@ export function SettingsPage() {
     const v = newCompany.trim();
     if (!v) return;
     if (companies.includes(v)) { showToast('Already in list', 'err'); return; }
-    setCompanies(prev => [...prev, v]);
+    const updated = [...companies, v];
+    setCompanies(updated);
     setNewCompany('');
+    // Auto-save to backend immediately
+    if (settings) {
+      settingsApi.update({ ...settings, companies: updated })
+        .then(() => showToast(`"${v}" added`, 'ok'))
+        .catch(() => showToast('Failed to save company', 'err'));
+    }
   }
 
   function addManpower() {
@@ -242,41 +249,7 @@ export function SettingsPage() {
     setNewEquipment('');
   }
 
-  // ── Render helpers ────────────────────────────────────────────────────────────
-
-  function TagList({ items, onRemove }: { items: string[]; onRemove: (v: string) => void }) {
-    return (
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-xs)', minHeight: 44, padding: 'var(--space-sm)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
-        {items.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>None yet</span>}
-        {items.map(item => (
-          <span key={item} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: 'var(--accent-primary)', color: '#fff', borderRadius: 20, fontSize: 12, fontWeight: 500 }}>
-            {item}
-            <button onClick={() => onRemove(item)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, lineHeight: 1, opacity: 0.8 }} aria-label={`Remove ${item}`}>
-              <X size={11} />
-            </button>
-          </span>
-        ))}
-      </div>
-    );
-  }
-
-  function AddRow({ value, onChange, onAdd, placeholder }: { value: string; onChange: (v: string) => void; onAdd: () => void; placeholder: string }) {
-    return (
-      <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
-        <input
-          className="input"
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          style={{ flex: 1 }}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onAdd(); } }}
-        />
-        <button className="btn btn-primary" onClick={onAdd} style={{ flexShrink: 0 }}>
-          <Plus size={16} />
-        </button>
-      </div>
-    );
-  }
+  // ── Render helpers are defined at module level below to avoid focus loss ──
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -394,7 +367,13 @@ export function SettingsPage() {
               <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>These appear in the Company field on manpower and equipment rows.</p>
             </div>
             <div className="card-body">
-              <TagList items={companies} onRemove={v => setCompanies(prev => prev.filter(c => c !== v))} />
+              <TagList items={companies} onRemove={v => {
+                const updated = companies.filter(c => c !== v);
+                setCompanies(updated);
+                if (settings) {
+                  settingsApi.update({ ...settings, companies: updated }).catch(() => {});
+                }
+              }} />
               <AddRow value={newCompany} onChange={setNewCompany} onAdd={addCompany} placeholder="New company name..." />
             </div>
           </div>
@@ -543,6 +522,42 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Module-level render helpers (stable identity, no focus loss) ──────────────
+
+function TagList({ items, onRemove }: { items: string[]; onRemove: (v: string) => void }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-xs)', minHeight: 44, padding: 'var(--space-sm)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+      {items.length === 0 && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>None yet</span>}
+      {items.map(item => (
+        <span key={item} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', background: 'var(--accent-primary)', color: '#fff', borderRadius: 20, fontSize: 12, fontWeight: 500 }}>
+          {item}
+          <button onClick={() => onRemove(item)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, lineHeight: 1, opacity: 0.8 }} aria-label={`Remove ${item}`}>
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function AddRow({ value, onChange, onAdd, placeholder }: { value: string; onChange: (v: string) => void; onAdd: () => void; placeholder: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+      <input
+        className="input"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        style={{ flex: 1 }}
+        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onAdd(); } }}
+      />
+      <button className="btn btn-primary" onClick={onAdd} style={{ flexShrink: 0 }}>
+        <Plus size={16} />
+      </button>
     </div>
   );
 }

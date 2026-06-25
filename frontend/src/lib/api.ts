@@ -99,7 +99,7 @@ export const reportApi = {
 
   /** Notify the Chrome extension which report is active */
   setExtensionContext: async (reportId: string) => {
-    const response = await api.post('/automation/set-context', { report_id: reportId });
+    const response = await api.post('/extension/context', { report_id: reportId });
     return response.data;
   },
 
@@ -187,6 +187,22 @@ export const scanApi = {
     return response.data;
   },
 
+  /** Smart Dictation — transcribe audio into structured JSON (summary + resources) */
+  transcribeSmart: async (
+    audioData: string,
+    fieldType: string = 'summary',
+    mimeType: string = 'audio/webm',
+    context: Record<string, unknown> = {},
+  ) => {
+    const response = await api.post('/ai/transcribe-smart', {
+      audio_data: audioData,
+      field_type: fieldType,
+      mime_type: mimeType,
+      context,
+    });
+    return response.data;
+  },
+
   /** Activity Manager Co-Pilot endpoint */
   activityManagerChat: async (
     message: string,
@@ -197,6 +213,116 @@ export const scanApi = {
       message,
       activities,
       chat_history: chatHistory,
+    });
+    return response.data;
+  },
+
+  /** Report Chat — full report AI assistant with voice support */
+  reportChat: async (payload: {
+    message?: string;
+    audio_data?: string;
+    mime_type?: string;
+    report: Record<string, unknown>;
+    chat_history: Record<string, string>[];
+  }) => {
+    const response = await api.post('/ai/report-chat', payload);
+    return response.data as {
+      reply: string;
+      transcription: string;
+      modified_general: Record<string, unknown> | null;
+      modified_activities: Record<string, unknown>[] | null;
+    };
+  },
+
+  /** AI Rewrite — polish rough notes into professional bullets */
+  rewrite: async (text: string, fieldType: string = 'summary') => {
+    const response = await api.post('/ai/rewrite', { text, field_type: fieldType });
+    return response.data;
+  },
+
+  /** AI Analyze Questions — WWWW check, returns targeted questions */
+  analyzeQuestions: async (
+    text: string,
+    workArea: string = '',
+    context: Record<string, unknown> = {},
+    chatHistory: Record<string, string>[] = []
+  ) => {
+    const response = await api.post('/ai/analyze-questions', {
+      text,
+      work_area: workArea,
+      context,
+      chat_history: chatHistory,
+    });
+    return response.data;
+  },
+
+  /** AI Generate Report — produce polished text from notes + answers */
+  generateReport: async (
+    originalText: string,
+    answers: Record<string, string> = {},
+    workArea: string = '',
+    context: Record<string, unknown> = {},
+    chatHistory: Record<string, string>[] = []
+  ) => {
+    const response = await api.post('/ai/generate-report', {
+      original_text: originalText,
+      answers,
+      work_area: workArea,
+      context,
+      chat_history: chatHistory,
+    });
+    return response.data;
+  },
+
+  /** Bulk Dictate — one recording → multiple activities by location */
+  bulkDictate: async (audioData: string, mimeType: string = 'audio/webm') => {
+    const response = await api.post('/ai/bulk-dictate-activities', {
+      audio_data: audioData,
+      mime_type: mimeType,
+    }, { timeout: 180000 });
+    return response.data;
+  },
+
+  /** Update Activity from media (Smart Merge) */
+  updateActivity: async (
+    file: File | null,
+    audioData: string | null,
+    currentData: Record<string, unknown>,
+    mergeMode: boolean = true
+  ) => {
+    const formData = new FormData();
+    if (file) formData.append('file', file);
+    if (audioData) formData.append('audio_data', audioData);
+    formData.append('current_data', JSON.stringify(currentData));
+    formData.append('merge_mode', String(mergeMode));
+
+    const response = await api.post('/ai/update-activity', formData, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 180000,
+    });
+    return response.data;
+  },
+
+  /** Parse completed report (.docx / .pdf) → create draft */
+  parseReport: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await api.post('/ai/parse-report', formData, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 300000,
+    });
+    return response.data;
+  },
+
+  /** Parse dispatch PDF → structured job columns */
+  parseDispatch: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await api.post('/ai/parse-dispatch', formData, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 300000, // 5 minutes — dispatches are dense
     });
     return response.data;
   },
@@ -213,4 +339,206 @@ export const healthApi = {
   },
 };
 
+// ============================================
+// WEATHER
+// ============================================
+
+export interface WeatherData {
+  status: string;
+  temperature_high: string;
+  temperature_low: string;
+  humidity: number;
+  wind_speed: number;
+  wind_direction: string;
+  wind_info: string;
+  condition: string;
+  emoji: string;
+  sky_condition_id: string;
+  weather_code: number;
+  location: string;
+  zip?: string;
+}
+
+export const weatherApi = {
+  /** Fetch weather by GPS coordinates (optionally for a specific date YYYY-MM-DD) */
+  fetchByCoords: async (lat: number, lon: number, date?: string): Promise<WeatherData> => {
+    const response = await api.get('/weather', { params: { lat, lon, ...(date ? { date } : {}) } });
+    return response.data;
+  },
+
+  /** Fetch weather by US ZIP code (optionally for a specific date YYYY-MM-DD) */
+  fetchByZip: async (zip: string, date?: string): Promise<WeatherData> => {
+    const response = await api.get('/weather/by-zip', { params: { zip, ...(date ? { date } : {}) } });
+    return response.data;
+  },
+};
+
+// ============================================
+// PDF SEARCH
+// ============================================
+
+export interface PdfDocument {
+  id: string;
+  filename: string;
+  page_count: number;
+  upload_date: string;
+  file_size: number;
+}
+
+export const pdfApi = {
+  /** Upload PDF files */
+  upload: async (files: File[]): Promise<{ status: string; files: { filename: string; id?: string; page_count?: number; error?: string }[] }> => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append('files', file));
+    const response = await api.post('/pdf/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  /** Ask a question about uploaded PDFs */
+  ask: async (
+    question: string,
+    docIds: string[],
+    chatHistory: { role: string; content: string }[] = [],
+  ): Promise<{ answer: string; sources: { doc: string; page: string; text: string }[] }> => {
+    const formData = new FormData();
+    formData.append('question', question);
+    formData.append('doc_ids', docIds.join(','));
+    formData.append('chat_history', JSON.stringify(chatHistory));
+    const response = await api.post('/pdf/ask', formData, {
+      headers: { 'Content-Type': null as unknown as string },
+    });
+    return response.data;
+  },
+
+  /** List all uploaded PDF documents */
+  list: async (): Promise<{ documents: PdfDocument[]; count: number }> => {
+    const response = await api.get('/pdf/documents');
+    return response.data;
+  },
+
+  /** Delete a PDF document */
+  delete: async (docId: string): Promise<{ status: string; message: string }> => {
+    const response = await api.delete(`/pdf/${docId}`);
+    return response.data;
+  },
+};
+
+// ============================================
+// SCHEDULE
+// ============================================
+
+export const scheduleApi = {
+  /** Upload a schedule PDF — AI parses all shifts */
+  upload: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/schedule/upload', formData, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 300000,
+    });
+    return response.data;
+  },
+
+  /** Get the most recently uploaded schedule */
+  getActive: async () => {
+    const response = await api.get('/schedule/active');
+    return response.data;
+  },
+
+  /** List all uploaded schedules */
+  list: async () => {
+    const response = await api.get('/schedule/list');
+    return response.data;
+  },
+
+  /** Delete a schedule */
+  delete: async (id: string) => {
+    const response = await api.delete(`/schedule/${id}`);
+    return response.data;
+  },
+};
+
+// ============================================
+// DISPATCH LIBRARY
+// ============================================
+
+export const dispatchApi = {
+  /** Upload a single dispatch PDF for a specific date */
+  upload: async (file: File, date: string) => {
+    console.debug('[API] dispatchApi.upload:', file.name, 'date:', date);
+    const form = new FormData();
+    form.append('file', file);
+    form.append('date', date);
+    const res = await api.post('/dispatches/upload', form, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 300_000, // 5 min — AI parsing
+    });
+    console.debug('[API] dispatchApi.upload result:', res.data);
+    return res.data;
+  },
+
+  /** Batch upload multiple dispatch PDFs (auto-detect dates from filenames) */
+  batchUpload: async (files: File[]) => {
+    console.debug('[API] dispatchApi.batchUpload:', files.length, 'files');
+    const form = new FormData();
+    files.forEach(f => form.append('files', f));
+    const res = await api.post('/dispatches/batch-upload', form, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 600_000, // 10 min — multiple files
+    });
+    console.debug('[API] dispatchApi.batchUpload result:', res.data);
+    return res.data;
+  },
+
+  /** Get parsed dispatch data for a specific date */
+  getByDate: async (date: string) => {
+    console.debug('[API] dispatchApi.getByDate:', date);
+    const res = await api.get(`/dispatches/${date}`);
+    console.debug('[API] dispatchApi.getByDate result:', res.data);
+    return res.data;
+  },
+
+  /** List all available dispatch dates */
+  list: async () => {
+    console.debug('[API] dispatchApi.list');
+    const res = await api.get('/dispatches');
+    console.debug('[API] dispatchApi.list result:', res.data);
+    return res.data;
+  },
+
+  /** Delete dispatch for a date */
+  delete: async (date: string) => {
+    console.debug('[API] dispatchApi.delete:', date);
+    const res = await api.delete(`/dispatches/${date}`);
+    console.debug('[API] dispatchApi.delete result:', res.data);
+    return res.data;
+  },
+};
+
+// ============================================
+// TRAFFIC CONTROL AI
+// ============================================
+
+export const tcApi = {
+  /** Generate TC activity description from crew + location + TC plan */
+  generate: async (params: {
+    streets: string[];
+    location: string;
+    tc_crew: { name: string; time: string }[];
+    sub_tc: { company: string; details: string; count?: number; time?: string } | null;
+    work_description: string;
+    schedule_shift: string;
+    start_time: string;
+    end_time: string;
+  }) => {
+    console.debug('[API] tcApi.generate:', params);
+    const res = await api.post('/ai/generate-tc', params);
+    console.debug('[API] tcApi.generate result:', res.data);
+    return res.data;
+  },
+};
+
 export default api;
+

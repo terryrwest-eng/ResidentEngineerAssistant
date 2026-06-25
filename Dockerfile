@@ -36,7 +36,7 @@ COPY backend/ ./
 COPY --from=frontend-build /app/frontend/dist ./static
 
 # Create data directories (Railway volume mounts here)
-RUN mkdir -p /app/data/reports /app/data/photos /app/data/specs
+RUN mkdir -p /app/data/reports /app/data/photos /app/data/specs /app/data/schedules
 
 # Environment
 ENV PYTHONUNBUFFERED=1
@@ -46,4 +46,4 @@ ENV PORT=8000
 EXPOSE 8000
 
 # Start uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

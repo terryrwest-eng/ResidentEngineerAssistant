@@ -1,0 +1,52 @@
+{
+    "manifest_version": 3,
+    "name": "PMWeb Auto-Fill",
+    "version": "2.0",
+    "description": "Automatically fill PMWeb Daily Report Timesheet from Daily Reporting App",
+    "permissions": [
+        "activeTab",
+        "scripting",
+        "storage"
+    ],
+    "host_permissions": [
+        "https://*.pmweb.com/*",
+        "https://*.railway.app/*",
+        "https://*.up.railway.app/*",
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*"
+    ],
+    "action": {
+        "default_popup": "popup.html",
+        "default_icon": {
+            "16": "icon16.png",
+            "48": "icon48.png",
+            "128": "icon128.png"
+        }
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://*.pmweb.com/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "injected.js"
+            ],
+            "matches": [
+                "https://*.pmweb.com/*"
+            ]
+        }
+    ],
+    "icons": {
+        "16": "icon16.png",
+        "48": "icon48.png",
+        "128": "icon128.png"
+    }
+}

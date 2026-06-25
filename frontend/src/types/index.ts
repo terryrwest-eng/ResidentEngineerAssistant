@@ -61,25 +61,35 @@ export interface Activity {
 /** A single manpower entry (one trade/person) */
 export interface ManpowerRow {
   id: string;
-  trade: string;      // e.g. "LL-03- Laborers"
-  name: string;       // Individual name (optional)
-  qty: number;        // Headcount
-  hours: number;      // Hours worked
-  company: string;    // Employer
+  trade: string;         // PMWeb resource code e.g. "LL-03- Laborers"
+  name: string;          // Individual name (optional)
+  qty: number;           // Headcount
+  hours: number;         // Hours worked
+  start_time: string;    // e.g. "7:00 AM"
+  stop_time: string;     // e.g. "3:30 PM"
+  company: string;       // Employer
   classification: string;
+  is_3rd_party: boolean;
   is_extra_work: boolean;
   is_consultant: boolean;
+  locked: boolean;       // Protected from bulk apply
 }
 
 /** A single equipment entry */
 export interface EquipmentRow {
   id: string;
-  name: string;        // e.g. "LE-05- CAT 330 Excavator"
-  description: string;
+  name: string;          // PMWeb resource code e.g. "LE-05- CAT 330 Excavator"
+  description: string;   // Equipment number e.g. "F450"
   qty: number;
   hours: number;
+  start_time: string;    // e.g. "7:00 AM"
+  stop_time: string;     // e.g. "3:30 PM"
   company: string;
+  is_3rd_party: boolean;
   is_extra_work: boolean;
+  is_consultant: boolean;
+  is_rental: boolean;
+  locked: boolean;       // Protected from bulk apply
 }
 
 /** Photo attached to a report */
@@ -208,3 +218,151 @@ export interface PdfSource {
   page_number: number;
   excerpt: string;
 }
+
+// ============================================
+// DISPATCH TYPES
+// ============================================
+
+/** A single crew member entry from dispatch */
+export interface DispatchCrewMember {
+  name: string;
+  time: string;
+}
+
+/** Equipment entry from dispatch */
+export interface DispatchEquipmentItem {
+  id: string;
+  description: string;
+}
+
+/** Sub/rental info from dispatch */
+export interface DispatchSubInfo {
+  company: string;
+  details: string;
+  count?: number;
+  time?: string;
+}
+
+/** A single job column from the dispatch */
+export interface DispatchJob {
+  column_index: number;
+  job_number: string;
+  job_name: string;
+  job_description: string;
+  contract_type: string;
+  streets: string[];
+  location: string;
+  start_time: string;
+  load_time: string;
+  material: string;
+  plant: string;
+  foreman: DispatchCrewMember & { role: string };
+  operators: DispatchCrewMember[];
+  laborers: DispatchCrewMember[];
+  rakers: DispatchCrewMember[];
+  traffic_control: DispatchCrewMember[];
+  equipment: DispatchEquipmentItem[];
+  trucking: DispatchSubInfo;
+  grinders: DispatchSubInfo;
+  sub_brooms: DispatchSubInfo;
+  sub_traffic_control: DispatchSubInfo;
+  oil_truck: { driver: string; equipment_id: string; equipment_desc: string; material: string };
+  rentals: { company: string; description: string }[];
+}
+
+/** Response from POST /api/ai/parse-dispatch */
+export interface DispatchParseResult {
+  date: string;
+  company: string;
+  jobs: DispatchJob[];
+}
+
+// ============================================
+// SCHEDULE TYPES
+// ============================================
+
+/** A single digout row in the schedule */
+export interface ScheduleRow {
+  direction: string;
+  do_number: string;
+  depth: number;
+  width: number;
+  length: number;
+  sf: number;
+  tons: number;
+  added: boolean;
+}
+
+/** A shift group containing multiple digout rows */
+export interface ScheduleShift {
+  rows: ScheduleRow[];
+  total_sf: number;
+  total_tons: number;
+}
+
+/** A complete parsed schedule */
+export interface Schedule {
+  id: string;
+  filename: string;
+  uploaded_at: string;
+  total_shifts: number;
+  schedule_type: 'digout' | 'grind_overlay';
+  shifts: Record<string, ScheduleShift>;
+}
+
+// ============================================
+// DISPATCH LIBRARY
+// ============================================
+
+/** A stored dispatch entry in the library */
+export interface DispatchLibraryEntry {
+  date: string;
+  filename: string;
+  company: string;
+  job_count: number;
+  uploaded_at: string;
+}
+
+/** Response from uploading a single dispatch PDF */
+export interface DispatchUploadResponse extends DispatchLibraryEntry {
+  jobs: DispatchJob[];
+}
+
+/** Result for a single file in a batch upload */
+export interface BatchUploadResult {
+  date: string;
+  filename: string;
+  status: 'success' | 'error';
+  job_count: number;
+  error: string | null;
+}
+
+/** Response from batch uploading multiple dispatch PDFs */
+export interface BatchUploadResponse {
+  results: BatchUploadResult[];
+  success_count: number;
+  error_count: number;
+}
+
+// ============================================
+// TRAFFIC CONTROL AI
+// ============================================
+
+/** Request payload for TC activity generation */
+export interface TCGenerateRequest {
+  streets: string[];
+  location: string;
+  tc_crew: { name: string; time: string }[];
+  sub_tc: { company: string; details: string; count?: number; time?: string } | null;
+  work_description: string;
+  schedule_shift: string;
+  start_time: string;
+  end_time: string;
+}
+
+/** Response from TC activity generation */
+export interface TCGenerateResponse {
+  summary: string;
+  work_area: string;
+}
+

@@ -95,4 +95,12 @@ export const settingsApi = {
     const res = await api.get('/gemini-key/status');
     return res.data as GeminiKeyStatus;
   },
+
+  /** Save resource alias mappings (merges into existing) */
+  saveResourceAliases: async (
+    aliases: { equipment?: Record<string, string>; manpower?: Record<string, string> }
+  ): Promise<{ status: string; resource_aliases: { equipment: Record<string, string>; manpower: Record<string, string> } }> => {
+    const res = await api.put('/resource-aliases', aliases);
+    return res.data;
+  },
 };

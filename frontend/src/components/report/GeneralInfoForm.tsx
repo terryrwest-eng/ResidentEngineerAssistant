@@ -4,21 +4,83 @@
  * Project header section of a daily report.
  * Fields: project name, number, location, inspector, RE,
  *         date, times, weather, notes.
+ *
+ * Weather auto-fill: fetches current weather from Open-Meteo API
+ * using GPS geolocation or user-specified ZIP code.
  */
 
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { SKY_CONDITIONS } from '@/lib/constants';
-import { Cloud, Thermometer, Wind } from 'lucide-react';
+import { weatherApi } from '@/lib/api';
+import type { WeatherData } from '@/lib/api';
+import { settingsApi } from '@/lib/settingsApi';
+import { Cloud, Thermometer, Wind, MapPin, Loader2 } from 'lucide-react';
 
 export function GeneralInfoForm() {
   const { report, updateGeneral } = useReportStore();
+  const [isLoadingWeather, setIsLoadingWeather] = useState(false);
+  const [weatherError, setWeatherError] = useState('');
+  // Revision counter — incremented when weather auto-fill updates fields.
+  // Used as a key on defaultValue inputs to force remount with new values.
+  const [weatherRevision, setWeatherRevision] = useState(0);
+
+  // Project list from settings for autocomplete suggestions
+  const [projectSuggestions, setProjectSuggestions] = useState<string[]>([]);
+
+  useEffect(() => {
+    settingsApi.get().then((s) => {
+      if (s.projects?.length) {
+        setProjectSuggestions(s.projects);
+        console.debug('[GeneralInfoForm] Loaded project suggestions:', s.projects.length);
+      }
+    }).catch((err) => {
+      console.warn('[GeneralInfoForm] Failed to load project suggestions:', err);
+    });
+  }, []);
+
+  // IME composition tracking — prevents React from overwriting input values
+  // during swipe/glide typing on Android WebView.
+  const composingFieldRef = useRef<string | null>(null);
+
+  const handleChange = useCallback((field: string, value: string) => {
+    updateGeneral({ [field]: value });
+  }, [updateGeneral]);
+
+  /** onChange handler that skips store updates during IME composition */
+  const handleInputChange = useCallback(
+    (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (composingFieldRef.current === field) {
+        // Swipe in progress — let the IME work uninterrupted
+        console.debug(`[GeneralInfoForm] Composing "${field}" — skipping store update`);
+        return;
+      }
+      updateGeneral({ [field]: e.target.value });
+    },
+    [updateGeneral],
+  );
+
+  const handleCompositionStart = useCallback(
+    (field: string) => () => {
+      composingFieldRef.current = field;
+      console.debug(`[GeneralInfoForm] Composition started on "${field}"`);
+    },
+    [],
+  );
+
+  const handleCompositionEnd = useCallback(
+    (field: string) => (e: React.CompositionEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      composingFieldRef.current = null;
+      const finalValue = (e.target as HTMLInputElement | HTMLTextAreaElement).value;
+      console.debug(`[GeneralInfoForm] Composition ended on "${field}":`, finalValue);
+      updateGeneral({ [field]: finalValue });
+    },
+    [updateGeneral],
+  );
+
   if (!report) return null;
 
   const gen = report.general;
-
-  function handleChange(field: string, value: string) {
-    updateGeneral({ [field]: value });
-  }
 
   function toggleSky(skyId: string) {
     const current = gen.sky_conditions || [];
@@ -37,6 +99,84 @@ export function GeneralInfoForm() {
     }
   }
 
+  /** Apply weather data to the form fields */
+  function applyWeather(data: WeatherData) {
+    const updates: Record<string, unknown> = {
+      temperature_high: data.temperature_high,
+      temperature_low: data.temperature_low,
+      wind_info: data.wind_info,
+    };
+
+    // Auto-select the sky condition chip
+    if (data.sky_condition_id) {
+      const skyItem = SKY_CONDITIONS.find((s) => s.id === data.sky_condition_id);
+      if (skyItem) {
+        const current = gen.sky_conditions || [];
+        const exists = current.find((s) => s.id === skyItem.id);
+        if (!exists) {
+          updates.sky_conditions = [...current, skyItem];
+        }
+      }
+    }
+
+    updateGeneral(updates);
+    // Force temperature/wind inputs to remount with new defaultValues
+    setWeatherRevision((r) => r + 1);
+    console.debug('[Weather] Applied:', data);
+  }
+
+  /** Fetch weather via GPS → fallback to ZIP prompt */
+  async function handleFetchWeather() {
+    setIsLoadingWeather(true);
+    setWeatherError('');
+
+    try {
+      // Try GPS geolocation first
+      if (navigator.geolocation) {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            timeout: 8000,
+            enableHighAccuracy: false,
+          });
+        });
+
+        const data = await weatherApi.fetchByCoords(
+          position.coords.latitude,
+          position.coords.longitude,
+          gen.report_date || undefined,
+        );
+
+        if (data.status === 'success') {
+          applyWeather(data);
+          return;
+        }
+      }
+    } catch (geoErr) {
+      console.warn('[Weather] GPS failed, trying ZIP fallback:', geoErr);
+    }
+
+    // Fallback: prompt for ZIP code
+    try {
+      const zip = prompt('Enter ZIP code for weather lookup:');
+      if (!zip || !zip.trim()) {
+        setWeatherError('No ZIP entered');
+        return;
+      }
+
+      const data = await weatherApi.fetchByZip(zip.trim(), gen.report_date || undefined);
+      if (data.status === 'success') {
+        applyWeather(data);
+      } else {
+        setWeatherError(data.status === 'error' ? 'Weather unavailable' : 'Unknown error');
+      }
+    } catch (err) {
+      console.error('[Weather] Fetch error:', err);
+      setWeatherError('Failed to fetch weather');
+    } finally {
+      setIsLoadingWeather(false);
+    }
+  }
+
   return (
     <div className="card">
       <div className="card-header">
@@ -49,17 +189,36 @@ export function GeneralInfoForm() {
             <label className="label">Project Name</label>
             <input
               className="input"
-              value={gen.project_name}
-              onChange={(e) => handleChange('project_name', e.target.value)}
+              type="text"
+              defaultValue={gen.project_name}
+              onChange={handleInputChange('project_name')}
+              onCompositionStart={handleCompositionStart('project_name')}
+              onCompositionEnd={handleCompositionEnd('project_name')}
+              autoComplete="off"
+              autoCorrect="on"
+              autoCapitalize="words"
               placeholder="e.g. Pure Water Program"
+              list="project-suggestions"
             />
+            {projectSuggestions.length > 0 && (
+              <datalist id="project-suggestions">
+                {projectSuggestions.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+            )}
           </div>
           <div>
             <label className="label">Project Number</label>
             <input
               className="input"
-              value={gen.project_number}
-              onChange={(e) => handleChange('project_number', e.target.value)}
+              type="text"
+              defaultValue={gen.project_number}
+              onChange={handleInputChange('project_number')}
+              onCompositionStart={handleCompositionStart('project_number')}
+              onCompositionEnd={handleCompositionEnd('project_number')}
+              autoComplete="off"
+              autoCorrect="off"
               placeholder="e.g. K-22-1234"
             />
           </div>
@@ -71,8 +230,14 @@ export function GeneralInfoForm() {
             <label className="label">Project Location</label>
             <input
               className="input"
-              value={gen.project_location}
-              onChange={(e) => handleChange('project_location', e.target.value)}
+              type="text"
+              defaultValue={gen.project_location}
+              onChange={handleInputChange('project_location')}
+              onCompositionStart={handleCompositionStart('project_location')}
+              onCompositionEnd={handleCompositionEnd('project_location')}
+              autoComplete="off"
+              autoCorrect="on"
+              autoCapitalize="words"
               placeholder="e.g. Morena Blvd, San Diego"
             />
           </div>
@@ -80,8 +245,14 @@ export function GeneralInfoForm() {
             <label className="label">Inspector Name</label>
             <input
               className="input"
-              value={gen.inspector_name}
-              onChange={(e) => handleChange('inspector_name', e.target.value)}
+              type="text"
+              defaultValue={gen.inspector_name}
+              onChange={handleInputChange('inspector_name')}
+              onCompositionStart={handleCompositionStart('inspector_name')}
+              onCompositionEnd={handleCompositionEnd('inspector_name')}
+              autoComplete="off"
+              autoCorrect="on"
+              autoCapitalize="words"
               placeholder="Your name"
             />
           </div>
@@ -93,8 +264,14 @@ export function GeneralInfoForm() {
             <label className="label">Resident Engineer</label>
             <input
               className="input"
-              value={gen.resident_engineer}
-              onChange={(e) => handleChange('resident_engineer', e.target.value)}
+              type="text"
+              defaultValue={gen.resident_engineer}
+              onChange={handleInputChange('resident_engineer')}
+              onCompositionStart={handleCompositionStart('resident_engineer')}
+              onCompositionEnd={handleCompositionEnd('resident_engineer')}
+              autoComplete="off"
+              autoCorrect="on"
+              autoCapitalize="words"
               placeholder="RE name"
             />
           </div>
@@ -139,11 +316,39 @@ export function GeneralInfoForm() {
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 'var(--space-sm)',
+            justifyContent: 'space-between',
             marginBottom: 'var(--space-md)',
           }}>
-            <Cloud size={18} style={{ color: 'var(--color-accent)' }} />
-            <span className="font-medium" style={{ fontSize: '0.875rem' }}>Weather</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+              <Cloud size={18} style={{ color: 'var(--color-accent)' }} />
+              <span className="font-medium" style={{ fontSize: '0.875rem' }}>Weather</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
+              {weatherError && (
+                <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)' }}>
+                  {weatherError}
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={handleFetchWeather}
+                disabled={isLoadingWeather}
+                style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              >
+                {isLoadingWeather ? (
+                  <>
+                    <Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} />
+                    Fetching...
+                  </>
+                ) : (
+                  <>
+                    <MapPin size={12} />
+                    Fetch Weather
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Sky condition chips */}
@@ -191,9 +396,15 @@ export function GeneralInfoForm() {
                 High (°F)
               </label>
               <input
+                key={`temp_high_${weatherRevision}`}
                 className="input"
-                value={gen.temperature_high}
-                onChange={(e) => handleChange('temperature_high', e.target.value)}
+                type="text"
+                inputMode="numeric"
+                defaultValue={gen.temperature_high}
+                onChange={handleInputChange('temperature_high')}
+                onCompositionStart={handleCompositionStart('temperature_high')}
+                onCompositionEnd={handleCompositionEnd('temperature_high')}
+                autoComplete="off"
                 placeholder="e.g. 85"
               />
             </div>
@@ -203,9 +414,15 @@ export function GeneralInfoForm() {
                 Low (°F)
               </label>
               <input
+                key={`temp_low_${weatherRevision}`}
                 className="input"
-                value={gen.temperature_low}
-                onChange={(e) => handleChange('temperature_low', e.target.value)}
+                type="text"
+                inputMode="numeric"
+                defaultValue={gen.temperature_low}
+                onChange={handleInputChange('temperature_low')}
+                onCompositionStart={handleCompositionStart('temperature_low')}
+                onCompositionEnd={handleCompositionEnd('temperature_low')}
+                autoComplete="off"
                 placeholder="e.g. 62"
               />
             </div>
@@ -215,9 +432,15 @@ export function GeneralInfoForm() {
                 Wind
               </label>
               <input
+                key={`wind_${weatherRevision}`}
                 className="input"
-                value={gen.wind_info}
-                onChange={(e) => handleChange('wind_info', e.target.value)}
+                type="text"
+                defaultValue={gen.wind_info}
+                onChange={handleInputChange('wind_info')}
+                onCompositionStart={handleCompositionStart('wind_info')}
+                onCompositionEnd={handleCompositionEnd('wind_info')}
+                autoComplete="off"
+                autoCorrect="on"
                 placeholder="e.g. 5-10 mph NW"
               />
             </div>
@@ -229,8 +452,13 @@ export function GeneralInfoForm() {
           <label className="label">General Notes</label>
           <textarea
             className="textarea"
-            value={gen.notes}
-            onChange={(e) => handleChange('notes', e.target.value)}
+            defaultValue={gen.notes}
+            onChange={handleInputChange('notes')}
+            onCompositionStart={handleCompositionStart('notes')}
+            onCompositionEnd={handleCompositionEnd('notes')}
+            autoComplete="off"
+            autoCorrect="on"
+            autoCapitalize="sentences"
             placeholder="Site conditions, delays, visitor log, general observations..."
             style={{ minHeight: '100px' }}
           />
