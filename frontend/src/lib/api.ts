@@ -301,6 +301,38 @@ export const scanApi = {
     return response.data;
   },
 
+  /**
+   * STEP 1 of dictation — transcribe only.
+   * The transcript is shown to the user for confirmation before any activities
+   * are built, so a bad recording surfaces as visibly wrong text instead of a
+   * confidently fabricated report.
+   */
+  bulkTranscribe: async (
+    audioData: string,
+    mimeType: string = 'audio/webm',
+    durationSeconds: number = 0,
+  ): Promise<{
+    status: 'ok' | 'suspect' | 'failed';
+    transcription: string;
+    reason: string;
+    duration_seconds: number;
+  }> => {
+    const response = await api.post('/ai/bulk-transcribe', {
+      audio_data: audioData,
+      mime_type: mimeType,
+      duration_seconds: durationSeconds,
+    }, { timeout: 180000 });
+    return response.data;
+  },
+
+  /** STEP 2 of dictation — build activities from a CONFIRMED transcript. */
+  bulkParse: async (transcription: string) => {
+    const response = await api.post('/ai/bulk-parse', {
+      transcription,
+    }, { timeout: 180000 });
+    return response.data;
+  },
+
   /** Update Activity from media (Smart Merge) */
   updateActivity: async (
     file: File | null,
