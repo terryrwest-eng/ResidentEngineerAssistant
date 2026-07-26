@@ -10,18 +10,24 @@
 
 import { create } from 'zustand';
 import { reportApi } from '@/lib/api';
-import { cleanSummaryBullets } from '@/lib/formatters';
+import { cleanSummaryBullets, localDateString } from '@/lib/formatters';
 import type { Report, Activity, GeneralInfo } from '@/types';
 
 // --- Constants ---
 const AUTO_SAVE_DELAY_MS = 2000;
-const EMPTY_GENERAL: GeneralInfo = {
+
+/**
+ * Built fresh on each call — NOT a module constant.
+ * A module-level object would capture the date at import time, so an app left
+ * open overnight would keep stamping yesterday onto new reports.
+ */
+const emptyGeneral = (): GeneralInfo => ({
   project_name: '',
   project_number: '',
   project_location: '',
   inspector_name: '',
   resident_engineer: '',
-  report_date: new Date().toISOString().split('T')[0], // Today's date
+  report_date: localDateString(), // today, local timezone
   start_time: '07:00',
   end_time: '15:30',
   sky_conditions: [],
@@ -29,7 +35,7 @@ const EMPTY_GENERAL: GeneralInfo = {
   temperature_low: '',
   wind_info: '',
   notes: '',
-};
+});
 
 interface ReportStoreState {
   // --- Report Data ---
@@ -111,7 +117,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     if (timer) clearTimeout(timer);
 
     const now = new Date().toISOString();
-    const general: GeneralInfo = { ...EMPTY_GENERAL, ...defaults };
+    const general: GeneralInfo = { ...emptyGeneral(), ...defaults };
 
     set({
       report: {
@@ -142,7 +148,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       const data = await reportApi.get(id);
       const cleanedData: Report = {
         ...data,
-        activities: (data.activities || []).map((act) => ({
+        activities: (data.activities || []).map((act: Activity) => ({
           ...act,
           summary: cleanSummaryBullets(act.summary || (act as unknown as { summary_html?: string }).summary_html),
         })),

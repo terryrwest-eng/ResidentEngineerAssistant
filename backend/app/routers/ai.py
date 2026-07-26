@@ -2255,9 +2255,27 @@ Extract EVERYTHING — do not summarize or skip any activities."""
             logger.info(f'[parse-report] Extracted {len(activities)} activities')
 
             # Create the report in storage
-            from app.services.reports import create_report
+            from app.services.reports import save_report
             import uuid
             from datetime import datetime
+
+            # Assign IDs and normalize the summary field name.
+            # The AI returns "summary_html"; the model, Word exporter and
+            # report-chat's surgical merge all key on "summary" and on row IDs.
+            _RESOURCE_KEYS = (
+                'manpower', 'equipment', 'extra_work_manpower',
+                'extra_work_equipment', 'consultant_manpower',
+            )
+            for act in activities:
+                act['id'] = act.get('id') or str(uuid.uuid4())
+                if not act.get('summary') and act.get('summary_html'):
+                    act['summary'] = act.pop('summary_html')
+                for key in _RESOURCE_KEYS:
+                    rows = act.get(key)
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if isinstance(row, dict):
+                                row['id'] = row.get('id') or str(uuid.uuid4())
 
             report_data = {
                 'id': str(uuid.uuid4()),
@@ -2283,8 +2301,9 @@ Extract EVERYTHING — do not summarize or skip any activities."""
                 'updated_at': datetime.utcnow().isoformat(),
             }
 
-            saved = await create_report(report_data)
-            report_id = saved.get('id', report_data['id'])
+            # save_report returns the JSON file path, not the report dict.
+            await save_report(report_data)
+            report_id = report_data['id']
 
             return ParseReportResponse(
                 report_id=report_id,
@@ -2762,10 +2781,10 @@ def _find_tc_plan_pdf() -> str | None:
     1. Check tc_plan_path from settings (direct file path on disk)
     2. Search data/specs/ for any PDF whose name contains TCP or traffic control
     """
-    _base = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    from app.core.paths import SETTINGS_FILE, SPECS_DIR
 
     # ── Step 1: Check settings for explicit tc_plan_path ──
-    settings_path = os.path.join(_base, "data", "settings.json")
+    settings_path = SETTINGS_FILE
     if os.path.exists(settings_path):
         try:
             with open(settings_path, "r", encoding="utf-8") as f:
@@ -2780,7 +2799,7 @@ def _find_tc_plan_pdf() -> str | None:
             logger.warning(f'[generate-tc] Failed to read settings for tc_plan_path: {exc}')
 
     # ── Step 2: Scan data/specs/ ──
-    specs_dir = os.path.join(_base, "data", "specs")
+    specs_dir = SPECS_DIR
     if not os.path.exists(specs_dir):
         logger.debug('[generate-tc] specs directory does not exist')
         return None

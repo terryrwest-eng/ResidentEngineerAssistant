@@ -262,7 +262,7 @@ def generate_word_document(report: dict) -> io.BytesIO:
         title_run.font.color.rgb = RGBColor(0, 50, 100)
 
         # Summary — each line gets its own paragraph to preserve bullets
-        summary_lines = _extract_summary_lines(act.get("summary", ""))
+        summary_lines = _extract_summary_lines(act.get("summary") or act.get("summary_html", ""))
         for line_text in summary_lines:
             snippet = doc.add_paragraph(line_text)
             snippet.paragraph_format.space_after = Pt(1)
@@ -477,7 +477,7 @@ def generate_notes_html(report: dict) -> str:
         )
 
         # Summary lines
-        summary_lines = _extract_summary_lines(act.get("summary", ""))
+        summary_lines = _extract_summary_lines(act.get("summary") or act.get("summary_html", ""))
         for line_text in summary_lines:
             if line_text.startswith(("•", "-", "*", "–")):
                 html_parts.append(

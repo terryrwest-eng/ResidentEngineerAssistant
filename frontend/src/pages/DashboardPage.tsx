@@ -19,6 +19,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { reportApi } from '@/lib/api';
+import { localDateString } from '@/lib/formatters';
 import { AutoCreateDialog } from '@/components/report/AutoCreateDialog';
 
 interface ReportSummary {
@@ -302,5 +303,5 @@ function getThisWeekMonday(): string {
   const diff = (day === 0 ? -6 : 1 - day); // days back to Monday
   const monday = new Date(now);
   monday.setDate(now.getDate() + diff);
-  return monday.toISOString().split('T')[0];
+  return localDateString(monday);
 }

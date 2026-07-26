@@ -26,6 +26,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["reports"])
 
 
+def _normalize_activities(report_dict: dict) -> None:
+    """
+    AI endpoints emit "summary_html"; the model, Word exporter and notes HTML
+    all read "summary". Collapse to "summary" on the way in so a report saved
+    from any source exports correctly.
+    """
+    activities = report_dict.get("activities")
+    if not isinstance(activities, list):
+        return
+    for act in activities:
+        if isinstance(act, dict) and not act.get("summary") and act.get("summary_html"):
+            act["summary"] = act.pop("summary_html")
+
+
 @router.post("/reports", response_model=dict)
 async def create_report(request: Request):
     """
@@ -34,6 +48,7 @@ async def create_report(request: Request):
     Generates a unique ID and saves to both SQLite and a JSON file.
     """
     report_dict = await request.json()
+    _normalize_activities(report_dict)
 
     if not report_dict.get("id"):
         report_dict["id"] = str(uuid.uuid4())
@@ -99,6 +114,7 @@ async def update_report(report_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Report not found")
 
     report_dict = await request.json()
+    _normalize_activities(report_dict)
     report_dict["id"] = report_id
     report_dict["created_at"] = existing.get("created_at", datetime.utcnow().isoformat())
 

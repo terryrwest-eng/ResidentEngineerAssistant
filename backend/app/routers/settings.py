@@ -31,9 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 # ── Storage path ──────────────────────────────────────────────────────────────
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DATA_DIR = os.path.join(_BASE_DIR, "data")
-SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+from app.core.paths import DATA_DIR, SETTINGS_FILE  # noqa: E402
 
 # ── Built-in activity templates (not editable, always available) ───────────────
 BUILTIN_TEMPLATES: list[dict[str, str]] = [
