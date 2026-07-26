@@ -108,7 +108,8 @@ DAILY-REPORTER-V3/
 12. **PyMuPDF (fitz) for schedule parsing** — `schedule.py` uses PyMuPDF to render image-based schedule PDFs to 300 DPI PNG images before sending to Gemini. If PyMuPDF is not installed, the endpoint returns a 500 with a helpful message. Install: `pip install PyMuPDF`. The import is lazy (`import fitz` inside the endpoint).
 13. **Schedule storage** — Schedules are stored in `data/schedules/{uuid}/` subdirectories, each containing a `.json` (parsed data) and `.pdf` (original). The `DispatchImportDialog` fetches the most recent schedule via `GET /api/schedule/active`.
 14. **WebChromeClient full delegation** — `MainActivity.java` uses `PermissionGrantingWrapper` that delegates ALL `WebChromeClient` methods to Capacitor's original. If you add new WebChromeClient methods, you MUST add delegation. Never create a `new WebChromeClient()` — always wrap the existing one.
-
+15. **Report Chat uses MERGE, not REPLACE** — The `/api/ai/report-chat` endpoint returns surgical diffs, NOT full activity arrays. `modified_activities` contains partial updates keyed by activity `id`. `new_activities` is for brand new ones. `deleted_activity_ids` is for removals. The frontend merges via `updateActivity()`, `addActivity()`, `removeActivity()`. NEVER switch back to full-array replacement — that caused data loss (dropped manpower/equipment the model wasn't asked to touch).
+16. **Gemini 2.5 Pro retirement** — The app uses `gemini-2.5-pro` (default in `_get_gemini_client()`). Google is retiring it **Oct 16, 2026**. Successor is `gemini-3.1-pro` (~60% more on input, ~20% more on output).
 ---
 
 ## Session Log
@@ -467,4 +468,92 @@ DAILY-REPORTER-V3/
 - **AutoCreateDialog** (`AutoCreateDialog.tsx`):
   - Passes `detectedScheduleType` to buildActivity (stations empty for auto-create)
 - TypeScript zero errors ✅, Vite build ✅, Python syntax ✅.
-- **Pending**: Deploy to Railway, rebuild Android APK.
+- **Pending**: Deploy to Railway, rebuild Android APK (Capacitor sync done — APK build still required from Android Studio).
+
+### 2026-06-30 — Android Sync (Catch-Up)
+- **Context**: Android APK was last synced on 2026-05-28. Six sessions of frontend changes had never been pushed to Android.
+- **Steps taken**:
+  - `npm run build` — Vite production build, 1826 modules, TypeScript zero errors ✅
+  - `npx cap sync android` — Copied `dist/` → `android/app/src/main/assets/public` ✅
+- **Changes now in the Android project** (pending APK build in Android Studio):
+  - Dispatch + Schedule Import (DispatchImportDialog, ScheduleSection, schedule router)
+  - Resource Resolution Dialog + collapsible tables + alias system
+  - Two-pass AI fix for schedule parser + dispatch parser (Landmine #6 pattern)
+  - Resource matching fixes (Teamsters, 0.95 strict threshold, 3 fabricated LE codes removed)
+  - Word export consolidation + time parser fix + PMWeb midnight crossing fix
+  - Grind & Overlay schedule support
+- **Next**: Open `frontend/android/` in Android Studio → Build APK(s) → install on device.
+
+### 2026-07-01 — Custom Resource Codes in Settings
+- **Problem**: Resource table dropdowns were hardcoded to 39 labor (LL-) + 149 equipment (LE-) codes from `constants.ts`. The existing "Master Lists" tab in Settings stored generic names ("Excavator", "Laborer") but was completely disconnected from the dropdowns — dead feature.
+- **Backend** (`settings.py`): Added `custom_resource_codes: { labor: [], equipment: [] }` to `DEFAULT_SETTINGS`, new `CustomResourceCodes` Pydantic model, added field to `SettingsPayload`.
+- **Frontend types** (`settingsApi.ts`): Added `CustomResourceCodes` interface and `custom_resource_codes` field to `AppSettings`.
+- **Settings UI** (`SettingsPage.tsx`): Replaced dead "Master Lists" tab → new **"Resource Codes"** tab. User types a description (e.g., "Grade Checker"), code auto-assigns next available number (LL-40, LE-161, etc.). Shows count of built-in + custom codes. TagList for removal.
+- **ResourceTable** (`ResourceTable.tsx`): Loads custom codes from settings on mount via `settingsApi.get()` and merges with `DEFAULT_MANPOWER` / `DEFAULT_EQUIPMENT` arrays. Custom codes appear at the end of the dropdown.
+- **ResourceResolutionDialog** (`ResourceResolutionDialog.tsx`): Same merge pattern — loads custom codes in parent, passes merged `pool` prop to `ResolutionItem` instead of hardcoding.
+- **ResourceMatcher** (`resourceMatcher.ts`): `loadResourceAliases()` now also loads custom codes, invalidates the cached matcher, and rebuilds with extended pool. AI-dictated entries can fuzzy-match to custom codes.
+- TypeScript compiles cleanly with zero errors. Deployed to Railway + Android synced.
+
+### 2026-07-02 — Chrome Extension PMWeb Resource Sync
+- **Feature**: Added "Sync PMWeb Resources" to the Chrome Extension to scrape all Labor and Equipment codes from PMWeb and automatically append them to `custom_resource_codes` in the app.
+- **Extension UI** (`popup.html` & `popup.js`): Added "Find New PMWeb Resources" button in settings sync section. Injects worker into `MAIN` world and triggers sync via custom event.
+- **Extension Extraction** (`injected.js` & `content.js`): `PMWEB_SYNC_TRIGGER` listener finds the Telerik `ddlResources` combo box, calls `requestItems('', false)` to load all from server, extracts the text, and sends back `PMWEB_SYNC_RESULT` via `window.postMessage` bridge.
+- **Backend API** (`settings.py`): New endpoint `POST /api/settings/sync-pmweb-resources`. Separates `LL-` and `LE-` prefixes and deduplicates them using `list(dict.fromkeys())`.
+- **Frontend UI Deduplication**: Wrapped merged array building with `Array.from(new Set(...))` in `ResourceTable.tsx`, `ResourceResolutionDialog.tsx`, and `resourceMatcher.ts` to ensure users don't see duplicates in dropdowns when PMWeb scraped codes perfectly match `DEFAULT_MANPOWER`/`DEFAULT_EQUIPMENT`.
+- **Telerik Pagination Fix (Added)**: Modified `injected.js` to automatically click the "Add" button if needed, and loop `combo.requestItems('', true)` to paginate through all items, bypassing the 20-item load-on-demand limit.
+- **Backend Delta Counting (Added)**: `settings.py` now filters incoming codes against `BUILTIN_LABOR` and `BUILTIN_EQUIPMENT` before appending, so it only counts and returns the number of *truly new* items added.
+- TypeScript builds cleanly ✅. Deployed to Railway ✅.
+
+### 2026-07-17 — Report Chat Merge Architecture (Anti-Data-Loss)
+- **Root cause**: Report chat prompt told Gemini to "return the FULL activities array in modified_activities." The model had to reproduce ALL manpower/equipment rows across ALL activities — even ones the user didn't ask to change. Models are bad at faithful JSON reproduction, so it dropped equipment, manpower, and hallucinated entries.
+- **Backend prompt rewrite** (`ai.py` lines 1421–1505):
+  - Changed from "return full array" to **surgical diff-based updates**
+  - `modified_activities` now contains ONLY the activities being changed, with ONLY the changed fields, keyed by `id`
+  - Sub-arrays (manpower, equipment) are only included if the user's change affects them
+  - New `new_activities` array for brand new activities (separate from modifications)
+  - New `deleted_activity_ids` array for removals
+  - Strong "ask, don't guess" instructions for ambiguous requests
+- **Backend response model** (`ReportChatResponse`): Added `new_activities` and `deleted_activity_ids` fields
+- **Frontend API types** (`api.ts`): Added `new_activities` and `deleted_activity_ids` to return type
+- **Frontend merge logic** (`ReportChat.tsx`):
+  - Replaced `replaceActivities(fullArray)` with surgical per-activity merges
+  - `modifiedActivities` → loops through patches, calls `updateActivity(id, partialUpdates)` for each
+  - `newActivities` → calls `addActivity()` for each
+  - `deletedActivityIds` → calls `removeActivity(id)` for each
+  - All three store methods already existed — no store changes needed
+  - Updated `PendingChanges` interface, both send flows (text + voice), and the preview card
+- **Not affected**: `AIReportAssistant.tsx` (uses separate `/api/ai/activity-manager` endpoint, already does partial updates)
+- TypeScript builds cleanly ✅.
+- **Pending**: Deploy to Railway. Gemini 2.5 Pro retiring Oct 16, 2026 — will need to upgrade to 3.1 Pro eventually.
+
+### 2026-07-17 — Email Summary Feature
+- **New endpoint** `POST /api/ai/email-summary` in `ai.py`:
+  - Takes all activities + project name + report date
+  - Combines all activity summaries into one flowing paragraph-form narrative
+  - Rules: preserve ALL content (no shortening), no headers/bullets (email body form), no greetings/sign-offs, professional construction tone
+  - Uses `_gemini_call_with_retry()` for resilience
+- **New API method** `scanApi.emailSummary()` in `api.ts`
+- **New component** `EmailSummaryDialog.tsx`:
+  - Auto-generates on mount
+  - Copy to clipboard (with fallback for mobile/insecure contexts)
+  - Regenerate button
+  - Loading state with pulse animation
+- **Button placement**: ActivityList header bar, between Dispatch and Import buttons
+  - Only shows when `activities.length > 0`
+  - Label: "📧 Email Summary"
+- TypeScript builds cleanly ✅.
+
+### 2026-07-20 — PMWeb Full Automation (1-Click Auto-Fill)
+- **Problem**: Filling PMWeb required manually pressing 5 different buttons across 5 different tabs, risking data mismatch and requiring tedious navigation.
+- **Backend changes (`export.py` & `word.py`)**:
+  - `generate_notes_html()` created in `word.py` to strip tables and generate pure HTML for the Notes tab.
+  - Added endpoints `/api/export/{id}/notes-html` and `/api/export/{id}/pmweb-full`. 
+  - `/pmweb-full` bundles all 5 phases of report data into a single payload, doing inline activity consolidation.
+- **Chrome Extension UI (`popup.html` & `popup.js`)**:
+  - Replaced the multi-button layout with a single "🚀 Auto-Fill Everything" orchestrator button.
+  - Added visual progress states and a Monday auto-detection banner.
+  - Added logic to automatically save and auto-increment the Record # on successful completion.
+- **Extension Orchestrator (`injected.js`)**:
+  - Added a massive `PMWEB_FILL_EVERYTHING` event listener orchestrating all 5 phases.
+  - Includes robust helpers for navigating tabs, handling Telerik datepickers/comboboxes, and injecting HTML notes into the RadEditor iframe.
+- Tested compilation locally, deployed to Railway ✅.

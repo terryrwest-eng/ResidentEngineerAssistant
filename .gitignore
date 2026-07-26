@@ -27,3 +27,30 @@ Thumbs.db
 # Temporary
 *.tmp
 *.log
+
+# Debug / one-off scripts at root
+debug_hours.py
+fix_photos*.py
+test_ocr.py
+report_debug.json
+sunday_report_raw.json
+
+# Large binary assets at root (not source code)
+*.jpg
+*.png
+*.pdf
+*.zip
+[EXTERNAL]*/
+
+# Android build outputs
+frontend/android/.gradle/
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/capacitor-cordova-android-plugins/build/
+
+# Desktop build output (PyInstaller)
+desktop/dist/
+desktop/build/
+
+# Gemini agent state
+.gemini/

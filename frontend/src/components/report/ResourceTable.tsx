@@ -16,6 +16,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { ManpowerRow, EquipmentRow } from '@/types';
 import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT, DEFAULT_COMPANY } from '@/lib/constants';
+import { settingsApi } from '@/lib/settingsApi';
 import { ResourceDropdown } from '@/components/report/ResourceDropdown';
 import { Plus, Trash2, Copy, Lock, Unlock } from 'lucide-react';
 
@@ -59,7 +60,24 @@ export function ResourceTable({
   defaultCompany,
 }: ResourceTableProps) {
   const isManpower = type === 'manpower';
-  const options = isManpower ? DEFAULT_MANPOWER : DEFAULT_EQUIPMENT;
+
+  // Load custom resource codes from settings and merge with hardcoded defaults
+  const [customCodes, setCustomCodes] = useState<string[]>([]);
+  useEffect(() => {
+    settingsApi.get()
+      .then(s => {
+        const codes = isManpower
+          ? (s.custom_resource_codes?.labor || [])
+          : (s.custom_resource_codes?.equipment || []);
+        setCustomCodes(codes);
+        console.debug(`[ResourceTable] Loaded ${codes.length} custom ${type} codes`);
+      })
+      .catch(err => console.warn('[ResourceTable] Failed to load custom codes:', err));
+  }, [isManpower, type]);
+
+  const options = isManpower
+    ? Array.from(new Set([...DEFAULT_MANPOWER, ...customCodes]))
+    : Array.from(new Set([...DEFAULT_EQUIPMENT, ...customCodes]));
 
   // --- Multi-select state ---
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());

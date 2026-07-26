@@ -369,18 +369,20 @@ let _aliasesLoaded = false;
 
 /**
  * Returns a ResourceMatcher instance using the hardcoded PMWeb constants.
- * Cached after first call. Call `loadResourceAliases()` to inject user aliases.
+ * Cached after first call. Call `loadResourceAliases()` to inject user aliases
+ * and custom resource codes.
  */
-export function getResourceMatcher(): ResourceMatcher {
+export function getResourceMatcher(extraCodes: string[] = []): ResourceMatcher {
   if (!_cachedMatcher) {
-    _cachedMatcher = new ResourceMatcher([...DEFAULT_MANPOWER, ...DEFAULT_EQUIPMENT]);
-    console.debug('[ResourceMatcher] Initialized with', DEFAULT_MANPOWER.length, 'manpower +', DEFAULT_EQUIPMENT.length, 'equipment codes');
+    const allCodes = Array.from(new Set([...DEFAULT_MANPOWER, ...DEFAULT_EQUIPMENT, ...extraCodes]));
+    _cachedMatcher = new ResourceMatcher(allCodes);
+    console.debug('[ResourceMatcher] Initialized with', DEFAULT_MANPOWER.length, 'manpower +', DEFAULT_EQUIPMENT.length, 'equipment +', extraCodes.length, 'custom codes');
   }
   return _cachedMatcher;
 }
 
 /**
- * Load user-defined resource aliases from settings into the matcher.
+ * Load user-defined resource aliases and custom codes from settings into the matcher.
  * Call this once after settings are fetched. Safe to call multiple times.
  */
 export async function loadResourceAliases(): Promise<void> {
@@ -389,13 +391,22 @@ export async function loadResourceAliases(): Promise<void> {
     // Dynamic import to avoid circular dependency
     const { settingsApi } = await import('./settingsApi');
     const settings = await settingsApi.get();
+
+    // Load custom resource codes — rebuild matcher with extended pool
+    const customLabor = settings.custom_resource_codes?.labor || [];
+    const customEquipment = settings.custom_resource_codes?.equipment || [];
+    if (customLabor.length > 0 || customEquipment.length > 0) {
+      _cachedMatcher = null; // Invalidate cache to rebuild with custom codes
+      getResourceMatcher([...customLabor, ...customEquipment]);
+    }
+
     const aliases = (settings as unknown as Record<string, unknown>).resource_aliases as
       { equipment?: Record<string, string>; manpower?: Record<string, string> } | undefined;
     if (aliases) {
       getResourceMatcher().setAliases(aliases);
     }
     _aliasesLoaded = true;
-    console.debug('[ResourceMatcher] Aliases loaded from settings');
+    console.debug('[ResourceMatcher] Aliases + custom codes loaded from settings');
   } catch (err) {
     console.warn('[ResourceMatcher] Failed to load aliases from settings:', err);
   }

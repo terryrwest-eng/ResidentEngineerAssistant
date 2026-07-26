@@ -103,6 +103,12 @@ export const reportApi = {
     return response.data;
   },
 
+  /** Clear the Chrome extension context (e.g. when creating a new unsaved report) */
+  clearExtensionContext: async () => {
+    const response = await api.post('/extension/context', { report_id: null });
+    return response.data;
+  },
+
   /** Send PMWeb rows to the Chrome extension for auto-fill */
   launchPMWebAutomation: async (payload: Record<string, unknown>[]) => {
     const response = await api.post('/automation/pmweb', { data: payload });
@@ -231,7 +237,19 @@ export const scanApi = {
       transcription: string;
       modified_general: Record<string, unknown> | null;
       modified_activities: Record<string, unknown>[] | null;
+      new_activities: Record<string, unknown>[] | null;
+      deleted_activity_ids: string[] | null;
     };
+  },
+
+  /** Email Summary — combine all activity summaries into one flowing email narrative */
+  emailSummary: async (activities: Record<string, unknown>[], projectName: string, reportDate: string) => {
+    const response = await api.post('/ai/email-summary', {
+      activities,
+      project_name: projectName,
+      report_date: reportDate,
+    });
+    return response.data as { status: string; text: string };
   },
 
   /** AI Rewrite — polish rough notes into professional bullets */
@@ -444,6 +462,12 @@ export const scheduleApi = {
   /** Get the most recently uploaded schedule */
   getActive: async () => {
     const response = await api.get('/schedule/active');
+    return response.data;
+  },
+
+  /** Get a specific schedule by ID */
+  getById: async (id: string) => {
+    const response = await api.get(`/schedule/${id}`);
     return response.data;
   },
 

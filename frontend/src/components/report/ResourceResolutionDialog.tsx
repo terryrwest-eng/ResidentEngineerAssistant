@@ -8,8 +8,9 @@
  * Design: Flat 2.0, overlay modal, scrollable list.
  */
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT } from '@/lib/constants';
+import { settingsApi } from '@/lib/settingsApi';
 import { saveResourceAliases } from '@/lib/resourceMatcher';
 import { Search, Check, X, AlertCircle, ChevronDown } from 'lucide-react';
 
@@ -65,6 +66,21 @@ export function ResourceResolutionDialog({
     });
     return initial;
   });
+
+  // Load custom resource codes from settings
+  const [customLabor, setCustomLabor] = useState<string[]>([]);
+  const [customEquipment, setCustomEquipment] = useState<string[]>([]);
+  useEffect(() => {
+    settingsApi.get()
+      .then(s => {
+        setCustomLabor(s.custom_resource_codes?.labor || []);
+        setCustomEquipment(s.custom_resource_codes?.equipment || []);
+      })
+      .catch(err => console.warn('[ResourceResolution] Failed to load custom codes:', err));
+  }, []);
+
+  const extendedManpower = useMemo(() => Array.from(new Set([...DEFAULT_MANPOWER, ...customLabor])), [customLabor]);
+  const extendedEquipment = useMemo(() => Array.from(new Set([...DEFAULT_EQUIPMENT, ...customEquipment])), [customEquipment]);
 
   // State: "Remember this" toggle for each item
   const [rememberFlags, setRememberFlags] = useState<Map<number, boolean>>(() => {
@@ -198,6 +214,7 @@ export function ResourceResolutionDialog({
             <ResolutionItem
               key={`${item.type}-${item.index}-${idx}`}
               item={item}
+              pool={item.type === 'equipment' ? extendedEquipment : extendedManpower}
               selectedCode={selections.get(idx) || ''}
               remember={rememberFlags.get(idx) || false}
               isDropdownOpen={openDropdown === idx}
@@ -245,6 +262,7 @@ export function ResourceResolutionDialog({
 
 function ResolutionItem({
   item,
+  pool,
   selectedCode,
   remember,
   isDropdownOpen,
@@ -255,6 +273,7 @@ function ResolutionItem({
   onSearchChange,
 }: {
   item: UnmatchedResource;
+  pool: string[];
   selectedCode: string;
   remember: boolean;
   isDropdownOpen: boolean;
@@ -264,7 +283,7 @@ function ResolutionItem({
   onToggleRemember: () => void;
   onSearchChange: (val: string) => void;
 }) {
-  const pool = item.type === 'equipment' ? DEFAULT_EQUIPMENT : DEFAULT_MANPOWER;
+
 
   const filteredOptions = useMemo(() => {
     if (!searchFilter.trim()) return pool;

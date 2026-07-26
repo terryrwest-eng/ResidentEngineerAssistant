@@ -17,9 +17,10 @@ import { ActivityEditor } from '@/components/report/ActivityEditor';
 import { BulkDictateButton } from '@/components/report/BulkDictateButton';
 import { ParseReportDialog } from '@/components/report/ParseReportDialog';
 import { DispatchImportDialog } from '@/components/report/DispatchImportDialog';
+import { EmailSummaryDialog } from '@/components/report/EmailSummaryDialog';
 import type { Activity } from '@/types';
 import { settingsApi } from '@/lib/settingsApi';
-import { Plus, ClipboardList, FileText, Truck } from 'lucide-react';
+import { Plus, ClipboardList, FileText, Truck, Mail } from 'lucide-react';
 
 function generateId(): string {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -30,6 +31,7 @@ export function ActivityList() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [isParseOpen, setIsParseOpen] = useState(false);
   const [isDispatchOpen, setIsDispatchOpen] = useState(false);
+  const [isEmailSummaryOpen, setIsEmailSummaryOpen] = useState(false);
   const [companyOptions, setCompanyOptions] = useState<string[]>([]);
 
   // Load company list from settings on mount
@@ -113,6 +115,16 @@ export function ActivityList() {
             <Truck size={16} />
             Dispatch
           </button>
+          {activities.length > 0 && (
+            <button
+              className="btn btn-outline"
+              onClick={() => setIsEmailSummaryOpen(true)}
+              title="Generate one flowing summary for email"
+            >
+              <Mail size={16} />
+              Email Summary
+            </button>
+          )}
           <button
             className="btn btn-outline"
             onClick={() => setIsParseOpen(true)}
@@ -178,6 +190,7 @@ export function ActivityList() {
 
       {isParseOpen && <ParseReportDialog onClose={() => setIsParseOpen(false)} />}
       {isDispatchOpen && <DispatchImportDialog onClose={() => setIsDispatchOpen(false)} />}
+      {isEmailSummaryOpen && <EmailSummaryDialog onClose={() => setIsEmailSummaryOpen(false)} />}
     </div>
   );
 }

@@ -7,6 +7,7 @@ Every save writes to both SQLite and a JSON file.
 
 import uuid
 import logging
+from collections import Counter
 from datetime import datetime
 from typing import Optional
 
@@ -138,13 +139,15 @@ async def set_extension_context(data: dict):
     """
     Sets the active report ID for the Chrome extension.
     Called by the PMWebPreview panel when user clicks 'Auto-Fill PMWeb'.
+    Pass report_id=null to clear the context (e.g. when creating a new unsaved report).
     """
-    report_id = data.get("report_id")
-    if not report_id:
-        raise HTTPException(status_code=400, detail="report_id required")
+    report_id = data.get("report_id") or None
 
     ACTIVE_CONTEXT["report_id"] = report_id
-    logger.info(f"Extension context set to report: {report_id}")
+    if report_id:
+        logger.info(f"Extension context set to report: {report_id}")
+    else:
+        logger.info("Extension context cleared (new report or explicit clear)")
     return {"status": "success", "report_id": report_id}
 
 
@@ -174,6 +177,31 @@ async def get_report_consolidated(report_id: str):
     return rows
 
 
+def _calc_duration_hours(start_str: str, end_str: str) -> float:
+    """
+    Calculate duration in hours between two time strings (e.g. '7:00 AM', '15:30').
+    Returns 8.0 as default if parsing fails.
+    """
+    from datetime import datetime as dt
+    formats = ["%I:%M %p", "%H:%M", "%I:%M%p", "%H:%M:%S"]
+    start_dt = end_dt = None
+    for fmt in formats:
+        if not start_dt:
+            try:
+                start_dt = dt.strptime(start_str.strip(), fmt)
+            except (ValueError, AttributeError):
+                pass
+        if not end_dt:
+            try:
+                end_dt = dt.strptime(end_str.strip(), fmt)
+            except (ValueError, AttributeError):
+                pass
+    if start_dt and end_dt:
+        diff = (end_dt - start_dt).total_seconds() / 3600
+        return diff if diff > 0 else 8.0
+    return 8.0
+
+
 @router.get("/reports/{report_id}/activities-consolidated")
 async def get_activities_consolidated(report_id: str):
     """
@@ -182,7 +210,7 @@ async def get_activities_consolidated(report_id: str):
 
     work_area format: "Location - Company - Activity Title"
     Splits by ' - ' to extract each piece.
-    Hours = sum of all (qty × hours) across manpower + equipment tables.
+    Hours = work duration (shift length from manpower mode), NOT total man-hours.
     """
     report = get_report(report_id)
     if not report:
@@ -208,11 +236,43 @@ async def get_activities_consolidated(report_id: str):
         # Normalize company aliases
         company = company_aliases.get(company, company)
 
-        # Sum total hours across all resource tables
-        # Formula: (qty × hours) - (qty × 0.5) per resource
-        # The 0.5 is 30 minutes lunch deduction per person
-        LUNCH_DEDUCTION_HOURS = 0.5
-        total_hours = 0.0
+        # Hours = SUM of all manpower and equipment hours for this activity.
+        # User requested: "ADD UP ALL HOURS FROM EACH DIFFERENT ACTIVITY, MANPOWER AND EQUIPMENT"
+        resource_tables = [
+            act.get("manpower", []),
+            act.get("equipment", []),
+            act.get("extra_work_manpower", []),
+            act.get("extra_work_equipment", []),
+            act.get("consultant_manpower", []),
+            act.get("consultant_equipment", []),
+        ]
+        
+        summed_hours = 0.0
+        has_resources = False
+
+        for table in resource_tables:
+            for item in table:
+                has_resources = True
+                try:
+                    hrs = float(item.get("hours", 0) or 0)
+                    qty = float(item.get("qty", 1) or 1)
+                    if hrs > 0 and qty > 0:
+                        summed_hours += (hrs * qty)
+                except (ValueError, TypeError):
+                    pass
+
+        if has_resources and summed_hours > 0:
+            total_hours = summed_hours
+        elif has_resources and summed_hours == 0:
+            total_hours = 0.0
+        else:
+            # Fallback: use report general start/end time if absolutely no resources exist
+            general = report.get("general", {})
+            start_str = general.get("start_time", "")
+            end_str = general.get("end_time", "")
+            total_hours = _calc_duration_hours(start_str, end_str)
+
+        # Build resource_tables for subcontractor/extra work checks
         resource_tables = [
             act.get("manpower", []),
             act.get("equipment", []),
@@ -220,17 +280,6 @@ async def get_activities_consolidated(report_id: str):
             act.get("extra_work_equipment", []),
             act.get("consultant_manpower", []),
         ]
-        for table in resource_tables:
-            for item in table:
-                try:
-                    qty = float(item.get("qty", 0) or 0)
-                    hrs = float(item.get("hours", 0) or 0)
-                    if hrs > 4:
-                        total_hours += (qty * hrs) - (qty * LUNCH_DEDUCTION_HOURS)
-                    else:
-                        total_hours += qty * hrs
-                except (ValueError, TypeError):
-                    logger.warning(f"Bad qty/hours in activity '{work_area}': {item}")
 
         # Check subcontractor: any resource with is_3rd_party=True
         has_subcontract = False

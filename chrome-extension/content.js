@@ -35,6 +35,11 @@ window.addEventListener('pmweb-autofill-start', (event) => {
     window.dispatchEvent(new CustomEvent('PMWEB_FILL_TRIGGER', { detail: event.detail }));
 });
 
+// Listen for sync results from Main World and forward to Popup
+window.addEventListener('PMWEB_SYNC_RESULT', (event) => {
+    chrome.runtime.sendMessage({ type: 'PMWEB_SYNC_RESULT', data: event.detail });
+});
+
 // UI Helper: Floating Button
 chrome.storage.local.get(['pmwebRows'], (result) => {
     if (result.pmwebRows && result.pmwebRows.length > 0) {
@@ -55,8 +60,8 @@ function addFloatingButton(rows) {
     color: white; border: none; border-radius: 12px; cursor: pointer;
     box-shadow: 0 4px 15px rgba(0,0,0,0.2); font-family: sans-serif; font-weight: bold;
     `;
-    btn.onclick = () => {
+    btn.addEventListener('click', () => {
         window.dispatchEvent(new CustomEvent('PMWEB_FILL_TRIGGER', { detail: rows }));
-    };
+    });
     document.body.appendChild(btn);
 }

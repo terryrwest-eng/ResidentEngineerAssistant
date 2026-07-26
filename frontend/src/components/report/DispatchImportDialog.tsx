@@ -4,11 +4,13 @@
  * Upload a dispatch PDF → AI parses job columns → User selects jobs,
  * picks shift + end time → Activity is built and added to the report.
  *
- * 4-Phase Flow:
- *   Phase 1: Upload PDF
- *   Phase 2: Select job columns
- *   Phase 3: Choose shift + end time
- *   Phase 4: Preview + add to report
+ * 6-Phase Flow:
+ *   Phase 0: Upload PDF
+ *   Phase 1: Select job columns
+ *   Phase 2: Asphalt tonnage
+ *   Phase 3: Traffic control + additional context (voice)
+ *   Phase 4: Choose shift + end time
+ *   Phase 5: Preview + add to report
  */
 
 import { useState, useRef } from 'react';
@@ -27,15 +29,15 @@ import type {
 } from '@/types';
 import {
   Truck, Upload, Loader2, AlertCircle, CheckCircle2, X,
-  ChevronDown, ChevronUp, Clock, Users, Wrench, FileText, CalendarDays,
+  ChevronDown, ChevronUp, Clock, Users, Wrench, FileText, CalendarDays, Mic, Square,
 } from 'lucide-react';
 
 // ============================================
 // Constants
 // ============================================
 
-const PHASE_LABELS = ['Upload', 'Select Jobs', 'Shift & Time', 'Preview'] as const;
-type Phase = 0 | 1 | 2 | 3;
+const PHASE_LABELS = ['Upload', 'Select Jobs', 'Tonnage', 'Details', 'Shift & Time', 'Preview'] as const;
+type Phase = 0 | 1 | 2 | 3 | 4 | 5;
 
 // ============================================
 // Props
@@ -99,6 +101,24 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
   // Station ranges for grind & overlay (user enters manually)
   const [stationRanges, setStationRanges] = useState<{ from: string; to: string }[]>([{ from: '', to: '' }]);
   const isGrindOverlay = scheduleType === 'grind_overlay';
+  // Schedule picker — lets user switch between uploaded schedules
+  const [scheduleList, setScheduleList] = useState<{ id: string; filename: string; schedule_type: string }[]>([]);
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string>('');
+
+  // --- Phase 2: Asphalt Tonnage ---
+  const [asphaltTons, setAsphaltTons] = useState('');
+
+  // --- Phase 3: Traffic Control + Additional Context (voice) ---
+  const [trafficControl, setTrafficControl] = useState('');
+  const [additionalContext, setAdditionalContext] = useState('');
+  const [isRecordingTC, setIsRecordingTC] = useState(false);
+  const [isRecordingCtx, setIsRecordingCtx] = useState(false);
+  const [isTranscribingTC, setIsTranscribingTC] = useState(false);
+  const [isTranscribingCtx, setIsTranscribingCtx] = useState(false);
+  const tcRecorderRef = useRef<MediaRecorder | null>(null);
+  const tcChunksRef = useRef<Blob[]>([]);
+  const ctxRecorderRef = useRef<MediaRecorder | null>(null);
+  const ctxChunksRef = useRef<Blob[]>([]);
 
   // --- Phase 4: Preview ---
   const [previewActivity, setPreviewActivity] = useState<Activity | null>(null);
@@ -202,28 +222,131 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
       return;
     }
     setError(null);
+    // Go to Phase 2: Asphalt Tonnage
     setPhase(2);
+  }
+
+  function handleTonnageNext() {
+    // Go to Phase 3: Traffic Control + Context
+    setPhase(3);
+  }
+
+  async function handleDetailsNext() {
+    setError(null);
+    // Go to Phase 4: Shift & Time — load schedule now
+    setPhase(4);
 
     // Load schedule
     setScheduleLoading(true);
     setScheduleError(null);
     try {
+      // Fetch schedule list so user can switch between them
+      try {
+        const listResult = await scheduleApi.list();
+        const list = (listResult.schedules || []).map((s: { id: string; filename: string; schedule_type?: string }) => ({
+          id: s.id,
+          filename: s.filename,
+          schedule_type: s.schedule_type || 'digout',
+        }));
+        setScheduleList(list);
+        console.debug('[DispatchImport] Schedule list:', list.length, 'schedules');
+      } catch (listErr) {
+        console.debug('[DispatchImport] Failed to load schedule list:', listErr);
+      }
+
       const schedule = await scheduleApi.getActive();
       console.debug('[DispatchImport] Loaded schedule:', schedule.filename, 'type:', schedule.schedule_type, 'shifts:', Object.keys(schedule.shifts).length);
-      const keys = Object.keys(schedule.shifts).sort();
-      setShiftKeys(keys);
-      setAllShifts(schedule.shifts);
-      setScheduleType((schedule.schedule_type as 'digout' | 'grind_overlay') || 'digout');
-      if (keys.length > 0) {
-        setSelectedShift(keys[0]);
-        setShiftData(schedule.shifts[keys[0]]);
-      }
+      _applySchedule(schedule);
+      setSelectedScheduleId(schedule.id || '');
       setNoSchedule(false);
     } catch (err) {
       console.debug('[DispatchImport] No active schedule found (expected if none uploaded):', err);
       setNoSchedule(true);
     } finally {
       setScheduleLoading(false);
+    }
+  }
+
+  // ============================================
+  // Voice Recording Helpers (Traffic Control + Context)
+  // ============================================
+
+  function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(',')[1]); // strip data:audio/webm;base64, prefix
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function startVoiceRecording(
+    recorderRef: React.MutableRefObject<MediaRecorder | null>,
+    chunksRef: React.MutableRefObject<Blob[]>,
+    setRecording: (v: boolean) => void,
+  ) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorderRef.current = recorder;
+      recorder.start(250);
+      setRecording(true);
+      console.debug('[DispatchImport] Voice recording started');
+    } catch {
+      setError('Microphone access denied. Please allow microphone access.');
+    }
+  }
+
+  async function stopAndTranscribe(
+    recorderRef: React.MutableRefObject<MediaRecorder | null>,
+    chunksRef: React.MutableRefObject<Blob[]>,
+    setRecording: (v: boolean) => void,
+    setTranscribing: (v: boolean) => void,
+    setText: (prev: string) => void,
+    currentText: string,
+  ) {
+    if (!recorderRef.current) return;
+    const recorder = recorderRef.current;
+
+    // Wait for the recorder to fully stop and assemble chunks
+    await new Promise<void>((resolve) => {
+      recorder.onstop = () => {
+        recorder.stream.getTracks().forEach(t => t.stop());
+        resolve();
+      };
+      recorder.stop();
+    });
+
+    setRecording(false);
+    const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+    if (blob.size < 1000) {
+      setError('Recording too short. Please speak for at least a few seconds.');
+      return;
+    }
+
+    // Transcribe
+    setTranscribing(true);
+    try {
+      const base64 = await blobToBase64(blob);
+      const result = await scanApi.transcribe(base64, 'audio/webm', {});
+      // The transcribe endpoint returns raw_transcription or transcription
+      const transcription = result.raw_transcription || result.transcription || '';
+      console.debug('[DispatchImport] Transcription result:', transcription);
+      // Append to existing text
+      const separator = currentText.trim() ? ' ' : '';
+      setText(currentText.trim() + separator + transcription.trim());
+    } catch (err) {
+      console.error('[DispatchImport] Transcription failed:', err);
+      setError('Transcription failed. Try again or type your answer.');
+    } finally {
+      setTranscribing(false);
     }
   }
 
@@ -241,15 +364,19 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
       console.debug('[DispatchImport] Inline schedule upload:', schedFile.name);
       const schedule = await scheduleApi.upload(schedFile);
       console.debug('[DispatchImport] Schedule parsed:', schedule.total_shifts, 'shifts, type:', schedule.schedule_type);
-      const keys = Object.keys(schedule.shifts || {}).sort();
-      setShiftKeys(keys);
-      setAllShifts(schedule.shifts || {});
-      setScheduleType((schedule.schedule_type as 'digout' | 'grind_overlay') || 'digout');
-      if (keys.length > 0) {
-        setSelectedShift(keys[0]);
-        setShiftData(schedule.shifts[keys[0]]);
-      }
+      _applySchedule(schedule);
+      setSelectedScheduleId(schedule.id || '');
       setNoSchedule(false);
+
+      // Refresh schedule list so the new upload appears in the picker
+      try {
+        const listResult = await scheduleApi.list();
+        setScheduleList((listResult.schedules || []).map((s: { id: string; filename: string; schedule_type?: string }) => ({
+          id: s.id,
+          filename: s.filename,
+          schedule_type: s.schedule_type || 'digout',
+        })));
+      } catch { /* non-fatal */ }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Schedule upload failed';
       setScheduleError(msg);
@@ -270,6 +397,43 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
     console.debug('[DispatchImport] Selected shift:', key, 'rows:', allShifts[key]?.rows?.length);
   }
 
+  /** Apply a loaded schedule's data to state */
+  function _applySchedule(schedule: { shifts: Record<string, ScheduleShift>; schedule_type?: string }) {
+    const keys = Object.keys(schedule.shifts || {}).sort();
+    setShiftKeys(keys);
+    setAllShifts(schedule.shifts || {});
+    setScheduleType((schedule.schedule_type as 'digout' | 'grind_overlay') || 'digout');
+    // Reset station ranges when switching schedules
+    setStationRanges([{ from: '', to: '' }]);
+    if (keys.length > 0) {
+      setSelectedShift(keys[0]);
+      setShiftData(schedule.shifts[keys[0]]);
+    } else {
+      setSelectedShift('');
+      setShiftData(null);
+    }
+  }
+
+  /** Switch to a different uploaded schedule */
+  async function handleScheduleSwitch(scheduleId: string) {
+    if (!scheduleId || scheduleId === selectedScheduleId) return;
+    setSelectedScheduleId(scheduleId);
+    setScheduleLoading(true);
+    setScheduleError(null);
+    try {
+      const schedule = await scheduleApi.getById(scheduleId);
+      console.debug('[DispatchImport] Switched to schedule:', schedule.filename, 'type:', schedule.schedule_type);
+      _applySchedule(schedule);
+      setNoSchedule(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load schedule';
+      setScheduleError(msg);
+      console.error('[DispatchImport] Schedule switch failed:', err);
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
   function handlePhase3Next() {
     if (!parseResult) {
       console.warn('[DispatchImport] No parse result at phase 3');
@@ -287,6 +451,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
         noSchedule ? '' : selectedShift,
         scheduleType,
         isGrindOverlay ? stationRanges.filter(r => r.from.trim() || r.to.trim()) : [],
+        { asphaltTons, trafficControl, additionalContext },
       );
 
       // Scan for unmatched resources
@@ -345,7 +510,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
       } else {
         console.debug('[DispatchImport] All resources matched — advancing to preview');
         setPreviewActivity(activity);
-        setPhase(3);
+        setPhase(5);
       }
     }).catch(err => {
       console.error('[DispatchImport] Alias load failed, continuing anyway:', err);
@@ -359,9 +524,10 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
         noSchedule ? '' : selectedShift,
         scheduleType,
         isGrindOverlay ? stationRanges.filter(r => r.from.trim() || r.to.trim()) : [],
+        { asphaltTons, trafficControl, additionalContext },
       );
       setPreviewActivity(activity);
-      setPhase(3);
+      setPhase(5);
     });
   }
 
@@ -401,7 +567,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
     setShowResolution(false);
     setUnmatchedItems([]);
     setPendingActivity(null);
-    setPhase(3);
+    setPhase(5);
   }
 
   // ============================================
@@ -793,17 +959,167 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                   onClick={handlePhase2Next}
                   disabled={selectedJobIndices.size === 0}
                 >
+                  Next — Tonnage
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ========== Phase 2: Asphalt Tonnage ========== */}
+          {phase === 2 && (
+            <>
+              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem', marginBottom: 'var(--space-lg)' }}>
+                Enter the asphalt tonnage placed today.
+              </p>
+
+              <div style={{ marginBottom: 'var(--space-lg)' }}>
+                <label className="label" style={{ marginBottom: 'var(--space-xs)' }}>
+                  How much asphalt was laid today? (tons)
+                </label>
+                <input
+                  className="input"
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="e.g. 1,500"
+                  value={asphaltTons}
+                  onChange={(e) => setAsphaltTons(e.target.value)}
+                  style={{ maxWidth: 200 }}
+                />
+              </div>
+
+              {/* Navigation */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-lg)' }}>
+                <button className="btn btn-outline" onClick={() => setPhase(1)}>Back</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleTonnageNext}
+                >
+                  Next — Details
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ========== Phase 3: Traffic Control + Additional Context ========== */}
+          {phase === 3 && (
+            <>
+              <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem', marginBottom: 'var(--space-lg)' }}>
+                Describe the traffic control and add any additional summary context.
+              </p>
+
+              {/* Traffic Control */}
+              <div style={{ marginBottom: 'var(--space-lg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
+                  <label className="label" style={{ margin: 0 }}>
+                    What traffic control was set up?
+                  </label>
+                  <button
+                    className={`btn btn-icon ${isRecordingTC ? 'btn-danger' : 'btn-outline'}`}
+                    onClick={() => {
+                      if (isRecordingTC) {
+                        stopAndTranscribe(tcRecorderRef, tcChunksRef, setIsRecordingTC, setIsTranscribingTC, setTrafficControl, trafficControl);
+                      } else {
+                        startVoiceRecording(tcRecorderRef, tcChunksRef, setIsRecordingTC);
+                      }
+                    }}
+                    disabled={isTranscribingTC}
+                    style={{ minWidth: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title={isRecordingTC ? 'Stop recording' : 'Record voice'}
+                  >
+                    {isTranscribingTC ? (
+                      <Loader2 size={16} style={{ animation: 'spin 0.6s linear infinite' }} />
+                    ) : isRecordingTC ? (
+                      <Square size={16} />
+                    ) : (
+                      <Mic size={16} />
+                    )}
+                  </button>
+                </div>
+                {isRecordingTC && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-danger)', marginBottom: 'var(--space-xs)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-danger)', animation: 'pulse 1s infinite' }} />
+                    Recording... tap stop when done
+                  </div>
+                )}
+                <textarea
+                  className="input"
+                  placeholder="e.g. Full lane closure with K-rail, flaggers on both ends..."
+                  value={trafficControl}
+                  onChange={(e) => setTrafficControl(e.target.value)}
+                  rows={3}
+                  style={{ resize: 'vertical' }}
+                />
+              </div>
+
+              {/* Additional Context */}
+              <div style={{ marginBottom: 'var(--space-lg)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-xs)' }}>
+                  <label className="label" style={{ margin: 0 }}>
+                    Any additional summary context?
+                  </label>
+                  <button
+                    className={`btn btn-icon ${isRecordingCtx ? 'btn-danger' : 'btn-outline'}`}
+                    onClick={() => {
+                      if (isRecordingCtx) {
+                        stopAndTranscribe(ctxRecorderRef, ctxChunksRef, setIsRecordingCtx, setIsTranscribingCtx, setAdditionalContext, additionalContext);
+                      } else {
+                        startVoiceRecording(ctxRecorderRef, ctxChunksRef, setIsRecordingCtx);
+                      }
+                    }}
+                    disabled={isTranscribingCtx}
+                    style={{ minWidth: 36, height: 36, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title={isRecordingCtx ? 'Stop recording' : 'Record voice'}
+                  >
+                    {isTranscribingCtx ? (
+                      <Loader2 size={16} style={{ animation: 'spin 0.6s linear infinite' }} />
+                    ) : isRecordingCtx ? (
+                      <Square size={16} />
+                    ) : (
+                      <Mic size={16} />
+                    )}
+                  </button>
+                </div>
+                {isRecordingCtx && (
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-danger)', marginBottom: 'var(--space-xs)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-danger)', animation: 'pulse 1s infinite' }} />
+                    Recording... tap stop when done
+                  </div>
+                )}
+                <textarea
+                  className="input"
+                  placeholder="e.g. Crew started late due to equipment breakdown..."
+                  value={additionalContext}
+                  onChange={(e) => setAdditionalContext(e.target.value)}
+                  rows={3}
+                  style={{ resize: 'vertical' }}
+                />
+              </div>
+
+              {error && (
+                <div className="alert alert-error" style={{ marginBottom: 'var(--space-md)' }}>
+                  <AlertCircle size={16} /> {error}
+                </div>
+              )}
+
+              {/* Navigation */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-lg)' }}>
+                <button className="btn btn-outline" onClick={() => setPhase(2)}>Back</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleDetailsNext}
+                  disabled={isRecordingTC || isRecordingCtx || isTranscribingTC || isTranscribingCtx}
+                >
                   Next — Shift & Time
                 </button>
               </div>
             </>
           )}
 
-          {/* ========== Phase 2: Shift + End Time ========== */}
-          {phase === 2 && (
+          {/* ========== Phase 4: Shift + End Time ========== */}
+          {phase === 4 && (
             <>
               <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem', marginBottom: 'var(--space-lg)' }}>
-                Select the digout schedule shift and enter the end time for this crew.
+                Select the schedule shift and enter the end time for this crew.
               </p>
 
               {/* Schedule Section */}
@@ -853,6 +1169,37 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                 </div>
               ) : (
                 <div style={{ marginBottom: 'var(--space-lg)' }}>
+                  {/* Schedule Picker — switch between uploaded schedules */}
+                  {scheduleList.length > 1 && (
+                    <div style={{ marginBottom: 'var(--space-md)' }}>
+                      <label className="label" style={{ marginBottom: 'var(--space-xs)', display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                        Schedule
+                        <span style={{
+                          fontSize: '0.65rem',
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          background: isGrindOverlay ? '#E0F2FE' : '#F0FDF4',
+                          color: isGrindOverlay ? '#0369A1' : '#15803D',
+                          fontWeight: 500,
+                        }}>
+                          {isGrindOverlay ? 'Grind & Overlay' : 'Digout'}
+                        </span>
+                      </label>
+                      <select
+                        className="input"
+                        value={selectedScheduleId}
+                        onChange={(e) => handleScheduleSwitch(e.target.value)}
+                        style={{ marginBottom: 'var(--space-sm)' }}
+                      >
+                        {scheduleList.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.filename} ({s.schedule_type === 'grind_overlay' ? 'G&O' : 'Digout'})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   {/* Shift Dropdown */}
                   <label className="label" style={{ marginBottom: 'var(--space-xs)' }}>Shift</label>
                   <select
@@ -1006,7 +1353,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
 
               {/* Navigation */}
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-lg)' }}>
-                <button className="btn btn-outline" onClick={() => setPhase(1)}>Back</button>
+                <button className="btn btn-outline" onClick={() => setPhase(3)}>Back</button>
                 <button
                   className="btn btn-primary"
                   onClick={handlePhase3Next}
@@ -1018,7 +1365,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
           )}
 
           {/* ========== Phase 3: Preview + Add ========== */}
-          {phase === 3 && previewActivity && (
+          {phase === 5 && previewActivity && (
             <>
               <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem', marginBottom: 'var(--space-lg)' }}>
                 Review what will be added to your report.
@@ -1102,7 +1449,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
 
               {/* Navigation */}
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 'var(--space-lg)' }}>
-                <button className="btn btn-outline" onClick={() => setPhase(2)}>Back</button>
+                <button className="btn btn-outline" onClick={() => setPhase(4)}>Back</button>
                 <button
                   className="btn btn-primary"
                   onClick={handleAddToReport}
@@ -1124,7 +1471,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
             // Cancel resolution — advance with unmatched codes anyway
             if (pendingActivity) {
               setPreviewActivity(pendingActivity);
-              setPhase(3);
+              setPhase(5);
             }
             setShowResolution(false);
             setUnmatchedItems([]);

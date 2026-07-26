@@ -2,9 +2,9 @@
  * Daily Reporter V3 — Settings Page
  *
  * Tabs:
- *   Preferences  → Project defaults, default RE, default times, projects list, companies list, API key
- *   Master Lists → Manpower trades + Equipment types (used as dropdowns in report editor)
- *   Templates    → Built-in activity templates (read-only) + user custom templates (add/delete)
+ *   Preferences     → Project defaults, default RE, default times, projects list, companies list, API key
+ *   Resource Codes  → Custom labor (LL-) and equipment (LE-) codes for resource table dropdowns
+ *   Templates       → Built-in activity templates (read-only) + user custom templates (add/delete)
  *
  * WHY: All lists from the legacy app are migrated here. They feed dropdowns in the report
  *      editor (trade selector, equipment selector, company field, project field).
@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { settingsApi, type AppSettings } from '../lib/settingsApi';
+import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT } from '../lib/constants';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ const BUILTIN_TEMPLATES: UserTemplate[] = [
   { id: 'paving',          name: 'AC Paving',              body: 'AC paving placed at ___. Thickness ___". Compacted and checked for smoothness.' },
 ];
 
-type Tab = 'preferences' | 'masterlists' | 'templates';
+type Tab = 'preferences' | 'resourcecodes' | 'templates';
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -76,11 +77,11 @@ export function SettingsPage() {
   const [hasKey, setHasKey]           = useState(false);
   const [savingKey, setSavingKey]     = useState(false);
 
-  // Master lists state
-  const [manpowerList, setManpowerList]   = useState<string[]>([]);
-  const [equipmentList, setEquipmentList] = useState<string[]>([]);
-  const [newManpower, setNewManpower]     = useState('');
-  const [newEquipment, setNewEquipment]   = useState('');
+  // Custom resource codes state
+  const [customLabor, setCustomLabor]       = useState<string[]>([]);
+  const [customEquipment, setCustomEquipment] = useState<string[]>([]);
+  const [newLaborDesc, setNewLaborDesc]     = useState('');
+  const [newEquipDesc, setNewEquipDesc]     = useState('');
 
   // Templates state
   const [userTemplates, setUserTemplates]   = useState<UserTemplate[]>([]);
@@ -103,8 +104,8 @@ export function SettingsPage() {
         setDefaultStop(s.default_stop_time || '3:30 PM');
         setProjects(s.projects || []);
         setCompanies(s.companies || []);
-        setManpowerList(s.master_lists?.manpower || []);
-        setEquipmentList(s.master_lists?.equipment || []);
+        setCustomLabor(s.custom_resource_codes?.labor || []);
+        setCustomEquipment(s.custom_resource_codes?.equipment || []);
         setUserTemplates(s.user_templates || []);
         setHasKey(keyStatus.has_key);
       } catch (err) {
@@ -138,7 +139,6 @@ export function SettingsPage() {
         default_stop_time: defaultStop.trim(),
         projects,
         companies,
-        master_lists: { manpower: manpowerList, equipment: equipmentList },
         user_templates: userTemplates,
       });
       setSettings(updated.settings);
@@ -150,15 +150,20 @@ export function SettingsPage() {
     }
   }
 
-  // ── Master Lists save ────────────────────────────────────────────────────────
+  // ── Custom Resource Codes save ──────────────────────────────────────────────
 
-  async function saveMasterLists() {
+  async function saveResourceCodes() {
+    if (!settings) return;
     setSaving(true);
     try {
-      await settingsApi.updateMasterLists({ manpower: manpowerList, equipment: equipmentList });
-      showToast('Master lists saved', 'ok');
+      const updated = await settingsApi.update({
+        ...settings,
+        custom_resource_codes: { labor: customLabor, equipment: customEquipment },
+      });
+      setSettings(updated.settings);
+      showToast('Resource codes saved', 'ok');
     } catch {
-      showToast('Failed to save master lists', 'err');
+      showToast('Failed to save resource codes', 'err');
     } finally {
       setSaving(false);
     }
@@ -233,20 +238,38 @@ export function SettingsPage() {
     }
   }
 
-  function addManpower() {
-    const v = newManpower.trim();
-    if (!v) return;
-    if (manpowerList.includes(v)) { showToast('Already in list', 'err'); return; }
-    setManpowerList(prev => [...prev, v]);
-    setNewManpower('');
+  function addCustomLabor() {
+    const desc = newLaborDesc.trim();
+    if (!desc) return;
+    // Find next available LL- number (after hardcoded + existing custom)
+    const allCodes = [...DEFAULT_MANPOWER, ...customLabor];
+    let maxNum = 0;
+    for (const code of allCodes) {
+      const match = code.match(/^LL-(\d+)/);
+      if (match) maxNum = Math.max(maxNum, parseInt(match[1], 10));
+    }
+    const nextNum = String(maxNum + 1).padStart(2, '0');
+    const newCode = `LL-${nextNum}- ${desc}`;
+    if (customLabor.includes(newCode)) { showToast('Already exists', 'err'); return; }
+    setCustomLabor(prev => [...prev, newCode]);
+    setNewLaborDesc('');
   }
 
-  function addEquipment() {
-    const v = newEquipment.trim();
-    if (!v) return;
-    if (equipmentList.includes(v)) { showToast('Already in list', 'err'); return; }
-    setEquipmentList(prev => [...prev, v]);
-    setNewEquipment('');
+  function addCustomEquipment() {
+    const desc = newEquipDesc.trim();
+    if (!desc) return;
+    // Find next available LE- number (after hardcoded + existing custom)
+    const allCodes = [...DEFAULT_EQUIPMENT, ...customEquipment];
+    let maxNum = 0;
+    for (const code of allCodes) {
+      const match = code.match(/^LE-(\d+)/);
+      if (match) maxNum = Math.max(maxNum, parseInt(match[1], 10));
+    }
+    const nextNum = String(maxNum + 1).padStart(2, '0');
+    const newCode = `LE-${nextNum}- ${desc}`;
+    if (customEquipment.includes(newCode)) { showToast('Already exists', 'err'); return; }
+    setCustomEquipment(prev => [...prev, newCode]);
+    setNewEquipDesc('');
   }
 
   // ── Render helpers are defined at module level below to avoid focus loss ──
@@ -262,9 +285,9 @@ export function SettingsPage() {
   }
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'preferences',  label: 'Preferences',  icon: <Settings size={16} /> },
-    { id: 'masterlists',  label: 'Master Lists',  icon: <ListChecks size={16} /> },
-    { id: 'templates',    label: 'Templates',     icon: <FileText size={16} /> },
+    { id: 'preferences',   label: 'Preferences',    icon: <Settings size={16} /> },
+    { id: 'resourcecodes', label: 'Resource Codes',  icon: <ListChecks size={16} /> },
+    { id: 'templates',     label: 'Templates',       icon: <FileText size={16} /> },
   ];
 
   return (
@@ -420,40 +443,46 @@ export function SettingsPage() {
         </div>
       )}
 
-      {/* ── MASTER LISTS TAB ── */}
-      {activeTab === 'masterlists' && (
+      {/* ── RESOURCE CODES TAB ── */}
+      {activeTab === 'resourcecodes' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
           <div style={{ background: 'var(--info-bg, #eff6ff)', border: '1px solid var(--info-border, #bfdbfe)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', fontSize: 13, color: 'var(--info-text, #1e40af)' }}>
-            <strong>Master Lists</strong> populate the trade and equipment type dropdowns when adding manpower and equipment to a report activity. Add field-specific trades or equipment your crew regularly uses.
+            <strong>Custom Resource Codes</strong> are added to the resource table dropdowns alongside the built-in PMWeb codes. Enter a description and the next available code number will be auto-assigned.
           </div>
 
-          {/* Manpower Trades */}
+          {/* Custom Labor Codes */}
           <div className="card">
             <div className="card-header">
-              <h3>Manpower Trades</h3>
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Trade / classification options in the manpower row editor.</p>
+              <h3>Custom Labor Codes</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Added to the manpower resource dropdown (LL- codes). {DEFAULT_MANPOWER.length} built-in + {customLabor.length} custom.</p>
             </div>
             <div className="card-body">
-              <TagList items={manpowerList} onRemove={v => setManpowerList(prev => prev.filter(m => m !== v))} />
-              <AddRow value={newManpower} onChange={setNewManpower} onAdd={addManpower} placeholder="e.g., Grade Checker" />
+              {customLabor.length === 0 && (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 'var(--space-sm)' }}>No custom labor codes added yet.</p>
+              )}
+              <TagList items={customLabor} onRemove={v => setCustomLabor(prev => prev.filter(c => c !== v))} />
+              <AddRow value={newLaborDesc} onChange={setNewLaborDesc} onAdd={addCustomLabor} placeholder="e.g., Grade Checker" />
             </div>
           </div>
 
-          {/* Equipment Types */}
+          {/* Custom Equipment Codes */}
           <div className="card">
             <div className="card-header">
-              <h3>Equipment Types</h3>
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Equipment name options in the equipment row editor.</p>
+              <h3>Custom Equipment Codes</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Added to the equipment resource dropdown (LE- codes). {DEFAULT_EQUIPMENT.length} built-in + {customEquipment.length} custom.</p>
             </div>
             <div className="card-body">
-              <TagList items={equipmentList} onRemove={v => setEquipmentList(prev => prev.filter(e => e !== v))} />
-              <AddRow value={newEquipment} onChange={setNewEquipment} onAdd={addEquipment} placeholder="e.g., Vacuum Excavator" />
+              {customEquipment.length === 0 && (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 'var(--space-sm)' }}>No custom equipment codes added yet.</p>
+              )}
+              <TagList items={customEquipment} onRemove={v => setCustomEquipment(prev => prev.filter(c => c !== v))} />
+              <AddRow value={newEquipDesc} onChange={setNewEquipDesc} onAdd={addCustomEquipment} placeholder="e.g., Vacuum Excavator" />
             </div>
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary btn-lg" onClick={saveMasterLists} disabled={saving}>
-              {saving ? <><Loader2 size={16} className="spin" style={{ marginRight: 8 }} />Saving...</> : <><Save size={16} style={{ marginRight: 8 }} />Save Master Lists</>}
+            <button className="btn btn-primary btn-lg" onClick={saveResourceCodes} disabled={saving}>
+              {saving ? <><Loader2 size={16} className="spin" style={{ marginRight: 8 }} />Saving...</> : <><Save size={16} style={{ marginRight: 8 }} />Save Resource Codes</>}
             </button>
           </div>
         </div>

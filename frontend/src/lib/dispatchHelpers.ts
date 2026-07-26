@@ -135,6 +135,7 @@ export function buildActivity(
   shiftNumber: string,
   scheduleType: 'digout' | 'grind_overlay' = 'digout',
   stationRanges: { from: string; to: string }[] = [],
+  extraSummary: { asphaltTons?: string; trafficControl?: string; additionalContext?: string } = {},
 ): Activity {
   console.debug('[dispatchHelpers] buildActivity called:', {
     jobCount: selectedJobs.length,
@@ -144,6 +145,7 @@ export function buildActivity(
     shiftNumber,
     scheduleType,
     stationRanges,
+    extraSummary,
   });
 
   const matcher = getResourceMatcher();
@@ -186,7 +188,9 @@ export function buildActivity(
         }
       }
       for (const row of shiftData.rows) {
-        summary += `  - ${row.direction} DO #${row.do_number} — ${row.depth}' depth — ${row.sf.toLocaleString()} SF (${row.tons} tons)\n`;
+        const doStr = row.do_number && String(row.do_number) !== '0' ? ` DO #${row.do_number}` : '';
+        const depthStr = row.depth ? ` — ${row.depth}' depth` : '';
+        summary += `  - ${row.direction}${doStr}${depthStr} — ${row.sf.toLocaleString()} SF (${row.tons} tons)\n`;
       }
       summary += `  Total: ${shiftData.total_sf.toLocaleString()} SF / ${shiftData.total_tons.toLocaleString()} Tons\n`;
     } else {
@@ -202,6 +206,16 @@ export function buildActivity(
   for (const job of selectedJobs) {
     if (job.material && job.material !== 'N/A') summary += `• Material: ${job.material}\n`;
     if (job.plant && job.plant !== 'N/A') summary += `• Plant: ${job.plant}\n`;
+  }
+  // Extra summary data (asphalt tonnage, traffic control, additional context)
+  if (extraSummary.asphaltTons && extraSummary.asphaltTons.trim()) {
+    summary += `• Asphalt Laid: ${extraSummary.asphaltTons.trim()} tons\n`;
+  }
+  if (extraSummary.trafficControl && extraSummary.trafficControl.trim()) {
+    summary += `• Traffic Control: ${extraSummary.trafficControl.trim()}\n`;
+  }
+  if (extraSummary.additionalContext && extraSummary.additionalContext.trim()) {
+    summary += `• ${extraSummary.additionalContext.trim()}\n`;
   }
 
   const endTimeFormatted = formatEndTime(endTime);
@@ -295,7 +309,7 @@ export function buildActivity(
         });
       }
     }
-    return rows;
+      return rows;
   }
 
   // --- Build equipment rows from jobs ---

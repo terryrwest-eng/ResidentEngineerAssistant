@@ -109,40 +109,72 @@
     Checking connection...
   </div>
 
-  <div id="rowCountContainer"
-    style="display:none; margin: 16px 0; background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; padding: 12px; border-radius: 8px;">
-    <div style="text-align: center; color: #ffc107; font-weight: bold; font-size: 14px; margin-bottom: 4px;">Attention
-      Required</div>
-    <div id="rowCountMsg" style="text-align: center; font-size: 13px; color: #fff;"></div>
-  </div>
-
-  <button id="fetchBtn" class="btn btn-secondary" onclick="fetchData()">
-    📥 Fetch Data from App
-  </button>
-
-  <button id="fillBtn" class="btn btn-primary" onclick="fillPMWeb()" disabled>
-    ⚡ Fill PMWeb Rows
-  </button>
-
-  <button id="clearBtn" class="btn btn-danger" onclick="clearPMWeb()">
-    🗑️ Clear All Data
-  </button>
-
-  <!-- Activities Section -->
-  <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.15);">
-    <div style="font-size: 13px; font-weight: 600; color: #ffc107; margin-bottom: 8px;">📋 PMWeb Activities (OnSite)</div>
-
-    <div id="actRowCountContainer"
-      style="display:none; margin: 8px 0; background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; padding: 10px; border-radius: 8px;">
-      <div id="actRowCountMsg" style="text-align: center; font-size: 13px; color: #fff;"></div>
+  <!-- ═══════ FULL AUTOMATION SECTION ═══════ -->
+  <div style="background: rgba(102,126,234,0.15); border: 1px solid rgba(102,126,234,0.4); border-radius: 10px; padding: 12px; margin-bottom: 12px;">
+    <div style="font-size: 13px; font-weight: 700; color: #a78bfa; margin-bottom: 8px;">⚡ Full Automation</div>
+    
+    <!-- Monday Warning Banner -->
+    <div id="mondayBanner" style="display:none; background: rgba(255,193,7,0.2); border: 1px solid #ffc107; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
+      <div style="font-size: 12px; color: #ffc107; font-weight: 600;">📅 It's Monday! Verify the starting record #</div>
     </div>
 
-    <button id="fetchActBtn" class="btn btn-secondary">
-      📥 Fetch Activities
-    </button>
+    <!-- Record # Input -->
+    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+      <label style="font-size: 12px; color: rgba(255,255,255,0.7); white-space: nowrap;">Record #:</label>
+      <input id="recordNumInput" type="text" style="flex:1; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; font-size: 13px; font-weight: 600;" placeholder="e.g. 1470">
+      <select id="shiftSelect" style="padding: 6px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; font-size: 12px;">
+        <option value="Day">☀️ Day</option>
+        <option value="Evening">🌙 Evening</option>
+        <option value="Night">🌑 Night</option>
+      </select>
+    </div>
 
-    <button id="fillActBtn" class="btn btn-primary" disabled>
-      ⚡ Fill Activities
+    <!-- Progress Indicator -->
+    <div id="progressBar" style="display:none; margin-bottom: 8px;">
+      <div style="font-size: 11px; color: rgba(255,255,255,0.6); margin-bottom: 4px;" id="progressLabel">Phase 0/5</div>
+      <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+        <div id="progressFill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #667eea, #a78bfa); transition: width 0.5s;"></div>
+      </div>
+    </div>
+
+    <button id="autoFillBtn" class="btn btn-primary" style="background: linear-gradient(135deg, #a78bfa 0%, #667eea 50%, #764ba2 100%); font-size: 15px; padding: 14px;" disabled>
+      🚀 Auto-Fill Everything
+    </button>
+  </div>
+
+  <!-- ═══════ INDIVIDUAL CONTROLS (Fallback) ═══════ -->
+  <details style="margin-bottom: 8px;">
+    <summary style="font-size: 12px; color: rgba(255,255,255,0.5); cursor: pointer; padding: 4px 0;">▸ Individual Controls</summary>
+    <div style="padding-top: 8px;">
+      <div id="rowCountContainer"
+        style="display:none; margin: 8px 0; background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; padding: 10px; border-radius: 8px;">
+        <div style="text-align: center; color: #ffc107; font-weight: bold; font-size: 14px; margin-bottom: 4px;">Attention Required</div>
+        <div id="rowCountMsg" style="text-align: center; font-size: 13px; color: #fff;"></div>
+      </div>
+
+      <button id="fetchBtn" class="btn btn-secondary">📥 Fetch Resources</button>
+      <button id="fillBtn" class="btn btn-primary" disabled>⚡ Fill PMWeb Rows</button>
+
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <div id="actRowCountContainer"
+          style="display:none; margin: 8px 0; background: rgba(255, 193, 7, 0.1); border: 1px solid #ffc107; padding: 10px; border-radius: 8px;">
+          <div id="actRowCountMsg" style="text-align: center; font-size: 13px; color: #fff;"></div>
+        </div>
+        <button id="fetchActBtn" class="btn btn-secondary">📥 Fetch Activities</button>
+        <button id="fillActBtn" class="btn btn-primary" disabled>⚡ Fill Activities</button>
+      </div>
+
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <button id="clearBtn" class="btn btn-danger">🗑️ Clear All Data</button>
+      </div>
+    </div>
+  </details>
+
+  <!-- Settings Sync Section -->
+  <div style="padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.15);">
+    <div style="font-size: 13px; font-weight: 600; color: #2ed573; margin-bottom: 8px;">⚙️ Settings Sync</div>
+    <button id="syncResourcesBtn" class="btn btn-secondary" onclick="syncPMWebResources()">
+      🔍 Find New PMWeb Resources
     </button>
   </div>
 

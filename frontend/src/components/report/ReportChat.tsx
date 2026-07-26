@@ -21,7 +21,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { scanApi, scheduleApi } from '@/lib/api';
-import { Sparkles, Send, X, Check, XCircle, Mic, MicOff, MessageSquare } from 'lucide-react';
+import { Sparkles, Send, X, Check, XCircle, Mic, MicOff, MessageSquare, Trash2 } from 'lucide-react';
 import type { Activity, GeneralInfo, Schedule } from '@/types';
 
 // --- Types ---
@@ -37,7 +37,9 @@ interface ChatMessage {
 
 interface PendingChanges {
   general: Record<string, unknown> | null;
-  activities: Activity[] | null;
+  modifiedActivities: Partial<Activity & { id: string }>[] | null;
+  newActivities: Activity[] | null;
+  deletedActivityIds: string[] | null;
 }
 
 // --- Constants ---
@@ -47,9 +49,34 @@ const RECORDING_MAX_MS = 120_000; // 2 minute max recording
 // --- Component ---
 
 export function ReportChat({ onClose }: { onClose: () => void }) {
-  const { report, updateGeneral, replaceActivities, bumpRevision } = useReportStore();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const { report, updateGeneral, updateActivity, addActivity, removeActivity, bumpRevision } = useReportStore();
+  
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    try {
+      const saved = localStorage.getItem('reportAssistantChatHistory');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.warn('[ReportChat] Failed to parse chat history', e);
+    }
+    return [];
+  });
+  
   const [input, setInput] = useState('');
+
+  // Save to localStorage whenever messages change (keep last 50)
+  useEffect(() => {
+    try {
+      const limitedMessages = messages.slice(-50);
+      localStorage.setItem('reportAssistantChatHistory', JSON.stringify(limitedMessages));
+    } catch (e) {
+      console.warn('[ReportChat] Failed to save chat history', e);
+    }
+  }, [messages]);
+
+  const clearChat = () => {
+    setMessages([]);
+    localStorage.removeItem('reportAssistantChatHistory');
+  };
   const [isLoading, setIsLoading] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<PendingChanges | null>(null);
 
@@ -119,10 +146,12 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
 
       setMessages(prev => [...prev, { role: 'model', content: response.reply }]);
 
-      if (response.modified_general || response.modified_activities) {
+      if (response.modified_general || response.modified_activities || response.new_activities || response.deleted_activity_ids) {
         setPendingChanges({
           general: response.modified_general,
-          activities: response.modified_activities as Activity[] | null,
+          modifiedActivities: response.modified_activities as Partial<Activity & { id: string }>[] | null,
+          newActivities: response.new_activities as Activity[] | null,
+          deletedActivityIds: response.deleted_activity_ids ?? null,
         });
       }
     } catch (error) {
@@ -179,10 +208,12 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
       aiMessages.push({ role: 'model', content: response.reply });
       setMessages(prev => [...prev, ...aiMessages]);
 
-      if (response.modified_general || response.modified_activities) {
+      if (response.modified_general || response.modified_activities || response.new_activities || response.deleted_activity_ids) {
         setPendingChanges({
           general: response.modified_general,
-          activities: response.modified_activities as Activity[] | null,
+          modifiedActivities: response.modified_activities as Partial<Activity & { id: string }>[] | null,
+          newActivities: response.new_activities as Activity[] | null,
+          deletedActivityIds: response.deleted_activity_ids ?? null,
         });
       }
     } catch (error) {
@@ -287,14 +318,39 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
   const handleApply = () => {
     if (!pendingChanges) return;
 
+    // 1. Apply general info changes (partial merge — only changed fields)
     if (pendingChanges.general) {
       updateGeneral(pendingChanges.general as Partial<GeneralInfo>);
       console.debug('[ReportChat] Applied general info changes:', Object.keys(pendingChanges.general));
     }
 
-    if (pendingChanges.activities) {
-      replaceActivities(pendingChanges.activities);
-      console.debug('[ReportChat] Applied activities changes:', pendingChanges.activities.length, 'activities');
+    // 2. Merge modified activities (surgical — only changed fields per activity)
+    if (pendingChanges.modifiedActivities) {
+      for (const patch of pendingChanges.modifiedActivities) {
+        if (!patch.id) {
+          console.warn('[ReportChat] Skipping modified activity with no ID:', patch);
+          continue;
+        }
+        const { id, ...updates } = patch;
+        updateActivity(id, updates as Partial<Activity>);
+        console.debug(`[ReportChat] Merged changes into activity ${id}:`, Object.keys(updates));
+      }
+    }
+
+    // 3. Add brand new activities
+    if (pendingChanges.newActivities) {
+      for (const activity of pendingChanges.newActivities) {
+        addActivity(activity);
+        console.debug(`[ReportChat] Added new activity: ${activity.id} — ${activity.work_area}`);
+      }
+    }
+
+    // 4. Delete activities by ID
+    if (pendingChanges.deletedActivityIds) {
+      for (const actId of pendingChanges.deletedActivityIds) {
+        removeActivity(actId);
+        console.debug(`[ReportChat] Deleted activity: ${actId}`);
+      }
     }
 
     setPendingChanges(null);
@@ -322,8 +378,17 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
       const keys = Object.keys(pendingChanges.general);
       parts.push(`${keys.length} field${keys.length > 1 ? 's' : ''} in General Info`);
     }
-    if (pendingChanges.activities) {
-      parts.push(`${pendingChanges.activities.length} activit${pendingChanges.activities.length === 1 ? 'y' : 'ies'}`);
+    if (pendingChanges.modifiedActivities) {
+      const n = pendingChanges.modifiedActivities.length;
+      parts.push(`${n} activit${n === 1 ? 'y' : 'ies'} updated`);
+    }
+    if (pendingChanges.newActivities) {
+      const n = pendingChanges.newActivities.length;
+      parts.push(`${n} new activit${n === 1 ? 'y' : 'ies'}`);
+    }
+    if (pendingChanges.deletedActivityIds) {
+      const n = pendingChanges.deletedActivityIds.length;
+      parts.push(`${n} activit${n === 1 ? 'y' : 'ies'} deleted`);
     }
     return parts.join(' + ');
   };
@@ -358,9 +423,22 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
               </span>
             </div>
           </div>
-          <button className="btn-icon" onClick={onClose} aria-label="Close report chat">
-            <X size={20} />
-          </button>
+          <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+            {messages.length > 0 && (
+              <button 
+                className="btn-icon" 
+                onClick={clearChat} 
+                aria-label="Clear chat history"
+                title="Clear Memory"
+                style={{ color: 'var(--color-danger)' }}
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
+            <button className="btn-icon" onClick={onClose} aria-label="Close report chat">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* ─── Chat Area ─── */}

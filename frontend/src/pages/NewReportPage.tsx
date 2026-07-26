@@ -99,6 +99,10 @@ export function NewReportPage() {
       }
       // Always start fresh when navigating to /report/new
       closeReport();
+      // Clear stale extension context so Chrome extension doesn't serve previous report
+      reportApi.clearExtensionContext().catch(() => {
+        console.debug('[NewReportPage] Extension context clear failed (non-critical)');
+      });
       // Fetch settings defaults for new reports
       settingsApi.get().then((s) => {
         console.debug('[NewReportPage] Settings loaded, applying defaults:', {

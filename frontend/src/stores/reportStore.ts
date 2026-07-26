@@ -10,6 +10,7 @@
 
 import { create } from 'zustand';
 import { reportApi } from '@/lib/api';
+import { cleanSummaryBullets } from '@/lib/formatters';
 import type { Report, Activity, GeneralInfo } from '@/types';
 
 // --- Constants ---
@@ -139,8 +140,15 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     set({ isLoading: true, loadError: null });
     try {
       const data = await reportApi.get(id);
+      const cleanedData: Report = {
+        ...data,
+        activities: (data.activities || []).map((act) => ({
+          ...act,
+          summary: cleanSummaryBullets(act.summary || (act as unknown as { summary_html?: string }).summary_html),
+        })),
+      };
       set({
-        report: data,
+        report: cleanedData,
         isSaved: true,      // It exists on disk
         isDirty: false,      // Just loaded — no changes yet
         isLoading: false,
@@ -176,10 +184,15 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     const { report } = get();
     if (!report) return;
 
+    const cleanedActivity: Activity = {
+      ...activity,
+      summary: cleanSummaryBullets(activity.summary || (activity as unknown as { summary_html?: string }).summary_html),
+    };
+
     set({
       report: {
         ...report,
-        activities: [...report.activities, activity],
+        activities: [...report.activities, cleanedActivity],
         updated_at: new Date().toISOString(),
       },
       isDirty: true,
@@ -195,9 +208,14 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     set({
       report: {
         ...report,
-        activities: report.activities.map((act) =>
-          act.id === activityId ? { ...act, ...updates } : act
-        ),
+        activities: report.activities.map((act) => {
+          if (act.id !== activityId) return act;
+          const rawSummary = updates.summary ?? (updates as unknown as { summary_html?: string }).summary_html;
+          const updatedSummary = rawSummary !== undefined
+            ? (/<[a-z][\s\S]*>/i.test(rawSummary) ? cleanSummaryBullets(rawSummary) : rawSummary)
+            : act.summary;
+          return { ...act, ...updates, summary: updatedSummary };
+        }),
         updated_at: new Date().toISOString(),
       },
       isDirty: true,
@@ -242,8 +260,13 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     const { report } = get();
     if (!report) return;
 
+    const cleanedActivities = (activities || []).map((act) => ({
+      ...act,
+      summary: cleanSummaryBullets(act.summary || (act as unknown as { summary_html?: string }).summary_html),
+    }));
+
     set({
-      report: { ...report, activities, updated_at: new Date().toISOString() },
+      report: { ...report, activities: cleanedActivities, updated_at: new Date().toISOString() },
       isDirty: true,
     });
 
@@ -322,6 +345,36 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     });
 
     await saveReport();
+
+    // --- Desktop App: Auto-save Word file to local work folder ---
+    // window.pywebview.api is ONLY available when running inside the
+    // native desktop app (PyWebView). On web browsers and mobile,
+    // window.pywebview is undefined and this block is safely skipped.
+    // This block runs AFTER the report is fully saved to the cloud,
+    // so even if this fails, the report data is safe.
+    try {
+      const pywebview = (window as unknown as Record<string, unknown>).pywebview as
+        | { api: { auto_save_word: (id: string, date: string) => Promise<{ success: boolean; path?: string; error?: string; skipped?: boolean }> } }
+        | undefined;
+      if (pywebview?.api?.auto_save_word) {
+        const currentReport = get().report;
+        if (currentReport?.id) {
+          const reportDate = currentReport.general?.report_date || 'unknown';
+          const result = await pywebview.api.auto_save_word(currentReport.id, reportDate);
+          if (result?.skipped) {
+            console.info('[Desktop] Word already saved for this report — no duplicate created');
+          } else if (result?.success) {
+            console.info('[Desktop] Word auto-saved to:', result.path);
+          } else {
+            console.warn('[Desktop] Word auto-save failed:', result?.error);
+          }
+        }
+      }
+    } catch (err) {
+      // Silent catch — must NEVER break the submit flow
+      // The report is already saved to the cloud at this point
+      console.warn('[Desktop] Auto-save Word error (non-fatal):', err);
+    }
   },
 
   closeReport: () => {

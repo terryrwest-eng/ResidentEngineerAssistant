@@ -173,13 +173,13 @@ FIELD RULES:
    - Do NOT mark overtime pay as extra work scope — they are unrelated
 
 STYLE — MANDATORY:
-1. Use DIRECT field language. "Crews excavated from Sta 10+00 to 12+50" NOT "The construction workforce proceeded with excavation activities."
+1. Use DIRECT field language. "The crew excavated from Sta 10+00 to 12+50" NOT "The construction workforce proceeded with excavation activities."
 2. NO unnecessary adjectives: "properly," "efficiently," "successfully," "in accordance with" — DELETE.
 3. NO corporate vocabulary: "utilized" → "used," "commenced" → "started," "implemented" → "installed."
 4. STATION FORMAT: Always use "Sta XX+XX" (e.g. "Sta 10+50 to 12+00").
-5. FIRST PERSON TO THIRD PERSON — ONLY when the sentence uses a first-person pronoun (we/I/our/us/my). Use the real subject (company, trade) when known. Use "The crew" only as a last resort. Do NOT prepend "The crew" to bullets already in third person.
+5. FIRST PERSON TO THIRD PERSON — ONLY when the sentence uses a first-person pronoun (we/I/our/us/my). Use the real subject (company, trade) when known. ALWAYS use "The crew" instead of "crews" when referring to a group of workers. Do NOT prepend "The crew" to bullets already in third person.
 6. Fix spelling, grammar, punctuation. Do NOT change technical terms or proper nouns.
-7. Use "• " (bullet character) for ALL bullets in summary_html. NEVER use * or -.
+7. Use "• " (bullet character) for ALL bullets in summary_html. NEVER use * or -. Do NOT use HTML tags (<ul>, <li>, <p>, etc.). Use PLAIN TEXT.
 8. Use periods between thoughts, NOT semicolons.
 9. Everything in past tense. "Placed concrete" NOT "Performing concrete work."
 10. DO NOT fabricate or guess content. Only extract what is explicitly in the document.
@@ -341,6 +341,40 @@ def _clean_json(text: str) -> dict[str, Any]:
         raise
 
 
+def _clean_summary_bullets(text: str) -> str:
+    """
+    Ensures summary text uses plain text bullet points starting with '• ' instead of HTML tags (<ul>, <li>, etc.).
+    Converts <li>, <p>, <br> to newline bullets and strips all remaining HTML tags.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+
+    t = text
+
+    # Convert <li> tags to newlines with bullet character
+    t = re.sub(r"<li[^>]*>", "\n• ", t, flags=re.IGNORECASE)
+    # Convert block-closing tags and <br> to newlines
+    t = re.sub(r"<br\s*/?>", "\n", t, flags=re.IGNORECASE)
+    t = re.sub(r"</(?:p|div|li|tr|ul|ol)>", "\n", t, flags=re.IGNORECASE)
+    # Remove all remaining HTML tags
+    t = re.sub(r"<[^>]+>", "", t)
+    # Decode common HTML entities
+    t = t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replace("&quot;", '"')
+
+    # Process lines: trim each line and ensure bullet format
+    raw_lines = [line.strip() for line in t.split("\n")]
+    cleaned_lines = []
+    for line in raw_lines:
+        if not line:
+            continue
+        # Strip existing bullet markers (•, -, *, –) or numbered lists (e.g. 1., 2.)
+        line_content = re.sub(r"^[•\-\*\–\d+\.]\s*", "", line).strip()
+        if line_content:
+            cleaned_lines.append(f"• {line_content}")
+
+    return "\n".join(cleaned_lines)
+
+
 def _convert_heic_to_jpeg(content: bytes) -> bytes:
     """Convert HEIC/HEIF to JPEG for Gemini compatibility."""
     try:
@@ -385,7 +419,7 @@ def _aggregate_extra_work(raw: dict[str, Any]) -> dict[str, Any]:
             aggregated_eq[name] = entry
 
     return {
-        'summary_html': raw.get('summary_html', raw.get('description', '')),
+        'summary_html': _clean_summary_bullets(raw.get('summary_html', raw.get('description', ''))),
         'manpower': list(aggregated_mp.values()),
         'equipment': list(aggregated_eq.values()),
     }
@@ -1334,7 +1368,9 @@ class ReportChatResponse(BaseModel):
     reply: str
     transcription: str = ''       # What the AI heard (only if audio was sent)
     modified_general: dict[str, Any] | None = None
-    modified_activities: list[dict[str, Any]] | None = None
+    modified_activities: list[dict[str, Any]] | None = None   # Partial updates keyed by activity ID
+    new_activities: list[dict[str, Any]] | None = None        # Brand new activities to add
+    deleted_activity_ids: list[str] | None = None             # Activity IDs to remove
 
 
 @router.post('/report-chat', response_model=ReportChatResponse)
@@ -1424,7 +1460,7 @@ Your job is to help the user build and modify their daily field report through n
 YOU HAVE FULL CONTROL OVER:
 1. GENERAL INFO — project name, project number, project location, inspector name, resident engineer,
    report date, start time, end time, sky conditions, temperature high/low, wind info, notes
-2. ACTIVITIES — each activity has: work_area, stations, summary (HTML bullets),
+2. ACTIVITIES — each activity has: id, work_area, stations, summary (plain text bullet points starting with •),
    manpower[] (trade, name, qty, hours, start_time, stop_time, company, classification, is_3rd_party, is_extra_work, is_consultant),
    equipment[] (name, description, qty, hours, start_time, stop_time, company, is_3rd_party, is_extra_work, is_consultant, is_rental),
    extra_work_manpower[], extra_work_equipment[], consultant_manpower[]
@@ -1436,33 +1472,72 @@ WHAT YOU CAN DO:
 - Move resources between activities
 - Edit summaries, work areas, hours, quantities
 - Delete activities or resources
+- Move activities between different reports using the "cross_report_moves" action
 - Answer questions about the report
 - Anything the user asks regarding the report
 
-CRITICAL RULES:
-1. If the user describes work, weather, crew, or equipment — UPDATE THE REPORT. Don't just acknowledge it.
-2. If you modify general info, return it in "modified_general" with ONLY the changed fields.
-3. If you modify activities, return the FULL activities array in "modified_activities".
-4. If no modifications needed (just answering a question), set both to null.
-5. PRESERVE all existing data that wasn't asked to change.
-6. When creating activities, generate a unique ID using the format "ai-" + timestamp.
-7. Use "•" (bullet character) for summary bullets. Never asterisks or dashes.
-8. Summary text should be professional construction language — past tense, factual, specific.
-9. For sky_conditions, use objects like {"id": "sunny", "label": "Sunny", "emoji": "☀️"}.
-   Valid options: sunny, partly-cloudy, cloudy, overcast, rainy, windy, foggy, hot, cold.
-10. Hours default to 8 if not specified. Start time defaults to "7:00 AM", stop time to "3:30 PM".
-11. If the user's message is vague or you need clarification, ASK — don't guess.
+═══════════════════════════════════════════════════════════
+CRITICAL: SURGICAL UPDATES ONLY — DO NOT REPLACE THE FULL ARRAY
+═══════════════════════════════════════════════════════════
+
+You are a SURGICAL instrument. You touch ONLY what the user explicitly asked you to change.
+Everything else stays exactly as it is — you do NOT reproduce it, you do NOT return it.
+
+RULES FOR GENERAL INFO:
+- Return "modified_general" with ONLY the fields the user asked to change.
+- Fields not mentioned by the user = do NOT include them.
+
+RULES FOR EXISTING ACTIVITIES:
+- Return "modified_activities" with ONLY the activities that need changes.
+- Each entry MUST include the activity's "id" so the app knows which one to update.
+- Include ONLY the fields that changed within that activity.
+- Example: user says "change company to Picket Fences on Activity 1" →
+  return [{"id": "act-1", "manpower": [... full manpower array with company changed ...]}]
+- For sub-arrays (manpower, equipment, extra_work_manpower, extra_work_equipment, consultant_manpower):
+  If the user's change affects rows inside a sub-array, return the COMPLETE sub-array for that
+  resource type with the requested changes applied — but ONLY for the specific activity being modified.
+  Sub-arrays the user did NOT mention = do NOT include them.
+- Example: user says "change the summary" → return [{"id": "act-1", "summary": "new text"}]
+  Do NOT include manpower, equipment, or any other field.
+
+RULES FOR NEW ACTIVITIES:
+- Put brand new activities in "new_activities" (NOT in "modified_activities").
+- Generate a unique ID using the format "ai-" + current timestamp in milliseconds.
+- Include all relevant fields: work_area, stations, summary, manpower[], equipment[], etc.
+
+RULES FOR DELETING ACTIVITIES:
+- Put the IDs of activities to remove in "deleted_activity_ids".
+
+RULES FOR QUESTIONS:
+- If no modifications are needed (just answering a question), set all modification fields to null.
+- If the user's request is ambiguous, ASK a clarifying question. Return all modification fields as null.
+  "Which activity should I update?" or "What hours did they work?" — always ask, never guess.
+
+RULES FOR CROSS-REPORT MOVES:
+- If the user asks to move an activity to a different report, put the action in "cross_report_moves".
+- Provide the "source_activity_id" (from the current report) and the "target_report_id" (from the AVAILABLE REPORTS list below).
+
+FORMATTING RULES:
+- Use "•" (bullet character) for summary bullets. Never asterisks or dashes.
+- Do NOT use HTML tags (<ul>, <li>, <p>, <br>, etc.). Use PLAIN TEXT with "• " (bullet character) on each line.
+- Summary text: professional construction language, past tense, factual, specific.
+- For sky_conditions, use objects: {"id": "sunny", "label": "Sunny", "emoji": "☀️"}.
+  Valid: sunny, partly-cloudy, cloudy, overcast, rainy, windy, foggy, hot, cold.
+- Hours default to 8 if not specified. Start time defaults to "7:00 AM", stop time to "3:30 PM".
 
 PERSONA:
 - Talk like a helpful construction colleague, not a corporate AI.
-- Keep replies short and direct. "Got it, added 4 laborers to Station 10+00." not "I have successfully processed your request..."
-- If something is unclear, ask: "Which activity should I add them to?" or "What hours did they work?"
+- Keep replies short and direct. "Got it, changed company to Picket Fences on Activity 1." not "I have successfully processed your request..."
+- If something is unclear, ask. Do NOT guess.
 
 OUTPUT JSON:
 {
   "reply": "Short message about what you did or are asking",
   "modified_general": null or { "field_name": "new_value", ... },
-  "modified_activities": null or [ { full activity objects } ]
+  "modified_activities": null or [ { "id": "existing-id", ...only changed fields... } ],
+  "new_activities": null or [ { full new activity objects } ],
+  "deleted_activity_ids": null or [ "id-1", "id-2" ],
+  "cross_report_moves": null or [ { "source_activity_id": "act-1", "target_report_id": "report-id-here" } ]
 }
 """
 
@@ -1477,7 +1552,18 @@ OUTPUT JSON:
             system_prompt += schedule_context
             logger.info(f'[report-chat] Schedule context injected ({len(json.dumps(schedule))} chars)')
 
-        user_prompt = f"""CURRENT REPORT STATE:
+        # ─── Inject cross-report context ───
+        from app.services.database import list_reports, get_report, save_report
+        all_reports = list_reports(limit=50)
+        reports_summary = []
+        for r in all_reports:
+            reports_summary.append(f"ID: {r.get('id')} | Date: {r.get('report_date')} | Project: {r.get('project_name')}")
+        reports_context = "\n".join(reports_summary)
+
+        user_prompt = f"""AVAILABLE REPORTS (For cross-report moves):
+{reports_context}
+
+CURRENT REPORT STATE:
 
 GENERAL INFO:
 {json.dumps(general, indent=2)}
@@ -1517,18 +1603,62 @@ Return JSON:"""
         reply = data.get('reply', '')
         modified_general = data.get('modified_general')
         modified_activities = data.get('modified_activities')
+        new_activities = data.get('new_activities')
+        deleted_activity_ids = data.get('deleted_activity_ids')
+        cross_report_moves = data.get('cross_report_moves')
+
+        # Execute cross-report moves
+        if cross_report_moves:
+            if deleted_activity_ids is None:
+                deleted_activity_ids = []
+            for move in cross_report_moves:
+                source_id = move.get('source_activity_id')
+                target_id = move.get('target_report_id')
+                if source_id and target_id:
+                    act_to_move = next((a for a in activities if a.get('id') == source_id), None)
+                    if act_to_move:
+                        target_report = get_report(target_id)
+                        if target_report:
+                            target_report.setdefault('activities', []).append(act_to_move)
+                            save_report(target_report)
+                            logger.info(f"[report-chat] Moved activity {source_id} to report {target_id}")
+                            deleted_activity_ids.append(source_id)
+                        else:
+                            logger.warning(f"[report-chat] Target report {target_id} not found")
+
+        # Sanitize summary bullets to plain text with dot bullets
+        if modified_activities is not None:
+            for act in modified_activities:
+                if isinstance(act, dict):
+                    if 'summary' in act and act['summary']:
+                        act['summary'] = _clean_summary_bullets(str(act['summary']))
+                    if 'summary_html' in act and act['summary_html']:
+                        act['summary_html'] = _clean_summary_bullets(str(act['summary_html']))
+        if new_activities is not None:
+            for act in new_activities:
+                if isinstance(act, dict):
+                    if 'summary' in act and act['summary']:
+                        act['summary'] = _clean_summary_bullets(str(act['summary']))
+                    if 'summary_html' in act and act['summary_html']:
+                        act['summary_html'] = _clean_summary_bullets(str(act['summary_html']))
 
         logger.info(f'[report-chat] Reply: {reply[:80]}...')
         if modified_general:
             logger.info(f'[report-chat] Modified general fields: {list(modified_general.keys())}')
         if modified_activities is not None:
-            logger.info(f'[report-chat] Modified activities: {len(modified_activities)} total')
+            logger.info(f'[report-chat] Modified {len(modified_activities)} existing activities (partial updates)')
+        if new_activities is not None:
+            logger.info(f'[report-chat] Adding {len(new_activities)} new activities')
+        if deleted_activity_ids is not None:
+            logger.info(f'[report-chat] Deleting activity IDs: {deleted_activity_ids}')
 
         return ReportChatResponse(
             reply=reply,
             transcription=transcription,
             modified_general=modified_general,
             modified_activities=modified_activities,
+            new_activities=new_activities,
+            deleted_activity_ids=deleted_activity_ids,
         )
 
     except HTTPException:
@@ -1536,6 +1666,101 @@ Return JSON:"""
     except Exception as exc:
         logger.exception(f'[report-chat] Error: {exc}')
         raise HTTPException(status_code=500, detail=str(exc))
+
+# ============================================
+# ENDPOINT: Email Summary
+# Button: "📧 Email Summary" in Activity List header
+# WHY: Takes all activity summaries and combines them into ONE flowing
+#      narrative that reads like a professional email update — not bullet
+#      fragments from separate activities.
+# ============================================
+
+class EmailSummaryRequest(BaseModel):
+    activities: list[dict[str, Any]]     # Full activities array
+    project_name: str = ''
+    report_date: str = ''
+
+
+@router.post('/email-summary')
+async def email_summary(request: EmailSummaryRequest):
+    """Combine all activity summaries into one cohesive email-ready narrative."""
+    if not request.activities:
+        raise HTTPException(status_code=400, detail='No activities to summarize')
+
+    client, model_name = _get_gemini_client()
+
+    try:
+        from google.genai import types as genai_types
+
+        # Build the input: each activity's work area + summary
+        activity_blocks: list[str] = []
+        for i, act in enumerate(request.activities, 1):
+            work_area = act.get('work_area', f'Activity {i}')
+            summary = act.get('summary', '')
+            if not summary:
+                continue
+            activity_blocks.append(f'LOCATION: {work_area}\n{summary}')
+
+        if not activity_blocks:
+            return {'status': 'success', 'text': 'No summaries to combine — all activities are empty.'}
+
+        combined_input = '\n\n---\n\n'.join(activity_blocks)
+
+        system_prompt = """You are a SENIOR Pipeline Construction Inspector writing a daily progress update email.
+
+TASK: Take the individual activity summaries below and combine them into ONE cohesive, flowing narrative.
+This will be dropped directly into an email to project stakeholders, superintendents, and management.
+
+CRITICAL RULES:
+1. PRESERVE ALL CONTENT — every detail, measurement, station number, crew count, quantity, and action from every activity MUST appear in the output. Do NOT summarize, shorten, or omit anything.
+2. FLOW AS ONE — the output should read as one continuous update, NOT as separate sections per activity. Transition naturally between locations and topics.
+3. ORGANIZE LOGICALLY — group related work together even if it came from different activities. Flow geographically or chronologically, whichever reads better.
+4. PROFESSIONAL TONE — past tense, third person, factual. Same style as a Resident Engineer's daily report.
+5. NO HEADERS OR BULLETS — write in paragraph form. This is an email body, not a report form.
+6. NO GREETINGS OR SIGN-OFFS — output ONLY the body text. The user will add their own greeting and signature.
+7. NEUTRAL — no opinions, judgments, or evaluations. Just state what happened.
+
+BANNED:
+- "to facilitate," "in order to," "for the purpose of," "to ensure"
+- "utilized" (say "used"), "commenced" (say "started")
+- Filler adjectives: "existing," "current," "designated," "respective"
+- Do NOT add information that isn't in the source summaries."""
+
+        project_context = ''
+        if request.project_name:
+            project_context += f'\nProject: {request.project_name}'
+        if request.report_date:
+            project_context += f'\nDate: {request.report_date}'
+
+        user_prompt = f"""{project_context}
+
+ACTIVITY SUMMARIES TO COMBINE:
+
+{combined_input}
+
+Write the combined email body now:"""
+
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
+            contents=[system_prompt, user_prompt],
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=16384,
+            ),
+        )
+
+        text = response.text.strip()
+        # Clean any markdown code fences the model might wrap it in
+        text = re.sub(r'```[a-z]*\n?', '', text).strip()
+        logger.info(f'[email-summary] Generated {len(text)} chars from {len(activity_blocks)} activities')
+        return {'status': 'success', 'text': text}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f'[email-summary] Error: {exc}')
+        raise HTTPException(status_code=500, detail=str(exc))
+
 
 # ============================================
 # ENDPOINT: AI Rewrite / Polish
@@ -1595,8 +1820,9 @@ OUTPUT FORMAT — CRITICAL:
 
         text = response.text.strip()
         text = re.sub(r'```[a-z]*\n?', '', text).strip()
-        logger.info(f'[rewrite] Polished {len(text)} chars')
-        return {'status': 'success', 'text': text}
+        cleaned_text = _clean_summary_bullets(text)
+        logger.info(f'[rewrite] Polished {len(cleaned_text)} chars')
+        return {'status': 'success', 'text': cleaned_text}
 
     except HTTPException:
         raise
@@ -2498,13 +2724,13 @@ WRITING RULES:
 - Describe lane closures, sign placement, and flagger positions based on the TCP
 - If a sub TC company is used, mention them by name with their crew count
 - Reference specific streets/intersections from the location data
-- Keep it concise: 3-5 bullet points using HTML bullet format (• prefix)
+- Keep it concise: 3-5 bullet points using plain text bullet format ("• " prefix)
 - Each bullet should be on its own line
 - Do NOT invent details not supported by the provided data
 - If no TCP document is provided, write a generic but professional TC description based on the crew and location info
 
 OUTPUT FORMAT:
-Return ONLY the activity summary text (HTML bullets). No JSON wrapping, no extra commentary.
+Return ONLY the activity summary text (plain text bullet points starting with •). Do NOT use HTML tags (<ul>, <li>, etc.). No JSON wrapping, no extra commentary.
 """
 
 
@@ -2712,7 +2938,7 @@ async def generate_tc(request: TCGenerateRequest):
             work_area = f"Traffic Control — {', '.join(request.streets[:3])}"
 
         return TCGenerateResponse(
-            summary=summary,
+            summary=_clean_summary_bullets(summary),
             work_area=work_area,
         )
 

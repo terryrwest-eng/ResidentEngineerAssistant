@@ -28,6 +28,11 @@ export interface UserTemplate {
   body: string;
 }
 
+export interface CustomResourceCodes {
+  labor: string[];
+  equipment: string[];
+}
+
 export interface AppSettings {
   default_project: string;
   default_resident_engineer: string;
@@ -36,6 +41,7 @@ export interface AppSettings {
   default_stop_time: string;
   companies: string[];
   master_lists: MasterLists;
+  custom_resource_codes: CustomResourceCodes;
   user_templates: UserTemplate[];
   updated_at?: string;
 }

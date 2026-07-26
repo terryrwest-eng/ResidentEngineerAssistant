@@ -2,6 +2,7 @@
 
 let rowsData = [];
 let activitiesData = []; // Activities (OnSite) rows
+let fullData = null; // Full PMWeb data bundle from /pmweb-full
 let API_BASE = ''; // Will be set from storage or detected
 
 // Get saved API URL or detect it
@@ -402,12 +403,261 @@ async function fillActivities() {
     }
 }
 
+// Sync PMWeb Resources
+async function syncPMWebResources() {
+    const syncBtn = document.getElementById('syncResourcesBtn');
+    syncBtn.textContent = '⏳ Finding Resources...';
+    syncBtn.disabled = true;
+
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab.url.includes('pmweb.com')) {
+            alert('Please navigate to PMWeb first!');
+            syncBtn.textContent = '🔍 Find New PMWeb Resources';
+            syncBtn.disabled = false;
+            return;
+        }
+
+        // Ensure injected.js is loaded
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['injected.js'],
+            world: 'MAIN'
+        });
+
+        // Add one-time listener for the result
+        const listener = async (message) => {
+            if (message.type === 'PMWEB_SYNC_RESULT') {
+                chrome.runtime.onMessage.removeListener(listener);
+                
+                if (message.data.error) {
+                    alert(`Sync Error: ${message.data.error}`);
+                    syncBtn.textContent = '🔍 Find New PMWeb Resources';
+                    syncBtn.disabled = false;
+                    return;
+                }
+
+                try {
+                    syncBtn.textContent = '⏳ Saving to App...';
+                    const response = await fetch(`${API_BASE}/api/settings/sync-pmweb-resources`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ resources: message.data.resources })
+                    });
+                    
+                    if (!response.ok) throw new Error('API failed to save');
+                    const data = await response.json();
+                    
+                    syncBtn.textContent = `✓ Synced! (${data.counts.labor} L, ${data.counts.equipment} E)`;
+                    setTimeout(() => {
+                        syncBtn.textContent = '🔍 Find New PMWeb Resources';
+                        syncBtn.disabled = false;
+                    }, 3000);
+                } catch (e) {
+                    console.error('API Save Error:', e);
+                    alert(`Failed to save resources to app: ${e.message}`);
+                    syncBtn.textContent = '🔍 Find New PMWeb Resources';
+                    syncBtn.disabled = false;
+                }
+            }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+
+        // Trigger extraction in MAIN world
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: () => {
+                window.dispatchEvent(new CustomEvent('PMWEB_SYNC_TRIGGER'));
+            },
+            world: 'MAIN'
+        });
+
+    } catch (e) {
+        console.error('Sync error:', e);
+        alert(`Error: ${e.message}`);
+        syncBtn.textContent = '🔍 Find New PMWeb Resources';
+        syncBtn.disabled = false;
+    }
+}
+
+// ============================================
+// FULL AUTOMATION — Auto-Fill Everything
+// ============================================
+
+async function fetchFullData() {
+    if (!API_BASE) {
+        alert('Not connected to app! Click the status to set URL.');
+        return null;
+    }
+
+    // Get active report context
+    let reportId = null;
+    try {
+        const contextResp = await fetch(`${API_BASE}/api/extension/context`);
+        if (contextResp.ok) {
+            const context = await contextResp.json();
+            if (context.report_id) reportId = context.report_id;
+        }
+    } catch (e) {
+        console.log("Context check failed.", e);
+    }
+
+    if (!reportId) {
+        alert('No active report found!\n\nPlease open "Display Combined" in the Report App first.');
+        return null;
+    }
+
+    const resp = await fetch(`${API_BASE}/api/export/${reportId}/pmweb-full`);
+    if (!resp.ok) throw new Error(`API returned ${resp.status}`);
+    return await resp.json();
+}
+
+function updateProgress(phase, total, label) {
+    const progressBar = document.getElementById('progressBar');
+    const progressLabel = document.getElementById('progressLabel');
+    const progressFill = document.getElementById('progressFill');
+    progressBar.style.display = 'block';
+    progressLabel.textContent = `Phase ${phase}/${total}: ${label}`;
+    progressFill.style.width = `${(phase / total) * 100}%`;
+}
+
+async function autoFillEverything() {
+    const btn = document.getElementById('autoFillBtn');
+    const recordNum = document.getElementById('recordNumInput').value.trim();
+    const shift = document.getElementById('shiftSelect').value;
+
+    if (!recordNum) {
+        alert('Please enter a Record #');
+        return;
+    }
+
+    btn.textContent = '⏳ Working...';
+    btn.disabled = true;
+
+    try {
+        // Fetch all data
+        updateProgress(0, 5, 'Fetching data...');
+        fullData = await fetchFullData();
+        if (!fullData) {
+            btn.textContent = '🚀 Auto-Fill Everything';
+            btn.disabled = false;
+            return;
+        }
+
+        // Build the record code: "1470 Day"
+        const recordCode = `${recordNum} ${shift}`;
+
+        // Determine shift emoji for PMWeb dropdown
+        const shiftEmojis = {
+            'Day': '☀️ Day',
+            'Evening': '🌙 Evening',
+            'Night': '🌑 Night'
+        };
+        const shiftValue = shiftEmojis[shift] || `☀️ ${shift}`;
+
+        // Determine working day value
+        const dayTypeValue = fullData.general.is_working_day
+            ? '1 -Working Day'
+            : '2 -Non-Working Day';
+
+        // Bundle everything for injected.js
+        const payload = {
+            // Phase 1: Main Tab
+            reportDate: fullData.general.report_date,
+            recordCode: recordCode,
+            location: fullData.general.project_location,
+            weatherConditions: fullData.general.sky_conditions_pmweb,
+            temperature: fullData.general.temperature_avg != null
+                ? String(fullData.general.temperature_avg)
+                : '',
+            precipAmount: '0.00',
+            startTimeMilitary: fullData.general.start_time_military,
+            endTimeMilitary: fullData.general.end_time_military,
+            shiftValue: shiftValue,
+            // Phase 2: Activities
+            activities: fullData.activities,
+            // Phase 3: Resources
+            resources: fullData.resources,
+            // Phase 4: Additional Info
+            dayTypeValue: dayTypeValue,
+            // Phase 5: Notes
+            notesHtml: fullData.notes_html
+        };
+
+        // Get current tab
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab.url.includes('pmweb.com')) {
+            alert('Please navigate to PMWeb first!');
+            btn.textContent = '🚀 Auto-Fill Everything';
+            btn.disabled = false;
+            return;
+        }
+
+        // Inject and run
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['injected.js'],
+            world: 'MAIN'
+        });
+
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (data) => {
+                console.log('🚀 FULL AUTO-FILL: Dispatching payload');
+                window.dispatchEvent(new CustomEvent('PMWEB_FILL_EVERYTHING', { detail: data }));
+            },
+            args: [payload],
+            world: 'MAIN'
+        });
+
+        // Save record number for next time
+        await chrome.storage.local.set({ lastRecordNumber: parseInt(recordNum) });
+
+        btn.textContent = '✓ Sent! Watch PMWeb...';
+        updateProgress(1, 5, 'Filling Main Tab...');
+
+    } catch (e) {
+        console.error('Auto-fill error:', e);
+        alert(`Error: ${e.message}`);
+        btn.textContent = '🚀 Auto-Fill Everything';
+        btn.disabled = false;
+    }
+}
+
+async function initRecordNumber() {
+    // Load last used record number
+    const stored = await chrome.storage.local.get(['lastRecordNumber']);
+    const recordInput = document.getElementById('recordNumInput');
+    if (stored.lastRecordNumber) {
+        recordInput.value = String(stored.lastRecordNumber + 1);
+    }
+}
+
+async function checkMonday() {
+    // If we have data, check if it's Monday
+    const banner = document.getElementById('mondayBanner');
+    const today = new Date();
+    if (today.getDay() === 1) { // Monday
+        banner.style.display = 'block';
+    }
+}
+
 // Initialize on popup open
 document.addEventListener('DOMContentLoaded', () => {
-    checkConnection();
+    checkConnection().then(connected => {
+        if (connected) {
+            const autoBtn = document.getElementById('autoFillBtn');
+            if (autoBtn) autoBtn.disabled = false;
+        }
+    });
+    initRecordNumber();
+    checkMonday();
+    const autoFillBtn = document.getElementById('autoFillBtn');
+    if(autoFillBtn) autoFillBtn.addEventListener('click', autoFillEverything);
     document.getElementById('fetchBtn').addEventListener('click', fetchData);
     document.getElementById('fillBtn').addEventListener('click', fillPMWeb);
     document.getElementById('clearBtn').addEventListener('click', clearPMWeb);
     document.getElementById('fetchActBtn').addEventListener('click', fetchActivities);
     document.getElementById('fillActBtn').addEventListener('click', fillActivities);
+    document.getElementById('syncResourcesBtn').addEventListener('click', syncPMWebResources);
 });

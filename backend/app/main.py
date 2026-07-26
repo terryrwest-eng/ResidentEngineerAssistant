@@ -23,7 +23,9 @@ logging.basicConfig(
 logger = logging.getLogger("daily-reporter")
 
 # --- Data directories ---
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = os.environ.get("DAILY_REPORTER_DATA_DIR")
+if not DATA_DIR:
+    DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
 SPECS_DIR = os.path.join(DATA_DIR, "specs")
@@ -93,7 +95,9 @@ async def health_check():
 # --- Serve React SPA in production ---
 # In production (Railway), the built frontend lives in /app/static.
 # API routes above take priority. Everything else falls through to the SPA.
-STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+STATIC_DIR = os.environ.get("DAILY_REPORTER_STATIC_DIR")
+if not STATIC_DIR:
+    STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.isdir(STATIC_DIR):
     from fastapi.responses import FileResponse
 

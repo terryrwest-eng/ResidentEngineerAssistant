@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 STANDARD_HOURS = 8.0
 
 
+def add_hours_to_time(time_str: str, add_hours: float) -> str:
+    """Helper to add hours to a 12-hour AM/PM time string."""
+    from datetime import timedelta
+    try:
+        t = datetime.strptime(time_str.strip(), "%I:%M %p")
+        t += timedelta(hours=add_hours)
+        return t.strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        return time_str
+
+
+
 # ============================================
 # HELPERS
 # ============================================
@@ -381,6 +393,163 @@ def generate_word_document(report: dict) -> io.BytesIO:
     return doc_bytes
 
 
+def generate_notes_html(report: dict) -> str:
+    """
+    Generate the report content as HTML for PMWeb Notes.
+    Same content as Word doc Page 1 — NO tables, NO consolidated resources.
+    
+    Returns an HTML string ready to paste into PMWeb's RadEditor iframe.
+    """
+    gen = report.get("general", {})
+
+    # Format date MM-DD-YYYY
+    report_date = gen.get("report_date", "")
+    try:
+        if report_date:
+            dt = datetime.strptime(report_date, "%Y-%m-%d")
+            report_date = dt.strftime("%m-%d-%Y")
+    except ValueError:
+        pass
+
+    html_parts = []
+
+    # ── TITLE ──
+    html_parts.append(
+        f'<p align="center"><b style="font-size:14pt;">DAILY FIELD REPORT - {report_date}</b></p>'
+    )
+
+    # ── GENERAL INFO BLOCK ──
+    info_lines = []
+    info_lines.append(f"<b>Project:</b> {gen.get('project_name', '')}")
+    if gen.get("project_location"):
+        info_lines.append(f"<b>Location:</b> {gen['project_location']}")
+    if gen.get("inspector_name"):
+        info_lines.append(f"<b>Prepared By:</b> {gen['inspector_name']}")
+    info_lines.append(f"<b>Resident Engineer:</b> {gen.get('resident_engineer', '')}")
+
+    # Weather line
+    temp_parts = []
+    if gen.get("temperature_high"):
+        temp_parts.append(f"High: {gen['temperature_high']}°F")
+    if gen.get("temperature_low"):
+        temp_parts.append(f"Low: {gen['temperature_low']}°F")
+    wind_str = f", Wind: {gen['wind_info']}" if gen.get("wind_info") else ""
+
+    sky_raw = gen.get("sky_conditions", [])
+    sky_labels = []
+    for s in sky_raw:
+        if isinstance(s, dict):
+            sky_labels.append(s.get("label", ""))
+        elif isinstance(s, str):
+            sky_labels.append(s)
+    sky_str = ", ".join(filter(None, sky_labels))
+
+    weather_line = ", ".join(temp_parts) + wind_str
+    if sky_str:
+        weather_line = f"{weather_line}, {sky_str}" if weather_line else sky_str
+
+    info_lines.append(f"<b>Weather:</b> {weather_line}")
+    info_lines.append(f"<b>Hours:</b> {gen.get('start_time', '')} - {gen.get('end_time', '')}")
+
+    html_parts.append("<p>" + "<br>".join(info_lines) + "</p>")
+
+    # ── GENERAL NOTES ──
+    notes = _extract_plain_text(gen.get("notes", ""))
+    if notes:
+        html_parts.append(
+            '<p style="margin-top:8px;"><b style="color:#003264;">General Notes:</b></p>'
+        )
+        html_parts.append(f"<p>{notes}</p>")
+
+    # ── ACTIVITIES DETAIL ──
+    html_parts.append('<h3 style="color:#003264;">Activities Detail</h3>')
+
+    activities = report.get("activities", [])
+    for act in activities:
+        # Activity title
+        title_text = act.get("work_area", "General")
+        if act.get("stations"):
+            title_text += f" — {act['stations']}"
+
+        html_parts.append(
+            f'<p style="margin-top:8px;margin-bottom:2px;">'
+            f'<b style="color:#003264;text-decoration:underline;">{title_text}</b></p>'
+        )
+
+        # Summary lines
+        summary_lines = _extract_summary_lines(act.get("summary", ""))
+        for line_text in summary_lines:
+            if line_text.startswith(("•", "-", "*", "–")):
+                html_parts.append(
+                    f'<p style="margin:1px 0;padding-left:18px;">{line_text}</p>'
+                )
+            else:
+                html_parts.append(f'<p style="margin:1px 0;">{line_text}</p>')
+
+        # Time range
+        start_t, stop_t = _get_activity_time_range(act.get("manpower", []))
+        if start_t and stop_t:
+            html_parts.append(
+                f'<p style="margin:0 0 4px 0;"><i style="font-size:9pt;color:#505050;">'
+                f'Hours: {start_t} - {stop_t}</i></p>'
+            )
+
+        # Resource list renderer (HTML version)
+        def _render_resources(items: list, is_equip: bool, header: str):
+            if not items:
+                return
+            html_parts.append(
+                f'<p style="margin:4px 0 0 0;"><b style="font-size:9pt;">{header}</b></p>'
+            )
+            consolidated: dict[tuple, dict] = {}
+            for item in items:
+                if is_equip:
+                    raw = (item.get("name") or item.get("description") or "").strip()
+                else:
+                    raw = (item.get("trade") or item.get("name") or "").strip()
+
+                qty = float(item.get("qty", 0))
+                hours = float(item.get("hours", 0))
+                company = (item.get("company") or "OHL NA").strip()
+
+                if qty <= 0 or hours <= 0:
+                    continue
+
+                resource = lookup_resource(raw)
+                is_rental = bool(is_equip and item.get("is_rental"))
+
+                key = (resource, hours, company, is_rental)
+                if key in consolidated:
+                    consolidated[key]["qty"] += qty
+                else:
+                    consolidated[key] = {
+                        "resource": resource,
+                        "qty": qty,
+                        "hours": hours,
+                        "company": company,
+                        "is_rental": is_rental,
+                    }
+
+            for row in consolidated.values():
+                line = (
+                    f"{row['resource']} - QTY {_format_number(row['qty'])} - "
+                    f"{_format_number(row['hours'])} HRS EA - {row['company']}"
+                )
+                if row["is_rental"]:
+                    line += " - RENTAL"
+                html_parts.append(
+                    f'<p style="margin:1px 0;padding-left:18px;">{line}</p>'
+                )
+
+        _render_resources(act.get("manpower", []), False, "Manpower:")
+        _render_resources(act.get("equipment", []), True, "Equipment:")
+        _render_resources(act.get("extra_work_manpower", []), False, "Extra Work Manpower:")
+        _render_resources(act.get("extra_work_equipment", []), True, "Extra Work Equipment:")
+        _render_resources(act.get("consultant_manpower", []), False, "Consultants:")
+
+    return "\n".join(html_parts)
+
+
 # ============================================
 # AGGREGATION (Word consolidated view - 6 cols)
 # ============================================
@@ -540,6 +709,9 @@ def aggregate_for_pmweb(report: dict) -> list:
 
                 # OT split for manpower
                 if not is_equip and hours > STANDARD_HOURS:
+                    # Calculate the split time based on standard 8 hours + 0.5 lunch
+                    split_time = add_hours_to_time(item_start, STANDARD_HOURS + 0.5)
+
                     rows.append({
                         "resource": resource,
                         "pay_type": pay_type,
@@ -551,7 +723,7 @@ def aggregate_for_pmweb(report: dict) -> list:
                         "company": company,
                         "total_hours": qty * STANDARD_HOURS,
                         "start_time": item_start,
-                        "finish_time": item_stop,
+                        "finish_time": split_time,
                     })
                     rows.append({
                         "resource": resource,
@@ -563,7 +735,7 @@ def aggregate_for_pmweb(report: dict) -> list:
                         "qty": qty,
                         "company": company,
                         "total_hours": qty * (hours - STANDARD_HOURS),
-                        "start_time": item_start,
+                        "start_time": split_time,
                         "finish_time": item_stop,
                     })
                 else:

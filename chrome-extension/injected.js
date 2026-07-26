@@ -44,7 +44,7 @@
             border: none; border-radius: 8px; cursor: pointer;
             font-weight: bold; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         `;
-        stopButton.onclick = () => { shouldStop = true; console.log('🛑 STOP requested!'); };
+        stopButton.addEventListener('click', () => { shouldStop = true; console.log('🛑 STOP requested!'); });
         document.body.appendChild(stopButton);
     }
 
@@ -62,6 +62,108 @@
         const rows = event.detail;
         console.log('📥 Worker received', rows.length, 'rows');
         await fillAllRows(rows);
+    });
+
+    // Listen for sync trigger to extract all PMWeb resources
+    window.addEventListener('PMWEB_SYNC_TRIGGER', async () => {
+        try {
+            console.log('🔍 Starting PMWeb Resource Sync extraction...');
+            let input = document.querySelector('input[id*="ddlResources_Input"]:not([id*="Filter"])');
+            if (!input) {
+                console.log('Dropdown not found, attempting to click Add Line...');
+                const addBtn = document.querySelector('[id*="lblAddLine"]');
+                if (addBtn) {
+                    addBtn.click();
+                    // Wait for the row to be added and the dropdown to appear
+                    let waitAttempts = 0;
+                    while(!input && waitAttempts < 20) {
+                        await new Promise(r => setTimeout(r, 500));
+                        input = document.querySelector('input[id*="ddlResources_Input"]:not([id*="Filter"])');
+                        waitAttempts++;
+                    }
+                }
+            }
+
+            if (!input) {
+                console.error('❌ Could not find PMWeb resource dropdown. Are you on the Timesheet page?');
+                window.dispatchEvent(new CustomEvent('PMWEB_SYNC_RESULT', { detail: { error: "Resource dropdown not found. Please ensure you are on a PMWeb Timesheet." } }));
+                return;
+            }
+
+            const baseId = input.id.replace('_Input', '');
+            const idDollar = baseId.replace(/_/g, '$');
+            
+            let combo = null;
+            if (typeof $find === 'function') {
+                combo = $find(baseId) || $find(idDollar);
+            }
+            if (!combo && typeof Sys !== 'undefined' && Sys.Application) {
+                combo = Sys.Application.findComponent(baseId) || Sys.Application.findComponent(idDollar);
+            }
+
+            if (!combo) {
+                window.dispatchEvent(new CustomEvent('PMWEB_SYNC_RESULT', { detail: { error: "Telerik component not found." } }));
+                return;
+            }
+
+            // Force load initial page from server (empty text, false for append)
+            console.log('⏳ Requesting first page of items from server...');
+            combo.requestItems('', false);
+            
+            // Wait for initial load
+            let attempts = 0;
+            while (combo.get_items().get_count() === 0 && attempts < 20) {
+                await new Promise(r => setTimeout(r, 250));
+                attempts++;
+            }
+            
+            let count = combo.get_items().get_count();
+            console.log(`✅ Loaded initial page: ${count} items`);
+            
+            // Paginate through all remaining items
+            let page = 1;
+            let prevCount = count;
+            
+            while (page < 50) { // Safety limit
+                console.log(`⏳ Requesting page ${page + 1}...`);
+                combo.requestItems('', true); // true = append next page
+                
+                let pageAttempts = 0;
+                while (combo.get_items().get_count() === prevCount && pageAttempts < 15) {
+                    await new Promise(r => setTimeout(r, 250));
+                    pageAttempts++;
+                }
+                
+                count = combo.get_items().get_count();
+                if (count === prevCount) {
+                    // Try one more time with a longer delay to be absolutely sure
+                    combo.requestItems('', true);
+                    await new Promise(r => setTimeout(r, 1500));
+                    count = combo.get_items().get_count();
+                    if (count === prevCount) {
+                        console.log('✅ Reached end of list. Total items:', count);
+                        break;
+                    }
+                }
+                
+                console.log(`✅ Loaded page ${page + 1}. Total items now: ${count}`);
+                prevCount = count;
+                page++;
+            }
+            
+            const items = combo.get_items();
+            const resources = [];
+            for (let i = 0; i < items.get_count(); i++) {
+                resources.push(items.getItem(i).get_text());
+            }
+            
+            // Send back to content.js
+            window.dispatchEvent(new CustomEvent('PMWEB_SYNC_RESULT', { detail: { resources } }));
+            
+        } catch (err) {
+            console.error('❌ Error during sync extraction:', err);
+            window.dispatchEvent(new CustomEvent('PMWEB_SYNC_RESULT', { detail: { error: err.message } }));
+        }
     });
 
     async function fillAllRows(appRows) {
@@ -625,20 +727,33 @@
 
         await wait(200); // Brief wait for PMWeb to finish auto-calculating
 
-        // Set txtHours field - calculated from start/stop time difference WITH lunch deduction
+        // Calculate hours based on start/stop time difference WITH lunch deduction
         if (startMinutes !== null && finishMinutes !== null) {
             let rawMinutes = finishMinutes - startMinutes;
             if (rawMinutes < 0) rawMinutes += 1440; // Crosses midnight (night shift)
             const rawHours = rawMinutes / 60;
-            // Only subtract lunch if shift is >= 5 hours
-            const calcHours = rawHours >= 5 ? rawHours - 0.5 : rawHours;
-            setText("txtHours", calcHours.toFixed(2));
-            console.log(`  ⏰ txtHours: ${calcHours.toFixed(2)} (${rawHours} raw ${rawHours >= 5 ? '- 0.5 lunch' : ''})`);
-        }
+            // Subtract lunch (0.5 hrs) if the duration is 6 hours or more
+            const calcHours = rawHours >= 6 ? rawHours - 0.5 : rawHours;
+            
+            const qty = parseFloat(data.quantity) || 0;
+            const totalHours = qty * calcHours;
 
-        // Set total hours field (EditUserDefinedFields6) - qty × hours from app, NO lunch deduction
-        setText("EditUserDefinedFields6_txtData", data.hours);
-        console.log(`  ⏰ Total Hours: ${data.hours} (qty × hours from app)`);
+            // 1st hours column (UDF6) = Total Hours (qty * per-person hours)
+            setText("EditUserDefinedFields6_txtData", totalHours.toFixed(2));
+            console.log(`  ⏰ 1st Hours Col (UDF6) -> Total: ${totalHours.toFixed(2)} (Qty ${qty} * ${calcHours.toFixed(2)})`);
+
+            // 2nd hours column (txtHours) = Per-Person Hours
+            setText("txtHours", calcHours.toFixed(2));
+            console.log(`  ⏰ 2nd Hours Col (txtHours) -> Per-Person: ${calcHours.toFixed(2)} (${rawHours} raw)`);
+        } else {
+            // Fallback if times are missing
+            const qty = parseFloat(data.quantity) || 0;
+            const totalHours = parseFloat(data.hours) || 0;
+            const perPerson = qty > 0 ? totalHours / qty : 0;
+            setText("EditUserDefinedFields6_txtData", totalHours.toFixed(2));
+            setText("txtHours", perPerson.toFixed(2));
+            console.log(`  ⏰ Hours (Fallback): 1st Col = ${totalHours.toFixed(2)}, 2nd Col = ${perPerson.toFixed(2)}`);
+        }
 
         // Memo
         setText("EditUserDefinedFields2_txtMemo", finalRemarks);
@@ -969,5 +1084,357 @@
 
         console.log('  ✅ Activity row ' + rowNum + ' filled');
     }
+
+    // ============================================
+    // FULL AUTOMATION — PMWEB_FILL_EVERYTHING
+    // Orchestrates all 5 phases in sequence
+    // ============================================
+
+    window.addEventListener('PMWEB_FILL_EVERYTHING', async (event) => {
+        shouldStop = false;
+        const data = event.detail;
+        console.log('🚀 FULL AUTO-FILL: Starting 5-phase automation');
+        console.log('📋 Payload:', JSON.stringify(data, null, 2).substring(0, 500));
+        showStopButton();
+        const wait = bgWait;
+
+        // Tab navigation helper
+        function clickTab(tabName) {
+            const tabs = document.querySelectorAll('#ctl00_CPH1_tbsDocument .rtsUL .rtsLI a.rtsLink');
+            for (const tab of tabs) {
+                if (tab.textContent.trim() === tabName) {
+                    tab.click();
+                    console.log(`📑 Clicked tab: "${tabName}"`);
+                    return true;
+                }
+            }
+            console.error(`❌ Tab not found: "${tabName}"`);
+            return false;
+        }
+
+        // Helper: set a plain text input and fire change/blur
+        function setTextInput(id, value) {
+            const el = document.getElementById(id);
+            if (!el) { console.warn(`⚠️ Input not found: ${id}`); return false; }
+            el.focus();
+            el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+            console.log(`  ✅ Set ${id} = "${value}"`);
+            return true;
+        }
+
+        // Helper: set Telerik RadComboBox by typing + selecting
+        async function setComboBox(inputId, value) {
+            const input = document.getElementById(inputId);
+            if (!input) { console.warn(`⚠️ ComboBox input not found: ${inputId}`); return false; }
+
+            const baseId = inputId.replace('_Input', '');
+            const idDollar = baseId.replace(/_/g, '$');
+            let combo = null;
+            if (typeof $find === 'function') combo = $find(baseId) || $find(idDollar);
+            if (!combo && typeof Sys !== 'undefined' && Sys.Application) {
+                combo = Sys.Application.findComponent(baseId) || Sys.Application.findComponent(idDollar);
+            }
+
+            if (!combo) {
+                // Fallback: just set the text directly
+                input.focus();
+                input.value = value;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                console.log(`  ✅ ComboBox fallback: ${inputId} = "${value}"`);
+                return true;
+            }
+
+            try {
+                input.focus();
+                await wait(50);
+
+                // Set value directly
+                input.value = value;
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                await wait(300);
+
+                // Try to find matching item
+                if (combo.showDropDown) combo.showDropDown();
+                await wait(200);
+
+                let item = combo.findItemByText(value);
+                if (!item) {
+                    // Fuzzy search
+                    const items = combo.get_items();
+                    const valLower = value.toLowerCase();
+                    for (let i = 0; items && i < items.get_count(); i++) {
+                        if (items.getItem(i).get_text().toLowerCase().includes(valLower)) {
+                            item = items.getItem(i);
+                            break;
+                        }
+                    }
+                }
+
+                if (item) {
+                    item.select();
+                    if (combo.set_selectedIndex) combo.set_selectedIndex(item.get_index());
+                }
+
+                await wait(100);
+                if (combo.hideDropDown) combo.hideDropDown();
+                if (combo.commitChanges) combo.commitChanges();
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
+
+                console.log(`  ✅ ComboBox: ${inputId} = "${value}"`);
+                return true;
+            } catch (e) {
+                console.error(`  ❌ ComboBox error: ${inputId}`, e);
+                if (combo && combo.hideDropDown) combo.hideDropDown();
+                return false;
+            }
+        }
+
+        // Helper: set Telerik DatePicker
+        function setDatePicker(inputId, dateStr) {
+            // dateStr format: "2026-07-20"
+            const input = document.getElementById(inputId);
+            if (!input) { console.warn(`⚠️ DatePicker not found: ${inputId}`); return false; }
+
+            // Format to MM-DD-YYYY for the visible input
+            try {
+                const parts = dateStr.split('-');
+                const formatted = `${parts[1]}-${parts[2]}-${parts[0]}`;
+                input.focus();
+                input.value = formatted;
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                input.dispatchEvent(new Event('blur', { bubbles: true }));
+                console.log(`  ✅ DatePicker: ${inputId} = "${formatted}"`);
+
+                // Also try setting via Telerik API
+                const baseId = inputId.replace('_dateInput', '');
+                if (typeof Sys !== 'undefined' && Sys.Application) {
+                    const picker = Sys.Application.findComponent(baseId);
+                    if (picker && picker.set_selectedDate) {
+                        picker.set_selectedDate(new Date(dateStr + 'T12:00:00'));
+                    }
+                }
+                return true;
+            } catch (e) {
+                console.error('DatePicker error:', e);
+                return false;
+            }
+        }
+
+        try {
+            // Suppress PMWeb's "You have unsaved changes" confirm dialogs
+            // Because we inject into the MAIN world, this directly overrides the page's confirm method
+            const originalConfirm = window.confirm;
+            window.confirm = () => true;
+            window.onbeforeunload = null;
+
+            // ═══════════════════════════════════════
+            // PHASE 1: MAIN TAB FIELDS
+            // ═══════════════════════════════════════
+            console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
+
+            // Ensure we're on the Main tab
+            clickTab('Main');
+            await wait(500);
+
+            // 1. Report Date
+            setDatePicker('ctl00_CPH1_dtpReportDate_dateInput', data.reportDate);
+            await wait(200);
+
+            // 2. Record #
+            setTextInput('ctl00_CPH1_txtCode', data.recordCode);
+
+            // 3. Location
+            setTextInput('ctl00_CPH1_txtDescription', data.location);
+
+            // 4. Weather Conditions (comma-separated string like "Sunny,Partly Cloudy")
+            await setComboBox('ctl00_CPH1_ddlConditions_Input', data.weatherConditions);
+
+            // 5. Temperature (average)
+            if (data.temperature) {
+                setTextInput('ctl00_CPH1_txtTemperature', data.temperature);
+            }
+
+            // 6. Precip Amount
+            setTextInput('ctl00_CPH1_txtPrecip', data.precipAmount);
+
+            // 7. Start Time (military, no colon: "630")
+            setTextInput(
+                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl00_txtMeasure',
+                data.startTimeMilitary
+            );
+
+            // 8. End Time (military: "1530")
+            setTextInput(
+                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl01_txtMeasure',
+                data.endTimeMilitary
+            );
+
+            // 9. Shift
+            await setComboBox(
+                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl02_ddlMeasure_Input',
+                data.shiftValue
+            );
+
+            // 10. SAVE Main Tab
+            const mainSaveBtn = document.querySelector('span[title="Save (Alt+s)"]');
+            if (mainSaveBtn) {
+                const saveLink = mainSaveBtn.closest('a') || mainSaveBtn.parentElement;
+                if (saveLink) {
+                    console.log('💾 Clicking Main Tab Save (Alt+s)...');
+                    saveLink.click();
+                    await wait(3000); // Wait for AJAX postback to complete
+                }
+            } else {
+                console.warn('⚠️ Main Tab Save (Alt+s) button not found');
+            }
+            
+            if (shouldStop) { hideStopButton(); return; }
+            console.log('✅ PHASE 1 COMPLETE');
+
+            // ═══════════════════════════════════════
+            // PHASE 2: ACTIVITIES (On Site tab)
+            // ═══════════════════════════════════════
+            console.log('━━━ PHASE 2/5: Activities ━━━');
+
+            if (data.activities && data.activities.length > 0) {
+                clickTab('On Site');
+                await wait(1500); // Wait for tab to load
+
+                // Reuse existing fillAllActivities
+                await fillAllActivities(data.activities);
+
+                // Click Update Records after all activities
+                const actUpdateBtn = document.getElementById(
+                    'ctl00_CPH1_DailyReportDetails_rdgOnSite_ctl00_ctl02_ctl00_lblUpdateRecords'
+                );
+                if (actUpdateBtn) {
+                    actUpdateBtn.click();
+                    if (actUpdateBtn.parentElement && actUpdateBtn.parentElement.tagName === 'A') {
+                        actUpdateBtn.parentElement.click();
+                    }
+                    console.log('💾 Activities Update Records clicked');
+                    await wait(2000);
+                }
+            } else {
+                console.log('ℹ️ No activities to fill, skipping Phase 2');
+            }
+
+            if (shouldStop) { hideStopButton(); return; }
+            console.log('✅ PHASE 2 COMPLETE');
+
+            // ═══════════════════════════════════════
+            // PHASE 3: LABOR & EQUIPMENT
+            // ═══════════════════════════════════════
+            console.log('━━━ PHASE 3/5: Labor & Equipment ━━━');
+
+            if (data.resources && data.resources.length > 0) {
+                clickTab('Labor and Equipment');
+                await wait(1500);
+
+                // Reuse existing fillAllRows
+                await fillAllRows(data.resources);
+
+                // Click Update Records after all timesheet rows
+                const tsUpdateBtn = document.getElementById(
+                    'ctl00_CPH1_DailyReportTimeSheet1_rdgDailyReportTimesheet_ctl00_ctl02_ctl00_lblUpdateRecords'
+                );
+                if (tsUpdateBtn) {
+                    tsUpdateBtn.click();
+                    if (tsUpdateBtn.parentElement && tsUpdateBtn.parentElement.tagName === 'A') {
+                        tsUpdateBtn.parentElement.click();
+                    }
+                    console.log('💾 Timesheet Update Records clicked');
+                    await wait(2000);
+                }
+            } else {
+                console.log('ℹ️ No resources to fill, skipping Phase 3');
+            }
+
+            if (shouldStop) { hideStopButton(); return; }
+            console.log('✅ PHASE 3 COMPLETE');
+
+            // ═══════════════════════════════════════
+            // PHASE 4: ADDITIONAL INFORMATION
+            // ═══════════════════════════════════════
+            console.log('━━━ PHASE 4/5: Additional Information ━━━');
+
+            clickTab('Additional Information');
+            await wait(1500);
+
+            await setComboBox(
+                'ctl00_CPH1_DocumentSpecifications1_rdgSpecifications_ctl00_ctl05_ddlMeasure_Input',
+                data.dayTypeValue
+            );
+            await wait(500);
+
+            // Click Update Records (using exact A tag ID from user)
+            const addInfoUpdateBtn = document.getElementById(
+                'ctl00_CPH1_DocumentSpecifications1_rdgSpecifications_ctl00_ctl02_ctl00_btnUpdateEdited'
+            ) || document.getElementById(
+                'ctl00_CPH1_DocumentSpecifications1_rdgSpecifications_ctl00_ctl02_ctl00_Label1'
+            );
+            
+            if (addInfoUpdateBtn) {
+                addInfoUpdateBtn.click();
+                if (addInfoUpdateBtn.tagName !== 'A' && addInfoUpdateBtn.parentElement && addInfoUpdateBtn.parentElement.tagName === 'A') {
+                    addInfoUpdateBtn.parentElement.click();
+                }
+                console.log('💾 Additional Info Update Records clicked');
+                await wait(2000);
+            }
+
+            if (shouldStop) { hideStopButton(); return; }
+            console.log('✅ PHASE 4 COMPLETE');
+
+            // ═══════════════════════════════════════
+            // PHASE 5: NOTES
+            // ═══════════════════════════════════════
+            console.log('━━━ PHASE 5/5: Notes ━━━');
+
+            clickTab('Notes');
+            await wait(1500);
+
+            // ALWAYS copy to clipboard first as a bulletproof fallback
+            try {
+                const blob = new Blob([data.notesHtml], { type: 'text/html' });
+                const clipboardItem = new ClipboardItem({ 'text/html': blob });
+                await navigator.clipboard.write([clipboardItem]);
+                console.log('📋 Notes HTML copied to clipboard!');
+            } catch (clipErr) {
+                console.warn('⚠️ Could not copy to clipboard automatically:', clipErr);
+            }
+
+            // Click Add Note button
+            const addNoteBtn = document.querySelector('div.btnAddNote');
+            if (addNoteBtn) {
+                addNoteBtn.click();
+                console.log('  ✅ Clicked Add Note');
+            } else {
+                console.error('  ❌ Add Note button (div.btnAddNote) not found');
+                hideStopButton();
+                alert('⚠️ Completed Phases 1-4, but Notes Add button not found.');
+                return;
+            }
+
+            // Wait for popup to open (poll for the iframe)
+            await wait(2000); 
+
+            alert('📋 The Note has been copied to your clipboard!\n\n1. Click inside the white note editor.\n2. Press Ctrl+V (or Cmd+V) to paste.\n3. Click "Yes" to clean the Word formatting.\n4. Click Save & Exit.');
+
+            console.log('✅ PHASE 5 COMPLETE');
+
+        } catch (err) {
+            console.error('🚨 FULL AUTO-FILL ERROR:', err);
+            alert(`Auto-fill error: ${err.message}`);
+        }
+
+        hideStopButton();
+        console.log('🎉🎉🎉 ALL 5 PHASES COMPLETE! 🎉🎉🎉');
+    });
 
 })();
