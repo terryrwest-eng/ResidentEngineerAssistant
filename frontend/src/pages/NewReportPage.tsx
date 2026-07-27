@@ -19,6 +19,13 @@ import { ActivityList } from '@/components/report/ActivityList';
 import { PMWebPreview } from '@/components/report/PMWebPreview';
 import { ReportChat } from '@/components/report/ReportChat';
 import { ScheduleSection } from '@/components/report/ScheduleSection';
+import { SectionNav, type NavSection } from '@/components/report/SectionNav';
+
+const REPORT_SECTIONS: NavSection[] = [
+  { id: 'section-details', label: 'Details' },
+  { id: 'section-schedule', label: 'Schedule' },
+  { id: 'section-activities', label: 'Activities' },
+];
 import { reportApi } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
 
@@ -286,16 +293,21 @@ export function NewReportPage() {
         </div>
       </div>
 
+      {/* --- Jump nav: this page is a long scroll --- */}
+      <SectionNav sections={REPORT_SECTIONS} />
+
       {/* --- General Info Form --- */}
-      <GeneralInfoForm key={`gen-${revision}`} />
+      <div id="section-details">
+        <GeneralInfoForm key={`gen-${revision}`} />
+      </div>
 
       {/* --- Schedule (collapsible, above activities) --- */}
-      <div style={{ marginTop: 'var(--space-lg)' }}>
+      <div id="section-schedule" style={{ marginTop: 'var(--space-lg)' }}>
         <ScheduleSection />
       </div>
 
       {/* --- Activities --- */}
-      <div style={{ marginTop: 'var(--space-lg)' }}>
+      <div id="section-activities" style={{ marginTop: 'var(--space-lg)' }}>
         <ActivityList key={`act-${revision}`} />
       </div>
 

@@ -15,6 +15,7 @@ import {
   CalendarDays, Upload, Loader2, Trash2,
   ChevronDown, ChevronRight, AlertCircle,
 } from 'lucide-react';
+import { useConfirm } from '@/components/ui/ConfirmProvider';
 
 // ============================================
 // Types
@@ -33,6 +34,7 @@ interface ScheduleListItem {
 // ============================================
 
 export function ScheduleSection() {
+  const confirm = useConfirm();
   const [isExpanded, setIsExpanded] = useState(false);
   const [schedules, setSchedules] = useState<ScheduleListItem[]>([]);
   const [activeSchedule, setActiveSchedule] = useState<Schedule | null>(null);
@@ -104,7 +106,13 @@ export function ScheduleSection() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this schedule?')) return;
+    const ok = await confirm({
+      title: 'Delete this schedule?',
+      message: 'The uploaded schedule and its parsed shifts are removed. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await scheduleApi.delete(id);
       console.debug('[ScheduleSection] Deleted:', id);

@@ -781,6 +781,135 @@ p {
   }
 }
 
+/* ============================================
+   SHEET — the one overlay pattern
+   ============================================
+   Bottom sheet on a phone, centred card on a desktop. Eleven overlays had
+   drifted into eleven different looks; this is the shape they all collapse to.
+
+   Keeps the existing rule: NO click-outside-to-close. A stray tap must never
+   discard half-entered field data.
+   ============================================ */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+  animation: sheet-fade 0.15s ease-out;
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 640px;
+  max-height: min(88vh, 900px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: sheet-in 0.18s ease-out;
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.sheet-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+.sheet-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+  /* Home-indicator clearance on iOS */
+  padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
+}
+
+@keyframes sheet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Phone: dock to the bottom edge, full width, thumb-reachable actions. */
+@media (max-width: 640px) {
+  .sheet-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .sheet {
+    max-width: none;
+    max-height: 92vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    animation: sheet-up 0.22s ease-out;
+  }
+
+  .sheet-footer {
+    /* Stack actions so each one is a full-width target */
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .sheet-footer .btn {
+    min-height: 44px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  @keyframes sheet-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+}
+
+/* Someone who asked the OS to stop animating things means it. */
+@media (prefers-reduced-motion: reduce) {
+  .sheet-overlay,
+  .sheet,
+  .toast {
+    animation: none !important;
+  }
+}
+
 /* --- Dialog / Modal (NO click-outside-to-close) --- */
 .dialog-overlay {
   position: fixed;

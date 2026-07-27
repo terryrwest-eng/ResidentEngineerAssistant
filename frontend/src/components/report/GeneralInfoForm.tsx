@@ -17,6 +17,7 @@ import { weatherApi } from '@/lib/api';
 import type { WeatherData } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
 import { Cloud, Thermometer, Wind, MapPin, Loader2 } from 'lucide-react';
+import { Sheet } from '@/components/ui/Sheet';
 
 export function GeneralInfoForm() {
   const { report, updateGeneral } = useReportStore();
@@ -31,6 +32,8 @@ export function GeneralInfoForm() {
   // Saved ZIP — lets weather resolve without asking when GPS is unavailable
   // (which is most of the time on a desktop browser).
   const [defaultZip, setDefaultZip] = useState('');
+  const [askingZip, setAskingZip] = useState(false);
+  const [zipDraft, setZipDraft] = useState('');
 
   useEffect(() => {
     settingsApi.get().then((s) => {
@@ -166,29 +169,14 @@ export function GeneralInfoForm() {
     // Fallback: the ZIP saved in Settings. Only ask if there isn't one — being
     // prompted for the same ZIP on every report is the actual complaint here.
     try {
-      let zip = defaultZip;
+      const zip = defaultZip;
 
       if (!zip) {
-        const entered = prompt(
-          'Enter ZIP code for weather lookup:\n\n'
-          + '(Set a default in Settings → Project Defaults and you won\'t be asked again.)',
-        );
-        if (!entered || !entered.trim()) {
-          setWeatherError('No ZIP entered');
-          return;
-        }
-        zip = entered.trim();
-
-        // Save it so this is the last time. Best-effort — a failed save must not
-        // cost the user the weather they just asked for.
-        try {
-          const current = await settingsApi.get();
-          await settingsApi.update({ ...current, default_zip_code: zip });
-          setDefaultZip(zip);
-          console.debug('[Weather] Saved default ZIP:', zip);
-        } catch (saveErr) {
-          console.warn('[Weather] Could not save default ZIP:', saveErr);
-        }
+        // No saved ZIP — ask in-app rather than with a browser prompt, and
+        // remember the answer so this is the only time.
+        setAskingZip(true);
+        setIsLoadingWeather(false);
+        return;
       }
 
       const data = await weatherApi.fetchByZip(zip, gen.report_date || undefined);
@@ -205,8 +193,77 @@ export function GeneralInfoForm() {
     }
   }
 
+  /** Look up weather with a ZIP the user just typed, and remember it. */
+  async function submitZip() {
+    const zip = zipDraft.trim();
+    if (!zip) return;
+
+    setAskingZip(false);
+    setIsLoadingWeather(true);
+    setWeatherError('');
+
+    // Save first so the next report never asks. Best-effort — a failed save
+    // must not cost the weather that was just requested.
+    try {
+      const current = await settingsApi.get();
+      await settingsApi.update({ ...current, default_zip_code: zip });
+      setDefaultZip(zip);
+    } catch (saveErr) {
+      console.warn('[Weather] Could not save default ZIP:', saveErr);
+    }
+
+    try {
+      const data = await weatherApi.fetchByZip(zip, gen.report_date || undefined);
+      if (data.status === 'success') {
+        applyWeather(data);
+      } else {
+        setWeatherError('Weather unavailable for that ZIP');
+      }
+    } catch (err) {
+      console.error('[Weather] Fetch error:', err);
+      setWeatherError('Failed to fetch weather');
+    } finally {
+      setIsLoadingWeather(false);
+    }
+  }
+
   return (
     <div className="card">
+      <Sheet
+        open={askingZip}
+        onClose={() => setAskingZip(false)}
+        title="Which ZIP code?"
+        subtitle="Saved to Settings — you'll only be asked once."
+        icon={<MapPin size={18} />}
+        closeOnEscape
+        maxWidth={420}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setAskingZip(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={submitZip} disabled={!zipDraft.trim()}>
+              Get weather
+            </button>
+          </>
+        }
+      >
+        <label className="label">Project ZIP code</label>
+        <input
+          className="input"
+          value={zipDraft}
+          onChange={(e) => setZipDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submitZip(); }}
+          placeholder="e.g. 92122"
+          inputMode="numeric"
+          maxLength={10}
+        />
+        <p style={{ marginTop: 'var(--space-sm)', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
+          Used whenever GPS isn't available, and by the Backfill wizard for
+          historical weather on past dates.
+        </p>
+      </Sheet>
+
       <div className="card-header">
         <h3 style={{ margin: 0 }}>Report Details</h3>
       </div>

@@ -17,11 +17,13 @@ import { ReportHistoryPage } from '@/pages/ReportHistoryPage';
 import { ToolsPage } from '@/pages/ToolsPage';
 import { BackfillPage } from '@/pages/BackfillPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { UIProvider } from '@/components/ui/ConfirmProvider';
 import './index.css';
 
 function App() {
   return (
     <BrowserRouter>
+      <UIProvider>
       <div className="app-shell">
         <TopHeader />
         <main className="app-content">
@@ -40,6 +42,7 @@ function App() {
         </main>
         <BottomNav />
       </div>
+      </UIProvider>
     </BrowserRouter>
   );
 }

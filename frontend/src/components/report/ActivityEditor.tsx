@@ -38,6 +38,7 @@ import {
   Mic,
   MicOff,
   FileText,
+  CheckCircle2,
 } from 'lucide-react';
 
 // ============================================
@@ -388,6 +389,23 @@ export function ActivityEditor({
   const eqCount = (activity.equipment?.length || 0) +
     (activity.extra_work_equipment?.length || 0);
 
+  // What this activity still needs, shown on the collapsed header so you can
+  // see what wants attention without opening all five resource tables.
+  // "Hours" counts only rows that have a resource picked — an empty placeholder
+  // row is not a missing-hours problem.
+  const gaps: string[] = [];
+  if (!activity.work_area?.trim()) gaps.push('location');
+  if (!activity.summary?.trim()) gaps.push('summary');
+  if (mpCount === 0) gaps.push('crew');
+  else {
+    const filled = [
+      ...(activity.manpower || []),
+      ...(activity.extra_work_manpower || []),
+      ...(activity.consultant_manpower || []),
+    ].filter((r) => r.trade?.trim());
+    if (filled.length > 0 && filled.some((r) => !r.hours)) gaps.push('hours');
+  }
+
   return (
     <>
       <div className="card" style={{ overflow: 'hidden' }}>
@@ -425,6 +443,31 @@ export function ActivityEditor({
           }}>
             {mpCount > 0 && <span>{mpCount} personnel</span>}
             {eqCount > 0 && <span>{eqCount} equipment</span>}
+            {/* What this activity is still missing, visible without expanding it */}
+            {gaps.length > 0 ? (
+              <span
+                title={`Still needed: ${gaps.join(', ')}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--color-warning-light)',
+                  color: 'var(--color-warning)',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <AlertTriangle size={11} />
+                {gaps.length === 1 ? gaps[0] : `${gaps.length} missing`}
+              </span>
+            ) : (
+              <span
+                title="Location, summary, crew and hours are all filled in"
+                style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--color-success)' }}
+              >
+                <CheckCircle2 size={14} />
+              </span>
+            )}
           </div>
         </button>
 

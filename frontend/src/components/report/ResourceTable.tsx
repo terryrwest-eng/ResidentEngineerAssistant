@@ -19,6 +19,7 @@ import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT, DEFAULT_COMPANY } from '@/lib/cons
 import { settingsApi } from '@/lib/settingsApi';
 import { ResourceDropdown } from '@/components/report/ResourceDropdown';
 import { Plus, Trash2, Copy, Lock, Unlock } from 'lucide-react';
+import { useConfirm } from '@/components/ui/ConfirmProvider';
 
 type ResourceType = 'manpower' | 'equipment';
 
@@ -60,6 +61,7 @@ export function ResourceTable({
   defaultCompany,
 }: ResourceTableProps) {
   const isManpower = type === 'manpower';
+  const confirm = useConfirm();
 
   // Load custom resource codes from settings and merge with hardcoded defaults
   const [customCodes, setCustomCodes] = useState<string[]>([]);
@@ -188,9 +190,16 @@ export function ResourceTable({
     }
   }
 
-  function deleteSelected() {
+  async function deleteSelected() {
     if (selectedRows.size === 0) return;
-    if (!window.confirm(`Delete ${selectedRows.size} selected rows?`)) return;
+    const count = selectedRows.size;
+    const ok = await confirm({
+      title: `Delete ${count} selected row${count === 1 ? '' : 's'}?`,
+      message: 'The rows are removed from this activity. Nothing is saved until you save the report.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     onChange(rows.filter((_, i) => !selectedRows.has(i)));
     setSelectedRows(new Set());
   }

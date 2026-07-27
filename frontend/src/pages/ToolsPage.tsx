@@ -17,6 +17,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { pdfApi } from '@/lib/api';
 import type { PdfDocument } from '@/lib/api';
+import { useConfirm } from '@/components/ui/ConfirmProvider';
 
 import {
   Droplets,
@@ -643,6 +644,7 @@ interface ChatMessage {
 }
 
 function PDFSearchTool() {
+  const confirm = useConfirm();
   const [documents, setDocuments] = useState<PdfDocument[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
@@ -700,7 +702,13 @@ function PDFSearchTool() {
   };
 
   const handleDelete = async (docId: string) => {
-    if (!confirm('Delete this document?')) return;
+    const ok = await confirm({
+      title: 'Delete this document?',
+      message: 'It is removed from the searchable library. You can upload it again later.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await pdfApi.delete(docId);
       setDocuments(prev => prev.filter(d => d.id !== docId));
