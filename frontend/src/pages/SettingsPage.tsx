@@ -2,12 +2,12 @@
  * Daily Reporter V3 — Settings Page
  *
  * Tabs:
- *   Preferences     → Project defaults, default RE, default times, projects list, companies list, API key
- *   Resource Codes  → Custom labor (LL-) and equipment (LE-) codes for resource table dropdowns
- *   Templates       → Built-in activity templates (read-only) + user custom templates (add/delete)
+ * Preferences → Project defaults, default RE, default times, projects list, companies list, API key
+ * Resource Codes → Custom labor (LL-) and equipment (LE-) codes for resource table dropdowns
+ * Templates → Built-in activity templates (read-only) + user custom templates (add/delete)
  *
  * WHY: All lists from the legacy app are migrated here. They feed dropdowns in the report
- *      editor (trade selector, equipment selector, company field, project field).
+ * editor (trade selector, equipment selector, company field, project field).
  */
 
 import { useEffect, useState } from 'react';
@@ -23,6 +23,7 @@ import {
   Building2,
   Clock,
   Loader2,
+  MapPin,
   X,
 } from 'lucide-react';
 import { settingsApi, type AppSettings } from '../lib/settingsApi';
@@ -37,18 +38,18 @@ interface UserTemplate {
 }
 
 const BUILTIN_TEMPLATES: UserTemplate[] = [
-  { id: 'excavation',      name: 'Excavation',             body: 'Excavated Sta ___ to ___. Maintained trench width and limits per plans.' },
-  { id: 'pipe-install',    name: 'Pipe Installation',      body: 'Installed pipe Sta ___ to ___. Checked bedding, alignment, and joint spacing.' },
-  { id: 'backfill',        name: 'Backfill / Compaction',  body: 'Backfilled Sta ___ to ___ in lifts. Compacted per spec.' },
-  { id: 'concrete',        name: 'Concrete Placement',     body: 'Placed concrete at ___. Verified forms, rebar, and embeds prior to pour.' },
-  { id: 'shoring',         name: 'Shoring / Trench Safety',body: 'Installed/adjusted shoring at ___ per manufacturer data.' },
-  { id: 'dewatering',      name: 'Dewatering',             body: 'Dewatered trench at ___. Pumps set, discharge directed to approved location.' },
-  { id: 'traffic-control', name: 'Traffic Control',        body: 'Traffic control set per approved plan. Flaggers and signs in place.' },
-  { id: 'hydrotest',       name: 'Hydrostatic Test',       body: 'Hydrostatic test on segment Sta ___ to ___ at ___ psi for ___ hours.' },
-  { id: 'grading',         name: 'Grading / Subgrade',     body: 'Graded subgrade at ___. Checked elevations and slopes.' },
-  { id: 'cctv',            name: 'CCTV Inspection',        body: 'CCTV inspection performed Sta ___ to ___. Video recorded and submitted.' },
-  { id: 'manhole',         name: 'Manhole Installation',   body: 'Manhole installed at Sta ___. Grade rings set. Frame and cover set to grade.' },
-  { id: 'paving',          name: 'AC Paving',              body: 'AC paving placed at ___. Thickness ___". Compacted and checked for smoothness.' },
+  { id: 'excavation', name: 'Excavation', body: 'Excavated Sta ___ to ___. Maintained trench width and limits per plans.' },
+  { id: 'pipe-install', name: 'Pipe Installation', body: 'Installed pipe Sta ___ to ___. Checked bedding, alignment, and joint spacing.' },
+  { id: 'backfill', name: 'Backfill / Compaction', body: 'Backfilled Sta ___ to ___ in lifts. Compacted per spec.' },
+  { id: 'concrete', name: 'Concrete Placement', body: 'Placed concrete at ___. Verified forms, rebar, and embeds prior to pour.' },
+  { id: 'shoring', name: 'Shoring / Trench Safety',body: 'Installed/adjusted shoring at ___ per manufacturer data.' },
+  { id: 'dewatering', name: 'Dewatering', body: 'Dewatered trench at ___. Pumps set, discharge directed to approved location.' },
+  { id: 'traffic-control', name: 'Traffic Control', body: 'Traffic control set per approved plan. Flaggers and signs in place.' },
+  { id: 'hydrotest', name: 'Hydrostatic Test', body: 'Hydrostatic test on segment Sta ___ to ___ at ___ psi for ___ hours.' },
+  { id: 'grading', name: 'Grading / Subgrade', body: 'Graded subgrade at ___. Checked elevations and slopes.' },
+  { id: 'cctv', name: 'CCTV Inspection', body: 'CCTV inspection performed Sta ___ to ___. Video recorded and submitted.' },
+  { id: 'manhole', name: 'Manhole Installation', body: 'Manhole installed at Sta ___. Grade rings set. Frame and cover set to grade.' },
+  { id: 'paving', name: 'AC Paving', body: 'AC paving placed at ___. Thickness ___". Compacted and checked for smoothness.' },
 ];
 
 type Tab = 'preferences' | 'resourcecodes' | 'templates';
@@ -63,30 +64,33 @@ export function SettingsPage() {
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
 
   // Preferences form state
-  const [defaultProject, setDefaultProject]   = useState('');
-  const [defaultRE, setDefaultRE]              = useState('');
-  const [defaultStart, setDefaultStart]        = useState('7:00 AM');
-  const [defaultStop, setDefaultStop]          = useState('3:30 PM');
-  const [projects, setProjects]                = useState<string[]>([]);
-  const [newProject, setNewProject]            = useState('');
-  const [companies, setCompanies]              = useState<string[]>([]);
-  const [newCompany, setNewCompany]            = useState('');
+  const [defaultProject, setDefaultProject] = useState('');
+  const [defaultRE, setDefaultRE] = useState('');
+  const [defaultStart, setDefaultStart] = useState('7:00 AM');
+  const [defaultStop, setDefaultStop] = useState('3:30 PM');
+  const [projects, setProjects] = useState<string[]>([]);
+  const [newProject, setNewProject] = useState('');
+  const [companies, setCompanies] = useState<string[]>([]);
+  const [newCompany, setNewCompany] = useState('');
+  const [defaultZip, setDefaultZip] = useState('');
+  const [projectNumber, setProjectNumber] = useState('');
+  const [projectLocation, setProjectLocation] = useState('');
 
   // Gemini key state
-  const [geminiKey, setGeminiKey]     = useState('');
-  const [hasKey, setHasKey]           = useState(false);
-  const [savingKey, setSavingKey]     = useState(false);
+  const [geminiKey, setGeminiKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
 
   // Custom resource codes state
-  const [customLabor, setCustomLabor]       = useState<string[]>([]);
+  const [customLabor, setCustomLabor] = useState<string[]>([]);
   const [customEquipment, setCustomEquipment] = useState<string[]>([]);
-  const [newLaborDesc, setNewLaborDesc]     = useState('');
-  const [newEquipDesc, setNewEquipDesc]     = useState('');
+  const [newLaborDesc, setNewLaborDesc] = useState('');
+  const [newEquipDesc, setNewEquipDesc] = useState('');
 
   // Templates state
-  const [userTemplates, setUserTemplates]   = useState<UserTemplate[]>([]);
-  const [newTplName, setNewTplName]         = useState('');
-  const [newTplBody, setNewTplBody]         = useState('');
+  const [userTemplates, setUserTemplates] = useState<UserTemplate[]>([]);
+  const [newTplName, setNewTplName] = useState('');
+  const [newTplBody, setNewTplBody] = useState('');
 
   // ── Load ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +108,9 @@ export function SettingsPage() {
         setDefaultStop(s.default_stop_time || '3:30 PM');
         setProjects(s.projects || []);
         setCompanies(s.companies || []);
+        setDefaultZip(s.default_zip_code || '');
+        setProjectNumber(s.project_number || '');
+        setProjectLocation(s.project_location || '');
         setCustomLabor(s.custom_resource_codes?.labor || []);
         setCustomEquipment(s.custom_resource_codes?.equipment || []);
         setUserTemplates(s.user_templates || []);
@@ -137,6 +144,9 @@ export function SettingsPage() {
         default_resident_engineer: defaultRE.trim(),
         default_start_time: defaultStart.trim(),
         default_stop_time: defaultStop.trim(),
+        default_zip_code: defaultZip.trim(),
+        project_number: projectNumber.trim(),
+        project_location: projectLocation.trim(),
         projects,
         companies,
         user_templates: userTemplates,
@@ -285,9 +295,9 @@ export function SettingsPage() {
   }
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'preferences',   label: 'Preferences',    icon: <Settings size={16} /> },
-    { id: 'resourcecodes', label: 'Resource Codes',  icon: <ListChecks size={16} /> },
-    { id: 'templates',     label: 'Templates',       icon: <FileText size={16} /> },
+    { id: 'preferences', label: 'Preferences', icon: <Settings size={16} /> },
+    { id: 'resourcecodes', label: 'Resource Codes', icon: <ListChecks size={16} /> },
+    { id: 'templates', label: 'Templates', icon: <FileText size={16} /> },
   ];
 
   return (
@@ -349,6 +359,32 @@ export function SettingsPage() {
               <div>
                 <label className="label">Default Resident Engineer</label>
                 <input className="input" value={defaultRE} onChange={e => setDefaultRE(e.target.value)} placeholder="e.g., John Smith" />
+              </div>
+              <div>
+                <label className="label">Project Number</label>
+                <input className="input" value={projectNumber} onChange={e => setProjectNumber(e.target.value)} placeholder="e.g., C-346" />
+              </div>
+              <div>
+                <label className="label">Project Location</label>
+                <input className="input" value={projectLocation} onChange={e => setProjectLocation(e.target.value)} placeholder="e.g., San Diego, CA" />
+              </div>
+              <div>
+                <label className="label">
+                  <MapPin size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+                  Project ZIP Code
+                </label>
+                <input
+                  className="input"
+                  value={defaultZip}
+                  onChange={e => setDefaultZip(e.target.value)}
+                  placeholder="e.g., 92122"
+                  inputMode="numeric"
+                  maxLength={10}
+                />
+                <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                  Used for weather when GPS isn't available, and by the Backfill wizard to
+                  look up historical weather for past dates.
+                </p>
               </div>
             </div>
           </div>
@@ -446,7 +482,7 @@ export function SettingsPage() {
       {/* ── RESOURCE CODES TAB ── */}
       {activeTab === 'resourcecodes' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-          <div style={{ background: 'var(--info-bg, #eff6ff)', border: '1px solid var(--info-border, #bfdbfe)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', fontSize: 13, color: 'var(--info-text, #1e40af)' }}>
+          <div style={{ background: 'var(--color-info-light)', border: '1px solid var(--color-info-border)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', fontSize: 13, color: 'var(--color-info)' }}>
             <strong>Custom Resource Codes</strong> are added to the resource table dropdowns alongside the built-in PMWeb codes. Enter a description and the next available code number will be auto-assigned.
           </div>
 

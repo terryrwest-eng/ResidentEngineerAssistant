@@ -2,9 +2,9 @@
  * Daily Reporter V3 — Backfill Page (makeup reports)
  *
  * Three steps in one page, no modal wizard:
- *   1. Upload  — drop in scanned timesheets and subcontractor email PDFs
- *   2. Group   — confirm which day each file belongs to, fix any bad reads
- *   3. Generate — watch each date build, then review it beside the original scan
+ * 1. Upload — drop in scanned timesheets and subcontractor email PDFs
+ * 2. Group — confirm which day each file belongs to, fix any bad reads
+ * 3. Generate — watch each date build, then review it beside the original scan
  *
  * WHY SIDE-BY-SIDE: the source documents are photographs of handwriting. When
  * the extraction gets a name or an hour wrong, the only way to fix it quickly is
@@ -168,9 +168,9 @@ export function BackfillPage() {
           padding: 'var(--space-md)',
           marginBottom: 'var(--space-lg)',
           background: 'var(--color-bg)',
-          border: '1px solid var(--color-danger, #d64545)',
+          border: '1px solid var(--color-danger)',
           borderRadius: 'var(--radius-md)',
-          color: 'var(--color-danger, #d64545)',
+          color: 'var(--color-danger)',
           fontSize: '0.875rem',
         }}>
           {error}
@@ -284,7 +284,7 @@ export function BackfillPage() {
                       {date && !hasTimesheet && (
                         <span style={{
                           fontSize: '0.7rem', fontWeight: 600,
-                          color: 'var(--color-warning, #b7791f)',
+                          color: 'var(--color-warning)',
                           display: 'flex', alignItems: 'center', gap: '4px',
                         }}>
                           <AlertTriangle size={12} /> no timesheet for this day
@@ -324,7 +324,7 @@ export function BackfillPage() {
                               <div style={{
                                 fontSize: '0.7rem',
                                 color: file.weekday_check === 'mismatch'
-                                  ? 'var(--color-warning, #b7791f)'
+                                  ? 'var(--color-warning)'
                                   : 'var(--color-text-tertiary)',
                                 marginTop: '2px',
                               }}>
@@ -645,9 +645,9 @@ function DateCard({
 const STATE_TONE: Record<BackfillDate['state'], { color: string; label: string }> = {
   pending: { color: 'var(--color-border)', label: 'Waiting' },
   running: { color: 'var(--color-accent)', label: 'Working' },
-  done: { color: 'var(--color-success, #2f855a)', label: 'Report created' },
-  skipped: { color: 'var(--color-warning, #b7791f)', label: 'Skipped' },
-  failed: { color: 'var(--color-danger, #d64545)', label: 'Failed' },
+  done: { color: 'var(--color-success)', label: 'Report created' },
+  skipped: { color: 'var(--color-warning)', label: 'Skipped' },
+  failed: { color: 'var(--color-danger)', label: 'Failed' },
 };
 
 function StateIcon({ state }: { state: BackfillDate['state'] }) {
@@ -695,11 +695,11 @@ function Banner({ tone, children }: { tone: 'warning'; children: React.ReactNode
       padding: 'var(--space-md)',
       marginBottom: 'var(--space-lg)',
       background: 'var(--color-bg)',
-      border: `1px solid ${tone === 'warning' ? 'var(--color-warning, #b7791f)' : 'var(--color-border)'}`,
+      border: `1px solid ${tone === 'warning' ? 'var(--color-warning)' : 'var(--color-border)'}`,
       borderRadius: 'var(--radius-md)',
       fontSize: '0.8125rem',
     }}>
-      <AlertTriangle size={16} style={{ color: 'var(--color-warning, #b7791f)', flexShrink: 0, marginTop: 2 }} />
+      <AlertTriangle size={16} style={{ color: 'var(--color-warning)', flexShrink: 0, marginTop: 2 }} />
       <div>{children}</div>
     </div>
   );

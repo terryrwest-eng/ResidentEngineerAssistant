@@ -174,13 +174,13 @@ export function ParseReportDialog({ onClose }: ParseReportDialogProps) {
                 <div style={{
                   marginTop: 'var(--space-md)',
                   padding: 'var(--space-sm) var(--space-md)',
-                  background: '#FEF2F2',
-                  border: '1px solid #FECACA',
+                  background: 'var(--color-danger-light)',
+                  border: '1px solid var(--color-danger-border)',
                   borderRadius: 'var(--radius-md)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 'var(--space-sm)',
-                  color: '#DC2626',
+                  color: 'var(--color-danger)',
                   fontSize: '0.875rem',
                 }}>
                   <AlertCircle size={16} />

@@ -9,12 +9,14 @@ import { useLocation } from 'react-router-dom';
 import { HardHat, Wifi, WifiOff } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { healthApi } from '@/lib/api';
+import { ThemeToggle } from '@/components/layout/ThemeToggle';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Dashboard',
   '/report/new': 'New Report',
   '/history': 'Report History',
   '/tools': 'Field Tools',
+  '/backfill': 'Backfill Reports',
   '/settings': 'Settings',
 };
 
@@ -63,6 +65,7 @@ export function TopHeader() {
             <WifiOff size={16} style={{ color: 'var(--color-danger)' }} />
           )}
         </div>
+        <ThemeToggle />
       </div>
     </header>
   );

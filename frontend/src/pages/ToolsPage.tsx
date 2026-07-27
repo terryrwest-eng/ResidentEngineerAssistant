@@ -4,10 +4,10 @@
  * Field calculator tools — all computed client-side, no backend call needed.
  *
  * Tools:
- *   1. Pipe Water Volume Calculator (linear feet → gallons)
- *   2. Excavation Volume Calculator (L×W×D → CY)
- *   3. Unit Converter (feet↔inches, LF↔CY, °F↔°C)
- *   4. Concrete Calculator (volume → bags or yards)
+ * 1. Pipe Water Volume Calculator (linear feet → gallons)
+ * 2. Excavation Volume Calculator (L×W×D → CY)
+ * 3. Unit Converter (feet↔inches, LF↔CY, °F↔°C)
+ * 4. Concrete Calculator (volume → bags or yards)
  *
  * UX: Tab-based. All results appear inline immediately.
  * No forms that disappear when you tap outside.
@@ -928,7 +928,7 @@ function PDFSearchTool() {
                 maxWidth: '90%',
                 padding: 'var(--space-sm) var(--space-md)',
                 borderRadius: 'var(--radius)',
-                backgroundColor: msg.role === 'user' ? 'var(--primary, var(--color-accent))' : 'var(--color-surface)',
+                backgroundColor: msg.role === 'user' ? 'var(--color-accent)' : 'var(--color-surface)',
                 color: msg.role === 'user' ? 'white' : 'var(--color-text-primary)',
                 border: msg.role === 'assistant' ? '1px solid var(--color-border)' : 'none',
                 fontSize: '0.85rem',

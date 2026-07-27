@@ -2,20 +2,20 @@
  * Daily Reporter V3 — Report Chat (Full Report AI Assistant)
  *
  * Conversational AI overlay that can manipulate the ENTIRE report:
- *   - General info (weather, project, dates, times, notes)
- *   - Activities (create, edit, delete, move resources)
+ * - General info (weather, project, dates, times, notes)
+ * - Activities (create, edit, delete, move resources)
  *
  * INPUT MODES:
- *   - Text: type a message and hit Send
- *   - Voice: tap the mic button, speak, tap again to send
+ * - Text: type a message and hit Send
+ * - Voice: tap the mic button, speak, tap again to send
  *
  * AUDIO HANDLING:
- *   Two-pass on the backend: faithful transcription first (text mode),
- *   then intent processing against the report (JSON mode).
- *   If the AI can't hear you, it says so — no hallucination.
+ * Two-pass on the backend: faithful transcription first (text mode),
+ * then intent processing against the report (JSON mode).
+ * If the AI can't hear you, it says so — no hallucination.
  *
  * CHANGE FLOW:
- *   AI proposes changes → user sees Apply/Discard card → changes applied to store.
+ * AI proposes changes → user sees Apply/Discard card → changes applied to store.
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -170,7 +170,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
     setIsLoading(true);
     setMessages(prev => [...prev, {
       role: 'user',
-      content: '🎤 Voice message',
+      content: ' Voice message',
       isVoice: true,
     }]);
 
@@ -355,7 +355,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
 
     setPendingChanges(null);
     bumpRevision();
-    setMessages(prev => [...prev, { role: 'model', content: '✅ Changes applied! What else can I help with?' }]);
+    setMessages(prev => [...prev, { role: 'model', content: ' Changes applied! What else can I help with?' }]);
   };
 
   const handleDiscard = () => {
@@ -511,7 +511,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
                 borderRadius: 'var(--radius)',
                 backgroundColor: msg.role === 'user'
                   ? (msg.isVoice ? 'var(--color-info)' : 'var(--color-accent)')
-                  : (msg.transcription ? 'var(--color-info-light, #e8f4fd)' : 'var(--surface)'),
+                  : (msg.transcription ? 'var(--color-info-light)' : 'var(--surface)'),
                 color: msg.role === 'user' ? 'white' : 'var(--text)',
                 border: msg.role === 'model' ? '1px solid var(--border)' : 'none',
                 boxShadow: 'var(--shadow-sm)',
@@ -552,7 +552,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
               marginTop: 'var(--space-xs)',
             }}>
               <h4 style={{ margin: '0 0 var(--space-xs) 0', color: 'var(--color-accent)', fontSize: '0.9rem' }}>
-                📋 Proposed Changes
+                 Proposed Changes
               </h4>
               <p className="text-sm" style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-sm)' }}>
                 {changesSummary()}
@@ -608,10 +608,10 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
             }}>
               <div style={{
                 width: '8px', height: '8px', borderRadius: '50%',
-                backgroundColor: '#ef4444',
+                backgroundColor: 'var(--color-danger)',
                 animation: 'pulse-dot 1.2s ease-in-out infinite',
               }} />
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#ef4444' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-danger)' }}>
                 Recording {formatDuration(recordingDuration)}
               </span>
               <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
@@ -633,9 +633,9 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
               style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 width: '40px', height: '40px', borderRadius: '50%',
-                border: isRecording ? '2px solid #ef4444' : '1px solid var(--border)',
+                border: isRecording ? '2px solid var(--color-danger)' : '1px solid var(--border)',
                 backgroundColor: isRecording ? 'rgba(239, 68, 68, 0.1)' : 'var(--background)',
-                color: isRecording ? '#ef4444' : 'var(--text-secondary)',
+                color: isRecording ? 'var(--color-danger)' : 'var(--text-secondary)',
                 cursor: (isLoading || !!pendingChanges) ? 'not-allowed' : 'pointer',
                 opacity: (isLoading || !!pendingChanges) ? 0.5 : 1,
                 transition: 'all 0.2s ease',

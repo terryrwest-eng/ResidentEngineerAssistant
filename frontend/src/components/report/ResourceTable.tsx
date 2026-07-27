@@ -268,7 +268,9 @@ export function ResourceTable({
               <th style={{ ...headerStyle, width: '10%', textAlign: 'center' }}>3rd / EW / Con</th>
               {!isManpower && <th style={{ ...headerStyle, width: '4%', textAlign: 'center' }}>Ren</th>}
               <th style={{ ...headerStyle, width: '4%', textAlign: 'center' }}></th>
-              <th style={{ ...headerStyle, width: '3%', textAlign: 'center' }}>🔒</th>
+              <th style={{ ...headerStyle, width: '3%', textAlign: 'center' }} title="Locked">
+                <Lock size={11} style={{ display: 'inline', verticalAlign: 'middle' }} />
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -581,7 +583,7 @@ function ResourceRow({
           style={{ width: '24px', height: '24px', padding: '2px' }}
         >
           {row.locked
-            ? <Lock size={12} style={{ color: 'var(--color-warning, #f59e0b)' }} />
+            ? <Lock size={12} style={{ color: 'var(--color-warning)' }} />
             : <Unlock size={12} style={{ color: 'var(--color-text-placeholder)' }} />}
         </button>
       </td>

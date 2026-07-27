@@ -6,9 +6,9 @@
  * Each activity is its own collapsible section on the page — NOT a modal.
  *
  * AI Features:
- *   - AI Manager (Co-Pilot chat)
- *   - Bulk Dictate All Activities
- *   - Import Report (parse .docx/.pdf)
+ * - AI Manager (Co-Pilot chat)
+ * - Bulk Dictate All Activities
+ * - Import Report (parse .docx/.pdf)
  */
 
 import { useState, useEffect } from 'react';

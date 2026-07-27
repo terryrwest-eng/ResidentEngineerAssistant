@@ -5,12 +5,12 @@
  * picks shift + end time → Activity is built and added to the report.
  *
  * 6-Phase Flow:
- *   Phase 0: Upload PDF
- *   Phase 1: Select job columns
- *   Phase 2: Asphalt tonnage
- *   Phase 3: Traffic control + additional context (voice)
- *   Phase 4: Choose shift + end time
- *   Phase 5: Preview + add to report
+ * Phase 0: Upload PDF
+ * Phase 1: Select job columns
+ * Phase 2: Asphalt tonnage
+ * Phase 3: Traffic control + additional context (voice)
+ * Phase 4: Choose shift + end time
+ * Phase 5: Preview + add to report
  */
 
 import { useState, useRef } from 'react';
@@ -709,13 +709,13 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                 <div style={{
                   marginTop: 'var(--space-md)',
                   padding: 'var(--space-sm) var(--space-md)',
-                  background: '#FEF2F2',
-                  border: '1px solid #FECACA',
+                  background: 'var(--color-danger-light)',
+                  border: '1px solid var(--color-danger-border)',
                   borderRadius: 'var(--radius-md)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 'var(--space-sm)',
-                  color: '#DC2626',
+                  color: 'var(--color-danger)',
                   fontSize: '0.875rem',
                 }}>
                   <AlertCircle size={16} />
@@ -809,9 +809,9 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                               className="badge"
                               style={{
                                 fontSize: '0.7rem',
-                                background: job.contract_type === 'CHANGE ORDER' ? '#FFF7ED' : '#EFF6FF',
-                                color: job.contract_type === 'CHANGE ORDER' ? '#C2410C' : '#1D4ED8',
-                                border: `1px solid ${job.contract_type === 'CHANGE ORDER' ? '#FED7AA' : '#BFDBFE'}`,
+                                background: job.contract_type === 'CHANGE ORDER' ? 'var(--color-warning-light)' : 'var(--color-info-light)',
+                                color: job.contract_type === 'CHANGE ORDER' ? 'var(--color-warning)' : 'var(--color-info)',
+                                border: `1px solid ${job.contract_type === 'CHANGE ORDER' ? 'var(--color-warning-border)' : 'var(--color-info-border)'}`,
                               }}
                             >
                               {job.contract_type || 'CONTRACT'}
@@ -937,13 +937,13 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                 <div style={{
                   marginTop: 'var(--space-md)',
                   padding: 'var(--space-sm) var(--space-md)',
-                  background: '#FEF2F2',
-                  border: '1px solid #FECACA',
+                  background: 'var(--color-danger-light)',
+                  border: '1px solid var(--color-danger-border)',
                   borderRadius: 'var(--radius-md)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 'var(--space-sm)',
-                  color: '#DC2626',
+                  color: 'var(--color-danger)',
                   fontSize: '0.875rem',
                 }}>
                   <AlertCircle size={16} />
@@ -1133,12 +1133,12 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
               ) : noSchedule ? (
                 <div style={{
                   padding: 'var(--space-md)',
-                  background: '#EFF6FF',
-                  border: '1px solid #BFDBFE',
+                  background: 'var(--color-info-light)',
+                  border: '1px solid var(--color-info-border)',
                   borderRadius: 'var(--radius-md)',
                   marginBottom: 'var(--space-lg)',
                   fontSize: '0.875rem',
-                  color: '#1D4ED8',
+                  color: 'var(--color-info)',
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
                     <CalendarDays size={16} />
@@ -1178,8 +1178,8 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                           fontSize: '0.65rem',
                           padding: '1px 6px',
                           borderRadius: 4,
-                          background: isGrindOverlay ? '#E0F2FE' : '#F0FDF4',
-                          color: isGrindOverlay ? '#0369A1' : '#15803D',
+                          background: isGrindOverlay ? 'var(--color-info-light)' : 'var(--color-success-light)',
+                          color: isGrindOverlay ? 'var(--color-info)' : 'var(--color-success)',
                           fontWeight: 500,
                         }}>
                           {isGrindOverlay ? 'Grind & Overlay' : 'Digout'}
@@ -1320,13 +1320,13 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                 <div style={{
                   marginBottom: 'var(--space-md)',
                   padding: 'var(--space-sm) var(--space-md)',
-                  background: '#FEF2F2',
-                  border: '1px solid #FECACA',
+                  background: 'var(--color-danger-light)',
+                  border: '1px solid var(--color-danger-border)',
                   borderRadius: 'var(--radius-md)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 'var(--space-sm)',
-                  color: '#DC2626',
+                  color: 'var(--color-danger)',
                   fontSize: '0.875rem',
                 }}>
                   <AlertCircle size={16} />
@@ -1424,16 +1424,16 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                     </div>
                     {previewActivity.extra_work_manpower.length > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                        <FileText size={14} style={{ color: '#C2410C' }} />
-                        <span style={{ fontSize: '0.875rem', color: '#C2410C' }}>
+                        <FileText size={14} style={{ color: 'var(--color-warning)' }} />
+                        <span style={{ fontSize: '0.875rem', color: 'var(--color-warning)' }}>
                           <strong>{previewActivity.extra_work_manpower.length}</strong> EW manpower
                         </span>
                       </div>
                     )}
                     {previewActivity.extra_work_equipment.length > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
-                        <Wrench size={14} style={{ color: '#C2410C' }} />
-                        <span style={{ fontSize: '0.875rem', color: '#C2410C' }}>
+                        <Wrench size={14} style={{ color: 'var(--color-warning)' }} />
+                        <span style={{ fontSize: '0.875rem', color: 'var(--color-warning)' }}>
                           <strong>{previewActivity.extra_work_equipment.length}</strong> EW equipment
                         </span>
                       </div>

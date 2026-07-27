@@ -2,13 +2,13 @@
  * Daily Reporter V3 — Phone Scanner Modal (Camera Capture)
  *
  * Ported from V1 PhoneScannerModal.jsx — same UX:
- *   - Opens device camera via navigator.mediaDevices.getUserMedia
- *   - On phone browser → uses phone camera natively
- *   - On desktop → uses webcam (or Windows Phone Link camera if available)
- *   - Capture button draws video frame to canvas → JPEG blob → File
- *   - Flip camera (front/back) toggle
- *   - Take multiple photos, review thumbnails
- *   - "Done" returns File[] to parent via onCapturedImages callback
+ * - Opens device camera via navigator.mediaDevices.getUserMedia
+ * - On phone browser → uses phone camera natively
+ * - On desktop → uses webcam (or Windows Phone Link camera if available)
+ * - Capture button draws video frame to canvas → JPEG blob → File
+ * - Flip camera (front/back) toggle
+ * - Take multiple photos, review thumbnails
+ * - "Done" returns File[] to parent via onCapturedImages callback
  *
  * This is NOT a QR-code/pairing flow. It's pure browser camera API.
  */
@@ -262,7 +262,7 @@ export function PhoneScannerModal({
                 fontSize: '0.85rem',
                 fontWeight: 500,
                 background: 'rgba(234, 179, 8, 0.08)',
-                color: 'var(--color-warning, #d97706)',
+                color: 'var(--color-warning)',
                 border: '1px solid rgba(234, 179, 8, 0.15)',
               }}
             >
@@ -282,7 +282,7 @@ export function PhoneScannerModal({
                 fontSize: '0.85rem',
                 fontWeight: 500,
                 background: 'rgba(239, 68, 68, 0.08)',
-                color: 'var(--color-danger, #dc2626)',
+                color: 'var(--color-danger)',
                 border: '1px solid rgba(239, 68, 68, 0.15)',
               }}
             >
@@ -496,7 +496,7 @@ export function PhoneScannerModal({
                 borderRadius: '12px',
                 fontWeight: 600,
                 background: 'rgba(34, 197, 94, 0.1)',
-                color: 'var(--color-success, #16a34a)',
+                color: 'var(--color-success)',
                 border: '1px solid rgba(34, 197, 94, 0.25)',
                 cursor: 'pointer',
               }}

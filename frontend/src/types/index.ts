@@ -29,8 +29,8 @@ export interface GeneralInfo {
   inspector_name: string;
   resident_engineer: string;
   report_date: string; // YYYY-MM-DD
-  start_time: string;  // HH:MM
-  end_time: string;    // HH:MM
+  start_time: string; // HH:MM
+  end_time: string; // HH:MM
   sky_conditions: SkyCondition[];
   temperature_high: string;
   temperature_low: string;
@@ -61,35 +61,35 @@ export interface Activity {
 /** A single manpower entry (one trade/person) */
 export interface ManpowerRow {
   id: string;
-  trade: string;         // PMWeb resource code e.g. "LL-03- Laborers"
-  name: string;          // Individual name (optional)
-  qty: number;           // Headcount
-  hours: number;         // Hours worked
-  start_time: string;    // e.g. "7:00 AM"
-  stop_time: string;     // e.g. "3:30 PM"
-  company: string;       // Employer
+  trade: string; // PMWeb resource code e.g. "LL-03- Laborers"
+  name: string; // Individual name (optional)
+  qty: number; // Headcount
+  hours: number; // Hours worked
+  start_time: string; // e.g. "7:00 AM"
+  stop_time: string; // e.g. "3:30 PM"
+  company: string; // Employer
   classification: string;
   is_3rd_party: boolean;
   is_extra_work: boolean;
   is_consultant: boolean;
-  locked: boolean;       // Protected from bulk apply
+  locked: boolean; // Protected from bulk apply
 }
 
 /** A single equipment entry */
 export interface EquipmentRow {
   id: string;
-  name: string;          // PMWeb resource code e.g. "LE-05- CAT 330 Excavator"
-  description: string;   // Equipment number e.g. "F450"
+  name: string; // PMWeb resource code e.g. "LE-05- CAT 330 Excavator"
+  description: string; // Equipment number e.g. "F450"
   qty: number;
   hours: number;
-  start_time: string;    // e.g. "7:00 AM"
-  stop_time: string;     // e.g. "3:30 PM"
+  start_time: string; // e.g. "7:00 AM"
+  stop_time: string; // e.g. "3:30 PM"
   company: string;
   is_3rd_party: boolean;
   is_extra_work: boolean;
   is_consultant: boolean;
   is_rental: boolean;
-  locked: boolean;       // Protected from bulk apply
+  locked: boolean; // Protected from bulk apply
 }
 
 /** Photo attached to a report */

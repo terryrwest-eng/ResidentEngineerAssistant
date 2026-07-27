@@ -512,8 +512,8 @@ export function ScanPage() {
             {scanError && (
               <div style={{
                 marginTop: 'var(--space-md)', padding: 'var(--space-sm) var(--space-md)',
-                background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 'var(--radius-md)',
-                display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: '#DC2626', fontSize: '0.875rem',
+                background: 'var(--color-danger-light)', border: '1px solid var(--color-danger-border)', borderRadius: 'var(--radius-md)',
+                display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: 'var(--color-danger)', fontSize: '0.875rem',
               }}>
                 <AlertCircle size={16} />
                 {scanError}
@@ -534,8 +534,8 @@ export function ScanPage() {
               style={{
                 width: '100px', height: '100px',
                 borderRadius: '50%',
-                border: `4px solid ${isRecording ? '#DC2626' : 'var(--color-accent)'}`,
-                background: isRecording ? '#FEF2F2' : 'var(--color-accent-light)',
+                border: `4px solid ${isRecording ? 'var(--color-danger)' : 'var(--color-accent)'}`,
+                background: isRecording ? 'var(--color-danger-light)' : 'var(--color-accent-light)',
                 cursor: 'pointer',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                 gap: 'var(--space-xs)',
@@ -544,9 +544,9 @@ export function ScanPage() {
                 boxShadow: isRecording ? '0 0 0 8px rgba(220,38,38,0.15)' : 'none',
               }}
             >
-              <Mic size={32} style={{ color: isRecording ? '#DC2626' : 'var(--color-accent)' }} />
+              <Mic size={32} style={{ color: isRecording ? 'var(--color-danger)' : 'var(--color-accent)' }} />
               {isRecording && (
-                <span style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-danger)', fontWeight: 600 }}>
                   {Math.floor(recordingDuration / 60).toString().padStart(2, '0')}:{(recordingDuration % 60).toString().padStart(2, '0')}
                 </span>
               )}
@@ -579,8 +579,8 @@ export function ScanPage() {
             {dictationError && (
               <div style={{
                 marginTop: 'var(--space-md)', padding: 'var(--space-sm) var(--space-md)',
-                background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 'var(--radius-md)',
-                color: '#DC2626', fontSize: '0.875rem',
+                background: 'var(--color-danger-light)', border: '1px solid var(--color-danger-border)', borderRadius: 'var(--radius-md)',
+                color: 'var(--color-danger)', fontSize: '0.875rem',
               }}>
                 {dictationError}
               </div>

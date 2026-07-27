@@ -3,7 +3,7 @@
  *
  * Project header section of a daily report.
  * Fields: project name, number, location, inspector, RE,
- *         date, times, weather, notes.
+ * date, times, weather, notes.
  *
  * Weather auto-fill: fetches current weather from Open-Meteo API
  * using GPS geolocation or user-specified ZIP code.
@@ -12,6 +12,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { SKY_CONDITIONS } from '@/lib/constants';
+import { SkyIcon } from '@/lib/skyIcons';
 import { weatherApi } from '@/lib/api';
 import type { WeatherData } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
@@ -27,12 +28,19 @@ export function GeneralInfoForm() {
 
   // Project list from settings for autocomplete suggestions
   const [projectSuggestions, setProjectSuggestions] = useState<string[]>([]);
+  // Saved ZIP — lets weather resolve without asking when GPS is unavailable
+  // (which is most of the time on a desktop browser).
+  const [defaultZip, setDefaultZip] = useState('');
 
   useEffect(() => {
     settingsApi.get().then((s) => {
       if (s.projects?.length) {
         setProjectSuggestions(s.projects);
         console.debug('[GeneralInfoForm] Loaded project suggestions:', s.projects.length);
+      }
+      if (s.default_zip_code) {
+        setDefaultZip(s.default_zip_code);
+        console.debug('[GeneralInfoForm] Default ZIP loaded:', s.default_zip_code);
       }
     }).catch((err) => {
       console.warn('[GeneralInfoForm] Failed to load project suggestions:', err);
@@ -155,15 +163,35 @@ export function GeneralInfoForm() {
       console.warn('[Weather] GPS failed, trying ZIP fallback:', geoErr);
     }
 
-    // Fallback: prompt for ZIP code
+    // Fallback: the ZIP saved in Settings. Only ask if there isn't one — being
+    // prompted for the same ZIP on every report is the actual complaint here.
     try {
-      const zip = prompt('Enter ZIP code for weather lookup:');
-      if (!zip || !zip.trim()) {
-        setWeatherError('No ZIP entered');
-        return;
+      let zip = defaultZip;
+
+      if (!zip) {
+        const entered = prompt(
+          'Enter ZIP code for weather lookup:\n\n'
+          + '(Set a default in Settings → Project Defaults and you won\'t be asked again.)',
+        );
+        if (!entered || !entered.trim()) {
+          setWeatherError('No ZIP entered');
+          return;
+        }
+        zip = entered.trim();
+
+        // Save it so this is the last time. Best-effort — a failed save must not
+        // cost the user the weather they just asked for.
+        try {
+          const current = await settingsApi.get();
+          await settingsApi.update({ ...current, default_zip_code: zip });
+          setDefaultZip(zip);
+          console.debug('[Weather] Saved default ZIP:', zip);
+        } catch (saveErr) {
+          console.warn('[Weather] Could not save default ZIP:', saveErr);
+        }
       }
 
-      const data = await weatherApi.fetchByZip(zip.trim(), gen.report_date || undefined);
+      const data = await weatherApi.fetchByZip(zip, gen.report_date || undefined);
       if (data.status === 'success') {
         applyWeather(data);
       } else {
@@ -381,7 +409,7 @@ export function GeneralInfoForm() {
                     transition: 'all 0.12s ease',
                   }}
                 >
-                  <span>{sky.emoji}</span>
+                  <SkyIcon id={sky.id} />
                   <span>{sky.label}</span>
                 </button>
               );

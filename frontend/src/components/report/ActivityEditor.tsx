@@ -6,9 +6,9 @@
  * Supports extra work and consultant sections.
  *
  * AI Features:
- *   - ✨ AI Rewrite button in summary toolbar
- *   - 🤖 AI Assistant side panel (WWWW + generate)
- *   - 📷 Update with Media (Smart Merge) panel
+ * -  AI Rewrite button in summary toolbar
+ * -  AI Assistant side panel (WWWW + generate)
+ * -  Update with Media (Smart Merge) panel
  *
  * This is an ON-PAGE section, NOT a modal.
  * Clicking outside does nothing. You close it by collapsing it.
@@ -468,13 +468,13 @@ export function ActivityEditor({
               }}>
                 <label className="label" style={{ margin: 0 }}>Work Summary</label>
                 <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap' }}>
-                  {/* 🎤 Smart Dictate — record voice → AI parses summary + resources */}
+                  {/* Smart Dictate — record voice → AI parses summary + resources */}
                   <button
                     className={`btn btn-ghost btn-sm ${isRecording ? 'btn-recording' : ''}`}
                     onClick={handleVoiceRecord}
                     disabled={isProcessingAudio}
                     title={isRecording ? 'Stop recording' : isProcessingAudio ? 'Processing...' : 'Smart Dictate — speak to fill summary + resources'}
-                    style={{ fontSize: '0.6875rem', padding: '2px 8px', gap: '3px', color: isRecording ? 'var(--color-danger, #dc2626)' : undefined }}
+                    style={{ fontSize: '0.6875rem', padding: '2px 8px', gap: '3px', color: isRecording ? 'var(--color-danger)' : undefined }}
                   >
                     {isProcessingAudio ? (
                       <><Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} /> Processing...</>
@@ -484,7 +484,7 @@ export function ActivityEditor({
                       <><Mic size={12} /> Dictate</>
                     )}
                   </button>
-                  {/* 📸 Camera — opens device camera for document capture */}
+                  {/* Camera — opens device camera for document capture */}
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => setShowPhoneScanner(true)}
@@ -495,10 +495,10 @@ export function ActivityEditor({
                     {scanningFromCamera ? (
                       <><Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} /> Scanning...</>
                     ) : (
-                      <><Camera size={12} /> 📸 Camera</>
+                      <><Camera size={12} /> Camera</>
                     )}
                   </button>
-                  {/* 📄 Scan Timesheet — file upload */}
+                  {/* Scan Timesheet — file upload */}
                   <input
                     ref={timesheetInputRef}
                     type="file"
@@ -517,7 +517,7 @@ export function ActivityEditor({
                     {isScanning ? (
                       <><Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} /> Scanning...</>
                     ) : (
-                      <><FileText size={12} /> 📄 Scan Timesheet</>
+                      <><FileText size={12} /> Scan Timesheet</>
                     )}
                   </button>
                   {/* AI Rewrite button */}
@@ -673,7 +673,7 @@ export function ActivityEditor({
             <CollapsibleResourceSection
               icon={<Users size={16} />}
               label="Consultants"
-              color="#8B5CF6"
+              color="var(--color-ai)"
               count={activity.consultant_manpower?.length || 0}
               isExpanded={expandedSections.has('consultants')}
               onToggle={() => setExpandedSections(prev => {

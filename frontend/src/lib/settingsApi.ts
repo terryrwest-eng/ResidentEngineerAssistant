@@ -43,6 +43,11 @@ export interface AppSettings {
   master_lists: MasterLists;
   custom_resource_codes: CustomResourceCodes;
   user_templates: UserTemplate[];
+  /** Used for weather lookup when GPS is unavailable, and by the Backfill wizard. */
+  default_zip_code: string;
+  default_company: string;
+  project_number: string;
+  project_location: string;
   updated_at?: string;
 }
 

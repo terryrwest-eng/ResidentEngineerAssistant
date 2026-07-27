@@ -184,22 +184,22 @@ export function buildActivity(
       // Station ranges
       if (stationRanges.length > 0) {
         for (const range of stationRanges) {
-          summary += `  ${range.from} to ${range.to}\n`;
+          summary += ` ${range.from} to ${range.to}\n`;
         }
       }
       for (const row of shiftData.rows) {
         const doStr = row.do_number && String(row.do_number) !== '0' ? ` DO #${row.do_number}` : '';
         const depthStr = row.depth ? ` — ${row.depth}' depth` : '';
-        summary += `  - ${row.direction}${doStr}${depthStr} — ${row.sf.toLocaleString()} SF (${row.tons} tons)\n`;
+        summary += ` - ${row.direction}${doStr}${depthStr} — ${row.sf.toLocaleString()} SF (${row.tons} tons)\n`;
       }
-      summary += `  Total: ${shiftData.total_sf.toLocaleString()} SF / ${shiftData.total_tons.toLocaleString()} Tons\n`;
+      summary += ` Total: ${shiftData.total_sf.toLocaleString()} SF / ${shiftData.total_tons.toLocaleString()} Tons\n`;
     } else {
       // Digout summary format (existing)
       summary += `• Digout Schedule — ${shiftNumber}:\n`;
       for (const row of shiftData.rows) {
-        summary += `  - DO #${row.do_number} ${row.direction} — ${row.depth}' depth × ${row.width}W × ${row.length}L = ${row.sf.toLocaleString()} SF (${row.tons} tons)\n`;
+        summary += ` - DO #${row.do_number} ${row.direction} — ${row.depth}' depth × ${row.width}W × ${row.length}L = ${row.sf.toLocaleString()} SF (${row.tons} tons)\n`;
       }
-      summary += `  Total: ${shiftData.total_sf.toLocaleString()} SF / ${shiftData.total_tons.toLocaleString()} Tons\n`;
+      summary += ` Total: ${shiftData.total_sf.toLocaleString()} SF / ${shiftData.total_tons.toLocaleString()} Tons\n`;
     }
   }
   // Material/Plant from all selected jobs

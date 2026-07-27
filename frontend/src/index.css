@@ -38,6 +38,19 @@
   --color-info: #0065FF;
   --color-info-light: #E6F0FF;
 
+  /* Status borders — the outline on a tinted status box. Previously hardcoded
+     (#FECACA, #BBF7D0, #FCD34D, #BFDBFE) in a dozen components, which is what
+     made those boxes glow white in dark mode. */
+  --color-success-border: #BBF7D0;
+  --color-warning-border: #FCD34D;
+  --color-danger-border: #FECACA;
+  --color-info-border: #BFDBFE;
+
+  /* AI features are purple throughout the app — a distinct meaning, not the
+     primary accent, so it gets its own token rather than collapsing into it. */
+  --color-ai: #7C3AED;
+  --color-ai-light: #F3EEFF;
+
   /* Borders & shadows */
   --color-border: #E1E4E8;
   --color-border-hover: #CCD0D5;
@@ -63,6 +76,67 @@
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  color-scheme: light;
+}
+
+/* --- Dark theme ---
+   Applied by setting data-theme="dark" on <html> (see lib/theme.ts). The switch
+   offers Light / Dark / Auto and defaults to Light — the app never forces a
+   theme on anyone.
+
+   WHY THIS EXISTS: shifts run to 8:30 PM and later. A #FAFBFC screen held up in
+   the dark is glare, and glare on a phone in the field is a real problem, not a
+   preference. Every token below maps one-for-one to the light set above, so
+   components that use the vars need no changes.
+
+   Not pure black: #12151A keeps a little warmth and stops the OLED smearing you
+   get from #000 when scrolling. Text tops out at #E6E9EF rather than #FFF
+   because full-white on near-black haloes. */
+:root[data-theme="dark"] {
+  --color-bg: #12151A;
+  --color-surface: #1A1E25;
+  --color-surface-hover: #222730;
+  --color-surface-active: #2A303A;
+
+  --color-text-primary: #E6E9EF;
+  --color-text-secondary: #A8B0BD;
+  --color-text-tertiary: #78808E;
+  --color-text-placeholder: #5A6270;
+
+  /* Accent lifts on dark — #3B6FE0 fails contrast against #12151A */
+  --color-accent: #5B8DEF;
+  --color-accent-hover: #7AA3F5;
+  --color-accent-light: #1C2740;
+  --color-accent-text: #FFFFFF;
+
+  --color-success: #3DCA8E;
+  --color-success-light: #12301F;
+  --color-warning: #F5A524;
+  --color-warning-light: #33260A;
+  --color-danger: #F87462;
+  --color-danger-light: #3A1512;
+  --color-info: #4C9AFF;
+  --color-info-light: #10233F;
+
+  --color-success-border: #1E5C42;
+  --color-warning-border: #6B4E10;
+  --color-danger-border: #6E2A25;
+  --color-info-border: #22436E;
+
+  --color-ai: #A78BFA;
+  --color-ai-light: #241C3D;
+
+  --color-border: #2A303A;
+  --color-border-hover: #3A424F;
+
+  /* Shadows carry less on a dark surface — lean on borders instead */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.55);
+  --shadow-focus: 0 0 0 3px rgba(91, 141, 239, 0.35);
+
+  color-scheme: dark;
 }
 
 /* --- Base Reset --- */

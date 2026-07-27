@@ -5,11 +5,11 @@
  * Title: "Combined Resource Table" (NOT "Consolidated" — user confirmed this naming).
  *
  * Columns: Resource | Pay Type | Classification | Specialist | Remarks |
- *          Subcontractor | Qty | Company | Hours | Start | Finish
+ * Subcontractor | Qty | Company | Hours | Start | Finish
  *
  * Actions:
- *   - Copy Table → clipboard (tab-delimited, paste into PMWeb manually)
- *   - Auto-Fill PMWeb → sends to Chrome extension for Telerik grid injection
+ * - Copy Table → clipboard (tab-delimited, paste into PMWeb manually)
+ * - Auto-Fill PMWeb → sends to Chrome extension for Telerik grid injection
  */
 
 import { useState, useEffect } from 'react';
@@ -172,11 +172,11 @@ export function PMWebPreview({ reportId, isOpen, onClose }: PMWebPreviewProps) {
           <div style={{
             margin: 'var(--space-md) var(--space-lg) 0',
             padding: 'var(--space-sm) var(--space-md)',
-            background: '#FFF8E7',
-            border: '1px solid #F5C842',
+            background: 'var(--color-warning-light)',
+            border: '1px solid var(--color-warning)',
             borderRadius: 'var(--radius-md)',
             display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
-            fontSize: '0.8125rem', color: '#92650A',
+            fontSize: '0.8125rem', color: 'var(--color-warning)',
           }}>
             <AlertTriangle size={14} />
             You need <strong style={{ margin: '0 4px' }}>{totalRows}</strong> empty rows in PMWeb before auto-filling.
@@ -227,14 +227,14 @@ export function PMWebPreview({ reportId, isOpen, onClose }: PMWebPreviewProps) {
                         <td style={{ fontWeight: 500 }}>{row.resource}</td>
                         <td>
                           {isEW ? (
-                            <span style={{ color: '#DC2626' }}>EW - Extra Work</span>
+                            <span style={{ color: 'var(--color-danger)' }}>EW - Extra Work</span>
                           ) : (
-                            <span style={{ color: '#16A34A' }}>CS - Cost</span>
+                            <span style={{ color: 'var(--color-success)' }}>CS - Cost</span>
                           )}
                         </td>
                         <td>
                           {isOT ? (
-                            <span style={{ color: '#D97706', fontWeight: 600 }}>LO - Labor Overtime</span>
+                            <span style={{ color: 'var(--color-warning)', fontWeight: 600 }}>LO - Labor Overtime</span>
                           ) : (
                             'LR - Labor Regular Time'
                           )}
@@ -246,7 +246,7 @@ export function PMWebPreview({ reportId, isOpen, onClose }: PMWebPreviewProps) {
                           {row.remarks || '—'}
                         </td>
                         <td style={{ textAlign: 'center' }}>
-                          {row.subcontractor && <CheckCircle2 size={14} style={{ color: '#8B5CF6' }} />}
+                          {row.subcontractor && <CheckCircle2 size={14} style={{ color: 'var(--color-ai)' }} />}
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>{row.qty}</td>
                         <td>{row.company}</td>
@@ -283,7 +283,7 @@ export function PMWebPreview({ reportId, isOpen, onClose }: PMWebPreviewProps) {
               className="btn btn-primary"
               onClick={handleAutoFill}
               disabled={rows.length === 0 || isLaunching}
-              style={{ background: '#16A34A', borderColor: '#16A34A' }}
+              style={{ background: 'var(--color-success)', borderColor: 'var(--color-success)' }}
             >
               {isLaunching
                 ? <><Loader2 size={16} style={{ animation: 'spin 0.6s linear infinite' }} /> Launching...</>
@@ -298,10 +298,11 @@ export function PMWebPreview({ reportId, isOpen, onClose }: PMWebPreviewProps) {
             padding: 'var(--space-sm) var(--space-lg)',
             fontSize: '0.8125rem',
             color: 'var(--color-danger)',
-            background: '#FEF2F2',
-            borderTop: '1px solid #FECACA',
+            background: 'var(--color-danger-light)',
+            borderTop: '1px solid var(--color-danger-border)',
+            display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
           }}>
-            ⚠️ {launchError}
+            <AlertTriangle size={14} style={{ flexShrink: 0 }} /> {launchError}
           </div>
         )}
       </div>

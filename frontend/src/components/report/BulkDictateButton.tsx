@@ -552,8 +552,8 @@ export function BulkDictateButton() {
                 width: '88px',
                 height: '88px',
                 borderRadius: '50%',
-                border: `4px solid ${phase === 'recording' ? '#DC2626' : 'var(--color-accent)'}`,
-                background: phase === 'recording' ? '#FEF2F2' : 'var(--color-accent-light)',
+                border: `4px solid ${phase === 'recording' ? 'var(--color-danger)' : 'var(--color-accent)'}`,
+                background: phase === 'recording' ? 'var(--color-danger-light)' : 'var(--color-accent-light)',
                 cursor: 'pointer',
                 display: 'flex',
                 flexDirection: 'column',
@@ -566,12 +566,12 @@ export function BulkDictateButton() {
               }}
             >
               {phase === 'recording' ? (
-                <MicOff size={28} style={{ color: '#DC2626' }} />
+                <MicOff size={28} style={{ color: 'var(--color-danger)' }} />
               ) : (
                 <Mic size={28} style={{ color: 'var(--color-accent)' }} />
               )}
               {phase === 'recording' && (
-                <span style={{ fontSize: '0.6875rem', color: '#DC2626', fontWeight: 600 }}>
+                <span style={{ fontSize: '0.6875rem', color: 'var(--color-danger)', fontWeight: 600 }}>
                   {formatDuration(recordingDuration)}
                 </span>
               )}
@@ -640,10 +640,10 @@ export function BulkDictateButton() {
                 gap: 'var(--space-sm)',
                 padding: 'var(--space-sm) var(--space-md)',
                 background: 'var(--color-warning-light)',
-                border: '1px solid #FCD34D',
+                border: '1px solid var(--color-warning-border)',
                 borderRadius: 'var(--radius-md)',
                 marginBottom: 'var(--space-md)',
-                color: '#92400E',
+                color: 'var(--color-warning)',
                 fontSize: '0.8125rem',
               }}>
                 <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
@@ -655,11 +655,11 @@ export function BulkDictateButton() {
                 alignItems: 'center',
                 gap: 'var(--space-sm)',
                 padding: 'var(--space-sm) var(--space-md)',
-                background: '#F0FDF4',
-                border: '1px solid #BBF7D0',
+                background: 'var(--color-success-light)',
+                border: '1px solid var(--color-success-border)',
                 borderRadius: 'var(--radius-md)',
                 marginBottom: 'var(--space-md)',
-                color: '#16A34A',
+                color: 'var(--color-success)',
                 fontSize: '0.8125rem',
                 fontWeight: 500,
               }}>
@@ -738,11 +738,11 @@ export function BulkDictateButton() {
               alignItems: 'center',
               gap: 'var(--space-sm)',
               padding: 'var(--space-sm) var(--space-md)',
-              background: '#F0FDF4',
-              border: '1px solid #BBF7D0',
+              background: 'var(--color-success-light)',
+              border: '1px solid var(--color-success-border)',
               borderRadius: 'var(--radius-md)',
               marginBottom: 'var(--space-md)',
-              color: '#16A34A',
+              color: 'var(--color-success)',
               fontSize: '0.8125rem',
               fontWeight: 500,
             }}>
@@ -814,16 +814,16 @@ export function BulkDictateButton() {
           <div style={{
             marginTop: 'var(--space-md)',
             padding: 'var(--space-sm) var(--space-md)',
-            background: '#FEF2F2',
-            border: '1px solid #FECACA',
+            background: 'var(--color-danger-light)',
+            border: '1px solid var(--color-danger-border)',
             borderRadius: 'var(--radius-md)',
             fontSize: '0.875rem',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: '#DC2626', marginBottom: 'var(--space-xs)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: 'var(--color-danger)', marginBottom: 'var(--space-xs)' }}>
               <AlertCircle size={16} />
               <strong>{phase === 'recording' ? 'Recording problem' : "Couldn't process that recording"}</strong>
             </div>
-            <p style={{ color: '#991B1B', fontSize: '0.8125rem', margin: '0 0 var(--space-sm) 0' }}>
+            <p style={{ color: 'var(--color-danger)', fontSize: '0.8125rem', margin: '0 0 var(--space-sm) 0' }}>
               {error}
             </p>
             {audioBlob && phase === 'review' && (

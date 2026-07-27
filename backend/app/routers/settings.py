@@ -80,6 +80,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "custom_resource_codes": {"labor": [], "equipment": []},
     "default_company": "",
     "default_zip_code": "",
+    "project_number": "",
+    "project_location": "",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
     # Backfill scope rule — see routers/backfill.py.
@@ -124,6 +126,14 @@ class SettingsPayload(BaseModel):
     master_lists: MasterLists = Field(default_factory=MasterLists)
     custom_resource_codes: CustomResourceCodes = Field(default_factory=CustomResourceCodes)
     user_templates: list[dict[str, Any]] = []
+    # Project defaults. These were stored in settings.json but missing from this
+    # payload, so the Settings page could never actually set them — which is why
+    # weather fell back to a browser prompt on every report, and why backfill
+    # skipped weather entirely.
+    default_zip_code: str = ""
+    default_company: str = ""
+    project_number: str = ""
+    project_location: str = ""
 
 
 class SyncResourcesPayload(BaseModel):

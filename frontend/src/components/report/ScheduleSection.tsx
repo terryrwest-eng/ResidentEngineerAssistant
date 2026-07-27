@@ -225,9 +225,9 @@ export function ScheduleSection() {
             <div style={{
               marginBottom: 'var(--space-md)',
               padding: 'var(--space-sm) var(--space-md)',
-              background: '#FEF2F2', border: '1px solid #FECACA',
+              background: 'var(--color-danger-light)', border: '1px solid var(--color-danger-border)',
               borderRadius: 'var(--radius-md)',
-              color: '#DC2626', fontSize: '0.875rem',
+              color: 'var(--color-danger)', fontSize: '0.875rem',
               display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
             }}>
               <AlertCircle size={14} />
@@ -335,7 +335,7 @@ export function ScheduleSection() {
                         <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
                           Shift {shiftKey}
                           {activeSchedule?.schedule_type === 'grind_overlay' && (
-                            <span style={{ marginLeft: 8, fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, background: '#E0F2FE', color: '#0369A1', fontWeight: 500 }}>G&O</span>
+                            <span style={{ marginLeft: 8, fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, background: 'var(--color-info-light)', color: 'var(--color-info)', fontWeight: 500 }}>G&O</span>
                           )}
                         </span>
                         <span style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>

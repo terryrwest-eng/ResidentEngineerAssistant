@@ -155,8 +155,8 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       };
       set({
         report: cleanedData,
-        isSaved: true,      // It exists on disk
-        isDirty: false,      // Just loaded — no changes yet
+        isSaved: true, // It exists on disk
+        isDirty: false, // Just loaded — no changes yet
         isLoading: false,
         lastSavedAt: data.updated_at,
       });

@@ -436,7 +436,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
       // ─── DONE ───
       bumpRevision();
       setIsDone(true);
-      console.debug('[AutoCreate] ✅ Automation complete for date:', date);
+      console.debug('[AutoCreate] Automation complete for date:', date);
 
     } catch (err) {
       console.error('[AutoCreate] Fatal error:', err);
@@ -638,7 +638,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
           {overallError && (
             <div style={{
               padding: 'var(--space-md)',
-              background: 'var(--color-danger-bg, #FEF2F2)',
+              background: 'var(--color-danger-light)',
               borderRadius: 'var(--radius-sm)',
               color: 'var(--color-danger)',
               fontSize: '0.875rem',
@@ -677,7 +677,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
           {needsUpload && (
             <div style={{
               padding: 'var(--space-md)',
-              background: 'var(--color-warning-bg, #FFFBEB)',
+              background: 'var(--color-warning-light)',
               borderRadius: 'var(--radius-md)',
               marginBottom: 'var(--space-md)',
             }}>

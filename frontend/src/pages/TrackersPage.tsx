@@ -7,20 +7,20 @@
 import { useState } from 'react';
 import { useTracker } from '@/hooks/useTracker';
 import { trackerApi } from '@/lib/trackerApi';
-import { Shovel, ListChecks, AlertCircle, GitBranch, Plus, Pencil, Trash2, Loader2, X, Save } from 'lucide-react';
+import { Shovel, ListChecks, AlertCircle, AlertTriangle, GitBranch, Plus, Pencil, Trash2, Loader2, X, Save } from 'lucide-react';
 
 type TrackerTab = 'excavation' | 'payitems' | 'punchlist' | 'redlines';
 
 const PRIORITY_COLORS: Record<string, string> = {
-  Low: '#22A06B', Medium: '#E2880A', High: '#DE350B', Critical: '#7C3AED',
+  Low: 'var(--color-success)', Medium: 'var(--color-warning)', High: 'var(--color-danger)', Critical: 'var(--color-ai)',
 };
 const STATUS_COLORS: Record<string, string> = {
-  Open: '#DE350B', 'In Progress': '#E2880A', Closed: '#22A06B',
-  Pending: '#E2880A', Approved: '#22A06B', Rejected: '#DE350B',
+  Open: 'var(--color-danger)', 'In Progress': 'var(--color-warning)', Closed: 'var(--color-success)',
+  Pending: 'var(--color-warning)', Approved: 'var(--color-success)', Rejected: 'var(--color-danger)',
 };
 
 function StatusBadge({ value }: { value: string }) {
-  const color = STATUS_COLORS[value] || '#8B92A0';
+  const color = STATUS_COLORS[value] || 'var(--color-text-tertiary)';
   return (
     <span style={{ padding: '2px 10px', borderRadius: 9999, fontSize: '0.75rem', fontWeight: 600, background: color + '20', color }}>
       {value}
@@ -29,7 +29,7 @@ function StatusBadge({ value }: { value: string }) {
 }
 
 function PriorityBadge({ value }: { value: string }) {
-  const color = PRIORITY_COLORS[value] || '#8B92A0';
+  const color = PRIORITY_COLORS[value] || 'var(--color-text-tertiary)';
   return (
     <span style={{ padding: '2px 10px', borderRadius: 9999, fontSize: '0.75rem', fontWeight: 600, background: color + '20', color }}>
       {value}
@@ -131,8 +131,12 @@ function TrackerShell({
       </div>
 
       {error && (
-        <div style={{ padding: 'var(--space-md) var(--space-lg)', color: 'var(--color-danger)', fontSize: '0.875rem' }}>
-          ⚠️ {error}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+          padding: 'var(--space-md) var(--space-lg)',
+          color: 'var(--color-danger)', fontSize: '0.875rem',
+        }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0 }} /> {error}
         </div>
       )}
 
@@ -305,10 +309,10 @@ function PayItemTracker() {
   }
 
   function pctColor(pct: number) {
-    if (pct >= 100) return '#22A06B';
-    if (pct >= 75) return '#3B6FE0';
-    if (pct >= 50) return '#E2880A';
-    return '#DE350B';
+    if (pct >= 100) return 'var(--color-success)';
+    if (pct >= 75) return 'var(--color-accent)';
+    if (pct >= 50) return 'var(--color-warning)';
+    return 'var(--color-danger)';
   }
 
   const columns = [
@@ -399,8 +403,8 @@ function PunchListTracker() {
     <div>
       <div style={{ display: 'flex', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
         {[
-          { label: 'Open', count: openCount, color: '#DE350B' },
-          { label: 'Closed', count: closedCount, color: '#22A06B' },
+          { label: 'Open', count: openCount, color: 'var(--color-danger)' },
+          { label: 'Closed', count: closedCount, color: 'var(--color-success)' },
           { label: 'Total', count: rows.length, color: 'var(--color-text-secondary)' },
         ].map((s) => (
           <div key={s.label} style={{ padding: 'var(--space-md)', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', minWidth: 80, textAlign: 'center' }}>
