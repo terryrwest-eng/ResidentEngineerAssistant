@@ -139,6 +139,94 @@
   color-scheme: dark;
 }
 
+/* ============================================
+   RESOURCE TABLE — phone layout
+   ============================================
+   On desktop this is a 12-column grid, which is right: entering a crew is
+   comparing rows against each other. On a phone that same grid is a 1050px
+   horizontal scroll with 24px tap targets, which is unusable with gloves on.
+
+   Under 640px each row becomes a card, and each field is labelled from its
+   data-label attribute (set in ResourceTable.tsx — inert on desktop). No JS,
+   no second component to keep in sync with the first.
+   ============================================ */
+@media (max-width: 640px) {
+  .resource-table-scroll {
+    overflow-x: visible !important;
+  }
+
+  .resource-table {
+    min-width: 0 !important;
+    display: block;
+    font-size: 0.875rem !important;
+  }
+
+  /* The header row has nothing to label once rows are stacked. */
+  .resource-table thead {
+    display: none;
+  }
+
+  .resource-table tbody,
+  .resource-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .resource-table tr {
+    position: relative;
+    margin-bottom: var(--space-sm);
+    padding: var(--space-sm);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .resource-table td {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 100% !important;
+    padding: 3px 0 !important;
+    border: none !important;
+  }
+
+  .resource-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 84px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--color-text-tertiary);
+  }
+
+  /* Gloved hands. 44px is the accessibility floor, not a preference. */
+  .resource-table td .input,
+  .resource-table td input[type="text"],
+  .resource-table td input[type="number"],
+  .resource-table td select,
+  .resource-table td button {
+    min-height: 44px;
+    font-size: 1rem !important;   /* under 16px iOS zooms the whole page on focus */
+    max-width: none !important;
+  }
+
+  .resource-table td input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* The select checkbox has no label — float it to the card corner. */
+  .resource-table td:first-child {
+    position: absolute;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    width: auto !important;
+    padding: 0 !important;
+  }
+}
+
 /* --- Base Reset --- */
 *,
 *::before,

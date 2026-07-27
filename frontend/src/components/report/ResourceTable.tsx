@@ -246,8 +246,8 @@ export function ResourceTable({
 
   return (
     <div style={{ marginBottom: 'var(--space-sm)' }}>
-      <div style={{ overflowX: 'auto' }}>
-        <table className="table" style={{ minWidth: '1050px', fontSize: '0.75rem' }}>
+      <div className="resource-table-scroll" style={{ overflowX: 'auto' }}>
+        <table className="table resource-table" style={{ minWidth: '1050px', fontSize: '0.75rem' }}>
           <thead>
             <tr>
               <th style={{ ...headerStyle, width: '30px', textAlign: 'center' }}>
@@ -428,7 +428,7 @@ function ResourceRow({
       </td>
 
       {/* Resource (PMWeb dropdown — portal-based, never clipped by table overflow) */}
-      <td style={cellStyle}>
+      <td data-label="Resource" style={cellStyle}>
         <ResourceDropdown
           value={currentValue}
           onChange={(val) => onUpdate(isManpower ? 'trade' : 'name', val)}
@@ -439,7 +439,7 @@ function ResourceRow({
       </td>
 
       {/* Name (manpower) / Equipment Number (equipment) */}
-      <td style={cellStyle}>
+      <td data-label={isManpower ? "Name" : "Equip #"} style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -451,7 +451,7 @@ function ResourceRow({
       </td>
 
       {/* Qty */}
-      <td style={cellStyle}>
+      <td data-label="Qty" style={cellStyle}>
         <input
           className="input"
           type="number"
@@ -465,7 +465,7 @@ function ResourceRow({
       </td>
 
       {/* Hours */}
-      <td style={cellStyle}>
+      <td data-label="Hours" style={cellStyle}>
         <input
           className="input"
           type="number"
@@ -480,7 +480,7 @@ function ResourceRow({
       </td>
 
       {/* Start Time */}
-      <td style={cellStyle}>
+      <td data-label="Start" style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -492,7 +492,7 @@ function ResourceRow({
       </td>
 
       {/* Stop Time */}
-      <td style={cellStyle}>
+      <td data-label="Stop" style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -504,7 +504,7 @@ function ResourceRow({
       </td>
 
       {/* Company (combobox — text input + datalist for suggestions) */}
-      <td style={cellStyle}>
+      <td data-label="Company" style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -521,7 +521,7 @@ function ResourceRow({
       </td>
 
       {/* 3rd Party / EW / Consultant checkboxes */}
-      <td style={{ ...cellStyle, textAlign: 'center' }}>
+      <td data-label="Flags" style={{ ...cellStyle, textAlign: 'center' }}>
         <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
           <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
             <span style={checkLabelStyle}>3rd</span>

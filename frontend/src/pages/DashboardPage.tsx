@@ -18,9 +18,12 @@ import {
   TrendingUp,
   Zap,
   CalendarClock,
+  CalendarDays,
+  CheckCircle2,
+  ArrowRight,
 } from 'lucide-react';
 import { reportApi } from '@/lib/api';
-import { localDateString } from '@/lib/formatters';
+import { localDateString, formatReportDate } from '@/lib/formatters';
 import { AutoCreateDialog } from '@/components/report/AutoCreateDialog';
 
 interface ReportSummary {
@@ -40,6 +43,7 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAutoCreate, setShowAutoCreate] = useState(false);
+  const [todayReport, setTodayReport] = useState<ReportSummary | null>(null);
 
   useEffect(() => {
     loadDashboard();
@@ -60,6 +64,12 @@ export function DashboardPage() {
         return r.report_date >= monday;
       }).length;
       setThisWeek(weekCount);
+      // Is today's report already started? This is the first question the
+      // dashboard should answer, and it previously took a trip to History.
+      const today = localDateString();
+      setTodayReport(
+        (data.reports || []).find((r: ReportSummary) => r.report_date === today) || null,
+      );
     } catch (err) {
       console.error('[Dashboard] Failed to load:', err);
       setError('Unable to connect to server. Is the backend running?');
@@ -75,6 +85,50 @@ export function DashboardPage() {
         <h1>Daily Reporter</h1>
         <p>Construction Field Reporting Platform</p>
       </div>
+
+      {/* Today — the question you actually open this app to answer */}
+      {!loading && !error && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 'var(--space-lg)',
+            borderLeft: `3px solid ${todayReport ? 'var(--color-success)' : 'var(--color-warning)'}`,
+          }}
+        >
+          <div
+            className="card-body"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-md)',
+              flexWrap: 'wrap',
+            }}
+          >
+            {todayReport
+              ? <CheckCircle2 size={22} style={{ color: 'var(--color-success)', flexShrink: 0 }} />
+              : <CalendarDays size={22} style={{ color: 'var(--color-warning)', flexShrink: 0 }} />}
+
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontWeight: 600 }}>
+                {todayReport ? "Today's report is started" : "No report for today yet"}
+              </div>
+              <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-tertiary)' }}>
+                {formatReportDate(localDateString())}
+                {todayReport && ` · ${todayReport.activity_count} `}
+                {todayReport && (todayReport.activity_count === 1 ? 'activity' : 'activities')}
+                {todayReport?.status === 'draft' && ' · draft'}
+              </div>
+            </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={() => navigate(todayReport ? `/report/${todayReport.id}` : '/report/new')}
+            >
+              {todayReport ? <><ArrowRight size={16} /> Resume</> : <><FilePlus size={16} /> Start today</>}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Quick Actions */}
       <div style={{
@@ -164,15 +218,21 @@ export function DashboardPage() {
           {!loading && !error && recentReports.length === 0 && (
             <div className="empty-state">
               <FileText size={48} />
-              <p>No reports yet. Create your first daily report!</p>
-              <button
-                className="btn btn-primary"
-                style={{ marginTop: 'var(--space-md)' }}
-                onClick={() => navigate('/report/new')}
-              >
-                <FilePlus size={16} />
-                New Report
-              </button>
+              <p style={{ fontWeight: 600, marginTop: 'var(--space-sm)' }}>No reports yet</p>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-text-tertiary)' }}>
+                Start today's report, or rebuild missed days from your timesheets.
+              </p>
+              <div style={{
+                display: 'flex', gap: 'var(--space-sm)', justifyContent: 'center',
+                marginTop: 'var(--space-md)', flexWrap: 'wrap',
+              }}>
+                <button className="btn btn-primary" onClick={() => navigate('/report/new')}>
+                  <FilePlus size={16} /> New Report
+                </button>
+                <button className="btn btn-secondary" onClick={() => navigate('/backfill')}>
+                  <CalendarClock size={16} /> Backfill Reports
+                </button>
+              </div>
             </div>
           )}
 
