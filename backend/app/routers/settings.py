@@ -82,6 +82,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "default_zip_code": "",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
+    # Backfill scope rule — see routers/backfill.py.
+    # "All timesheets for a date, MINUS the 805 tunnel crew, = one report."
+    # The foreman list is configuration rather than a constant because that
+    # association ended: Rey Villa ran the tunnel crew through the makeup window
+    # (Oct 2025 – Jan 2026) and came off it before Jul 2026. Going forward the
+    # job-name keywords are what carry the rule.
+    "backfill": {
+        "tunnel_foremen": ["Rey Villa"],
+        "tunnel_job_keywords": ["805", "tunnel"],
+    },
     "updated_at": "",
 }
 
@@ -218,6 +228,25 @@ def update_resource_aliases(payload: ResourceAliasesPayload) -> dict[str, Any]:
         f"manpower: {len(merged_manpower)}"
     )
     return {"status": "success", "resource_aliases": data["resource_aliases"]}
+
+
+class BackfillConfigPayload(BaseModel):
+    tunnel_foremen: list[str] = []
+    tunnel_job_keywords: list[str] = ["805", "tunnel"]
+
+
+@router.put("/backfill")
+def update_backfill_config(payload: BackfillConfigPayload) -> dict[str, Any]:
+    """
+    Update the backfill scope rule (which sheets count as 805 tunnel work).
+
+    Kept out of the main SettingsPayload so a normal settings save from the
+    Settings page can never blank it out.
+    """
+    data = _load()
+    data["backfill"] = payload.model_dump()
+    _save(data)
+    return {"status": "success", "backfill": data["backfill"]}
 
 
 @router.post("/templates")

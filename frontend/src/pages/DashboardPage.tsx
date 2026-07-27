@@ -17,6 +17,7 @@ import {
   FileText,
   TrendingUp,
   Zap,
+  CalendarClock,
 } from 'lucide-react';
 import { reportApi } from '@/lib/api';
 import { localDateString } from '@/lib/formatters';
@@ -106,6 +107,12 @@ export function DashboardPage() {
           label="Voice Dictation"
           description="Dictate today's activities"
           onClick={() => navigate('/report/new?action=dictate')}
+        />
+        <QuickAction
+          icon={<CalendarClock size={24} />}
+          label="Backfill Reports"
+          description="Rebuild missed days from timesheets"
+          onClick={() => navigate('/backfill')}
         />
         <QuickAction
           icon={<History size={24} />}

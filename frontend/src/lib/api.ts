@@ -596,5 +596,90 @@ export const tcApi = {
   },
 };
 
+// ============================================
+// BACKFILL (makeup reports from scanned timesheets)
+// ============================================
+
+export interface BackfillFile {
+  file_id: string;
+  filename: string;
+  doc_type: string;
+  work_date: string;
+  confidence: number;
+  date_source: string;
+  weekday_check: string;
+  page_count: number;
+  size_bytes: number;
+  note: string;
+}
+
+export interface BackfillDate {
+  date: string;
+  state: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  file_ids: string[];
+  report_id: string;
+  flag_count: number;
+  flags: string[];
+  excluded_sheets: { sheet: string; reason: string }[];
+  activity_count: number;
+  message: string;
+}
+
+export interface BackfillStatus {
+  batch_id: string;
+  created_at: string;
+  updated_at: string;
+  state: string;
+  files: (BackfillFile & { stored_name: string })[];
+  dates: BackfillDate[];
+}
+
+export const backfillApi = {
+  /** Upload source documents — returns per-file doc type and work date */
+  upload: async (files: File[]): Promise<{ batch_id: string; files: BackfillFile[] }> => {
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    const res = await api.post('/backfill/upload', form, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 600_000, // classification of undated files costs an AI call each
+    });
+    return res.data;
+  },
+
+  /** Kick off generation. Returns immediately — poll status() for progress. */
+  generate: async (params: {
+    batch_id: string;
+    groups: { date: string; file_ids: string[] }[];
+    detail_level?: 'factual' | 'narrative';
+    use_continuity?: boolean;
+    fetch_weather?: boolean;
+  }): Promise<{ batch_id: string; queued_dates: string[]; message: string }> => {
+    const res = await api.post('/backfill/generate', params);
+    return res.data;
+  },
+
+  status: async (batchId: string): Promise<BackfillStatus> => {
+    const res = await api.get(`/backfill/${batchId}/status`);
+    return res.data;
+  },
+
+  list: async (): Promise<{
+    batches: {
+      batch_id: string; created_at: string; updated_at: string;
+      state: string; file_count: number; date_count: number; done_count: number;
+    }[];
+  }> => {
+    const res = await api.get('/backfill');
+    return res.data;
+  },
+
+  /** URL of a stored source file — used directly as an <iframe>/<img> src */
+  fileUrl: (batchId: string, fileId: string): string =>
+    `${BASE_URL}/api/backfill/${batchId}/file/${fileId}`,
+
+  exportUrl: (batchId: string): string =>
+    `${BASE_URL}/api/backfill/${batchId}/export.zip`,
+};
+
 export default api;
 

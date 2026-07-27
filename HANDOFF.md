@@ -17,7 +17,7 @@ Written: 2026-07-26, at the end of a remote (web) session, to resume on Claude C
 | **Session 2 — dictation anti-fabrication** | **done, pushed** | commit `da0144e` |
 | Android asset sync | done, pushed | `115ee98` |
 | Uploaded reports + timesheets merged | done, pushed | `1726891` |
-| **Session 3 — Backfill wizard (makeup reports)** | **NOT STARTED — do this next** | |
+| **Session 3 — Backfill wizard (makeup reports)** | **built, not yet tuned on real scans** | See §5 |
 
 ### Session 1 fixed (all verified)
 - `/api/ai/parse-report` **had never worked** — imported a `create_report()` that doesn't
@@ -226,3 +226,109 @@ Backfill UI.
 
 **First real task there:** render 2–3 timesheet PDFs at 300 DPI, run the extraction prompt
 against them, and compare to the scans by eye. Tune before spending budget on all 37.
+
+---
+
+## 5. Session 3 — what was built
+
+Phase 5 of `IMPROVEMENT_PLAN.md`, both halves.
+
+**Backend** — `backend/app/routers/backfill.py`, registered in `main.py`.
+`POST /upload` (store + classify), `POST /generate` (background, per-date),
+`GET /{batch}/status`, `GET /{batch}/file/{id}`, `GET /{batch}/export.zip`,
+`GET /` (list batches). Storage under `DATA_DIR/backfill/{batch_id}/`.
+
+- **Two passes.** Pages render to JPEG at 300 DPI, stepping down the DPI ladder
+  (300 → 150) if a 17-page day would blow the request size — pages are never
+  dropped, and the DPI actually used is logged and flagged on the report.
+  Pass 1 reads them as plain text; pass 2 structures that text with
+  `response_schema` at temperature 0 and **no images in the request**.
+- **The scope rule runs in Python, not in the prompt.** `_apply_scope_rule()`
+  splits the pass-1 text per sheet and removes tunnel sheets before structuring,
+  so the model never sees them and cannot merge them back in. Both signals are
+  implemented (job name keywords, foreman list) and both live in
+  `settings.backfill` — `PUT /api/settings/backfill`, defaulting to
+  `{tunnel_foremen: ["Rey Villa"], tunnel_job_keywords: ["805", "tunnel"]}`.
+  Every excluded sheet is recorded with its reason on `report.backfill` and in
+  `status.json`. Nothing is dropped silently.
+- **A tunnel-only day produces no report** — state `skipped`, with the reason.
+  That is what 12-06 and 01-17 should do.
+- **Filename dates are checked against the weekday in the filename.** When they
+  disagree the neighbouring years are tried and the one the weekday confirms
+  wins — this is what catches `1.2.25 Friday.pdf` and `1.16.25 Friday.pdf`.
+  Corrections are reported (`date_source: "filename_corrected"`), never silent.
+  Only files the filename cannot date cost an AI classification call.
+- **Generate merges, never replaces.** Re-running for new dates leaves already
+  generated dates untouched, which is what the incremental arrival of the
+  remaining timesheets needs. `status.json` is rewritten after every date.
+- **Continuity** pulls the prior 7 days' activity summaries for a blank summary
+  box, and anything inferred that way is flagged for confirmation.
+
+**Frontend** — `frontend/src/pages/BackfillPage.tsx`, route `/backfill`, entry
+points on the Dashboard and the Tools page. Upload → Group (per-file date and
+type editing, "no timesheet for this day" warnings) → Generate & review (polls
+status; each date expands to the source scan in an iframe beside the extracted
+activities). "Export all Word docs" hits `export.zip`.
+
+**Tests** — `backend/tests/test_backfill.py`, 52 checks, Gemini and Open-Meteo
+mocked, offline and free. It covers the year-typo checksum, both halves of the
+scope rule (including that clearing the foreman list puts him back in scope),
+that a struck-through worker never reaches the report, that `[illegible]` is
+never guessed away, the tunnel-only skip, and the export.
+
+**On the §3.8 open questions:** #1 (detail level) is shipped as a choice rather
+than a guess — the Group step has "Strictly factual" (default, gaps go to
+missing_info) and "Narrative". #2 (pilot) and #3 (drawing set) are still open
+and are the remaining work below.
+
+### What is NOT done for Session 3
+- **No real scan has been through this.** The container has no `GEMINI_API_KEY`,
+  so every test runs against a mocked model. The prompts are written from the
+  documented page layout and have never been checked against actual handwriting.
+  **Run 2–3 real days first and compare to the scans by eye before the other 34.**
+- `default_zip_code` still has no Settings UI (Phase 8.2) — without it the
+  weather step no-ops and flags itself on the report.
+- `2025-12-29` (the date with both a timesheet and a report) has not been checked.
+- **The drawing set is installed but not yet wired into generation** — see §6.
+
+---
+
+## 6. Drawing set (§3.8 question 3)
+
+Source: `C:\Users\Terry\OneDrive - City of San Diego\Morena Conveyance North\
+drawings\PLANS- Morena Conveyance North Bid Set_to_Conformed_Changes_2022.05.09.pdf`
+— 152 pages, 46 MB, conformed through 2022-05-09.
+
+**The useful discovery: 149 of the 152 pages carry a real text layer.** Station
+lookup is therefore a text query, not a vision problem — far cheaper and far more
+reliable than reading the sheets as images.
+
+Installed in two places:
+
+1. **Full set → the app's spec library** at `backend/data/specs/{id}/`, with the
+   extracted text (536k chars) alongside it, so the existing PDF Search tool can
+   query it today with no new code. `backend/data/` is gitignored, so the 46 MB
+   stays out of the repo.
+2. **`reference_reports/drawings/station_index.json`** (64 KB) — per page: the
+   structures named on it (blowoff, air valve, vault, shaft, casing, tunnel,
+   manhole, tie-in) and every station on it, **grouped by alignment**. 114 pages
+   indexed; 42 sheets both name a structure and carry stationing; 18 sheets
+   mention a blowoff.
+
+   Stations are grouped rather than reduced to a min/max on purpose: the project
+   runs two alignments (~1+00–577+00 and ~1050+00–1244+00) and some sheets show
+   both, so a flat range produces artifacts like "559+00 to 5549+00". Don't
+   reintroduce a min/max field.
+
+A subset PDF of just the stationed sheets was built and then **deleted** — 95 of
+152 pages still came to 46.4 MB (PyMuPDF carries shared resources), and
+`reference_reports/.gitignore` re-allows `*.pdf`, so it would have committed
+46 MB for no benefit. The full set in the spec library covers that need.
+
+**Not done:** nothing in `backfill.py` reads the index yet. Wiring it in changes
+what the AI writes into reports, which is the thing to be most careful about —
+a station attached to the wrong structure is exactly the kind of confident error
+this pipeline is built to avoid. The intended shape when it is wired: pass the
+index as *reference only*, with a hard rule that a station may be attached to an
+activity only when the timesheet itself names that structure, and anything
+resolved that way gets flagged for confirmation like the continuity inferences.
