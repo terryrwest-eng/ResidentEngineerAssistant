@@ -372,7 +372,7 @@ export function SettingsPage() {
                 <input className="input" value={projectLocation} onChange={e => setProjectLocation(e.target.value)} placeholder="e.g., San Diego, CA" />
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label className="label">Saved file name</label>
+                <label className="label">File name fallback</label>
                 <input
                   className="input"
                   value={filenamePrefix}
@@ -380,10 +380,12 @@ export function SettingsPage() {
                   placeholder="Morena Conveyance North"
                 />
                 <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
-                  Exported Word files are named{' '}
+                  Word files are named from the report's <strong>project name</strong>:{' '}
                   <code style={{ fontFamily: 'var(--font-mono)' }}>
-                    {(filenamePrefix || 'Morena Conveyance North')} - Daily-TW-MM-DD-YYYY.docx
+                    {(defaultProject || filenamePrefix || 'Morena Conveyance North')} - Daily-TW-MM-DD-YYYY.docx
                   </code>
+                  <br />
+                  This box is only used for a report with no project name set.
                 </p>
               </div>
               <div>

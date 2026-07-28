@@ -79,16 +79,15 @@ def build_report_filename(report: dict, prefix: str = "", extension: str = ".doc
     """
     Build the saved-report filename in the convention the project already uses:
 
-        Morena Conveyance North - Daily-TW-07-28-2026.docx
+        <project name> - Daily-TW-07-28-2026.docx
 
-    This matches the 61 finished reports in `Daily Reports/`. The date is
-    MM-DD-YYYY, zero-padded.
+    matching the finished reports in `Daily Reports/`. The date is MM-DD-YYYY,
+    zero-padded.
 
-    The prefix comes from settings (`word_filename_prefix`) rather than the
-    report's project name, because the project is recorded in the app as
-    "Morena Conveyance Northern" while the filing convention is
-    "Morena Conveyance North" — the two are deliberately different and the
-    filing convention is the one that matters here.
+    The name comes from the REPORT'S OWN project name, so renaming the project
+    renames the files and there is only one place to change it. `prefix`
+    (settings: word_filename_prefix) is only a fallback for reports that have no
+    project name set, and DEFAULT_FILENAME_PREFIX backs that up in turn.
     """
     gen = report.get("general") or {}
     raw_date = gen.get("report_date") or ""
@@ -97,7 +96,10 @@ def build_report_filename(report: dict, prefix: str = "", extension: str = ".doc
     except (ValueError, TypeError):
         date_part = raw_date or "unknown-date"
 
-    name = f"{(prefix or DEFAULT_FILENAME_PREFIX).strip()} - Daily-TW-{date_part}{extension}"
+    project = (gen.get("project_name") or "").strip()
+    label = project or (prefix or "").strip() or DEFAULT_FILENAME_PREFIX
+
+    name = f"{label} - Daily-TW-{date_part}{extension}"
 
     # Strip anything Windows/macOS reject in a filename, so a stray character in
     # the prefix cannot produce an unsaveable name.

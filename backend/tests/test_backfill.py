@@ -388,10 +388,10 @@ if r.status_code == 200:
     archive = zipfile.ZipFile(io.BytesIO(r.content))
     check("zip holds one docx (skipped date excluded)", len(archive.namelist()) == 1,
           str(archive.namelist()))
-    # Backfilled days file exactly like a hand-written one:
-    #   "Morena Conveyance North - Daily-TW-MM-DD-YYYY.docx"
+    # Backfilled days file exactly like a hand-written one, named from the
+    # report's project name (which backfill takes from settings).
     check("docx uses the project filing convention",
-          archive.namelist()[0] == "Morena Conveyance North - Daily-TW-01-13-2026.docx",
+          archive.namelist()[0] == "Morena Conveyance Northern - Daily-TW-01-13-2026.docx",
           archive.namelist()[0])
     check("docx is not empty", archive.infolist()[0].file_size > 5000,
           str(archive.infolist()[0].file_size))

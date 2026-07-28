@@ -120,25 +120,38 @@ check("completely empty report exports", ok, str(info))
 
 
 # ── Filename convention ─────────────────────────────────────────────────────
-# Files must match how the 61 finished reports in Daily Reports/ are named:
-#   Morena Conveyance North - Daily-TW-MM-DD-YYYY.docx
+# Named from the report's own project name, so renaming the project renames
+# the files:  <project name> - Daily-TW-MM-DD-YYYY.docx
 
 from app.services.word import build_report_filename  # noqa: E402
 
-rep = report_with(row())
+rep = report_with(row())   # project_name = "Morena Conveyance Northern"
 name = build_report_filename(rep)
-check("filename matches the filing convention",
-      name == "Morena Conveyance North - Daily-TW-07-27-2026.docx", name)
+check("filename uses the report's own project name",
+      name == "Morena Conveyance Northern - Daily-TW-07-27-2026.docx", name)
 
 check("date is zero-padded MM-DD-YYYY", "-07-27-2026." in name, name)
 
-custom = build_report_filename(rep, "Some Other Project")
-check("prefix is configurable",
-      custom == "Some Other Project - Daily-TW-07-27-2026.docx", custom)
+# Renaming the project renames the files — one place to change it.
+renamed = dict(rep, general=dict(rep["general"], project_name="Genesee Widening"))
+check("renaming the project renames the file",
+      build_report_filename(renamed) == "Genesee Widening - Daily-TW-07-27-2026.docx",
+      build_report_filename(renamed))
 
-blank_prefix = build_report_filename(rep, "")
-check("blank prefix falls back to the default",
-      blank_prefix.startswith("Morena Conveyance North"), blank_prefix)
+# The settings prefix only applies when the report has no project name.
+no_project = dict(rep, general=dict(rep["general"], project_name=""))
+check("settings prefix is used when the report has no project",
+      build_report_filename(no_project, "Fallback Project")
+      == "Fallback Project - Daily-TW-07-27-2026.docx",
+      build_report_filename(no_project, "Fallback Project"))
+
+check("project name beats the settings prefix",
+      build_report_filename(rep, "Should Not Win").startswith("Morena Conveyance Northern"),
+      build_report_filename(rep, "Should Not Win"))
+
+check("no project and no prefix falls back to the default",
+      build_report_filename(no_project, "").startswith("Morena Conveyance North"),
+      build_report_filename(no_project, ""))
 
 undated = build_report_filename({"general": {}})
 check("a report with no date still yields a usable name",

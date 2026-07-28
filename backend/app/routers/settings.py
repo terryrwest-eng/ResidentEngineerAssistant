@@ -82,11 +82,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "default_zip_code": "",
     "project_number": "",
     "project_location": "",
-    # Saved Word files are named "<prefix> - Daily-TW-MM-DD-YYYY.docx", matching
-    # the filing convention already used by the 61 reports in Daily Reports/.
-    # Kept separate from default_project because the project is recorded as
-    # "Morena Conveyance Northern" while the files are filed under
-    # "Morena Conveyance North".
+    # Saved Word files are named "<project name> - Daily-TW-MM-DD-YYYY.docx",
+    # matching the filing convention in Daily Reports/. The name comes from the
+    # report's own project name; this is only the fallback for a report that has
+    # none, so there is one place to change it — the project name itself.
     "word_filename_prefix": "Morena Conveyance North",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
