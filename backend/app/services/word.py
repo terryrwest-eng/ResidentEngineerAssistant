@@ -72,6 +72,38 @@ def _num(value, default: float = 0.0) -> float:
         return default
 
 
+DEFAULT_FILENAME_PREFIX = "Morena Conveyance North"
+
+
+def build_report_filename(report: dict, prefix: str = "", extension: str = ".docx") -> str:
+    """
+    Build the saved-report filename in the convention the project already uses:
+
+        Morena Conveyance North - Daily-TW-07-28-2026.docx
+
+    This matches the 61 finished reports in `Daily Reports/`. The date is
+    MM-DD-YYYY, zero-padded.
+
+    The prefix comes from settings (`word_filename_prefix`) rather than the
+    report's project name, because the project is recorded in the app as
+    "Morena Conveyance Northern" while the filing convention is
+    "Morena Conveyance North" — the two are deliberately different and the
+    filing convention is the one that matters here.
+    """
+    gen = report.get("general") or {}
+    raw_date = gen.get("report_date") or ""
+    try:
+        date_part = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%m-%d-%Y")
+    except (ValueError, TypeError):
+        date_part = raw_date or "unknown-date"
+
+    name = f"{(prefix or DEFAULT_FILENAME_PREFIX).strip()} - Daily-TW-{date_part}{extension}"
+
+    # Strip anything Windows/macOS reject in a filename, so a stray character in
+    # the prefix cannot produce an unsaveable name.
+    return re.sub(r'[<>:"/\\|?*]', "", name)
+
+
 def _format_number(val) -> str:
     """Format number: integer if whole, else 1 decimal."""
     val = _num(val)

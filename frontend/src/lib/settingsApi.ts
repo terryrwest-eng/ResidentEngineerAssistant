@@ -48,6 +48,7 @@ export interface AppSettings {
   default_company: string;
   project_number: string;
   project_location: string;
+  word_filename_prefix: string;
   updated_at?: string;
 }
 

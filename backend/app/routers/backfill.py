@@ -1438,7 +1438,13 @@ async def export_batch(batch_id: str):
         raise HTTPException(status_code=404, detail="No generated reports in this batch yet.")
 
     from app.services.database import get_report
-    from app.services.word import generate_word_document
+    from app.services.word import generate_word_document, build_report_filename
+    from app.routers.settings import _load as _load_settings
+
+    try:
+        prefix = (_load_settings() or {}).get("word_filename_prefix", "")
+    except Exception:
+        prefix = ""
 
     buffer = io.BytesIO()
     written = 0
@@ -1456,8 +1462,10 @@ async def export_batch(batch_id: str):
             except Exception as exc:
                 logger.error(f"[backfill/export] {entry['date']} failed to render: {exc}")
                 continue
+            # Same naming convention as a single export, so a backfilled day
+            # files identically to one written by hand.
             archive.writestr(
-                f"Daily Report {entry['date']}.docx", stream.getvalue()
+                build_report_filename(report, prefix), stream.getvalue()
             )
             written += 1
 

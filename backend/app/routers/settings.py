@@ -82,6 +82,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "default_zip_code": "",
     "project_number": "",
     "project_location": "",
+    # Saved Word files are named "<prefix> - Daily-TW-MM-DD-YYYY.docx", matching
+    # the filing convention already used by the 61 reports in Daily Reports/.
+    # Kept separate from default_project because the project is recorded as
+    # "Morena Conveyance Northern" while the files are filed under
+    # "Morena Conveyance North".
+    "word_filename_prefix": "Morena Conveyance North",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
     # Backfill scope rule — see routers/backfill.py.
@@ -134,6 +140,7 @@ class SettingsPayload(BaseModel):
     default_company: str = ""
     project_number: str = ""
     project_location: str = ""
+    word_filename_prefix: str = "Morena Conveyance North"
 
 
 class SyncResourcesPayload(BaseModel):

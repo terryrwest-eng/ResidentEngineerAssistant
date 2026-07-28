@@ -119,5 +119,55 @@ ok, info = exports({"general": {}, "activities": [], "status": "draft"})
 check("completely empty report exports", ok, str(info))
 
 
+# ── Filename convention ─────────────────────────────────────────────────────
+# Files must match how the 61 finished reports in Daily Reports/ are named:
+#   Morena Conveyance North - Daily-TW-MM-DD-YYYY.docx
+
+from app.services.word import build_report_filename  # noqa: E402
+
+rep = report_with(row())
+name = build_report_filename(rep)
+check("filename matches the filing convention",
+      name == "Morena Conveyance North - Daily-TW-07-27-2026.docx", name)
+
+check("date is zero-padded MM-DD-YYYY", "-07-27-2026." in name, name)
+
+custom = build_report_filename(rep, "Some Other Project")
+check("prefix is configurable",
+      custom == "Some Other Project - Daily-TW-07-27-2026.docx", custom)
+
+blank_prefix = build_report_filename(rep, "")
+check("blank prefix falls back to the default",
+      blank_prefix.startswith("Morena Conveyance North"), blank_prefix)
+
+undated = build_report_filename({"general": {}})
+check("a report with no date still yields a usable name",
+      undated.endswith(".docx") and "unknown-date" in undated, undated)
+
+unsafe = build_report_filename(rep, 'Bad/Name:With*Chars?')
+check("characters illegal in filenames are stripped",
+      not any(c in unsafe for c in '<>:"/\\|?*'), unsafe)
+
+
+# ── What the "Copy Report" button pastes ────────────────────────────────────
+# Same content as the Word doc minus the consolidated resource table.
+
+from app.services.word import generate_notes_html  # noqa: E402
+
+html = generate_notes_html(report_with(
+    row(trade="LL-02- Foreman", hours=8),
+    equipment=[{"name": "CAT 330", "description": "Excavator", "qty": 1, "hours": 8}],
+))
+check("copy content is produced", bool(html) and len(html) > 100, f"{len(html)} chars")
+check("copy content has NO table", "<table" not in html.lower())
+check("copy content excludes the consolidated section",
+      "consolidated" not in html.lower())
+check("copy content keeps the report body",
+      "DAILY FIELD REPORT" in html and "Grout interior pipe joints" in html)
+_has_bullet = "•" in html or "&#8226;" in html
+check("bullets survive as real UTF-8", _has_bullet,
+      "found" if _has_bullet else "NO BULLET IN OUTPUT")
+
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

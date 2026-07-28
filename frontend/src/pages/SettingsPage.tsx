@@ -75,6 +75,7 @@ export function SettingsPage() {
   const [defaultZip, setDefaultZip] = useState('');
   const [projectNumber, setProjectNumber] = useState('');
   const [projectLocation, setProjectLocation] = useState('');
+  const [filenamePrefix, setFilenamePrefix] = useState('');
 
   // Gemini key state
   const [geminiKey, setGeminiKey] = useState('');
@@ -111,6 +112,7 @@ export function SettingsPage() {
         setDefaultZip(s.default_zip_code || '');
         setProjectNumber(s.project_number || '');
         setProjectLocation(s.project_location || '');
+        setFilenamePrefix(s.word_filename_prefix || '');
         setCustomLabor(s.custom_resource_codes?.labor || []);
         setCustomEquipment(s.custom_resource_codes?.equipment || []);
         setUserTemplates(s.user_templates || []);
@@ -147,6 +149,7 @@ export function SettingsPage() {
         default_zip_code: defaultZip.trim(),
         project_number: projectNumber.trim(),
         project_location: projectLocation.trim(),
+        word_filename_prefix: filenamePrefix.trim(),
         projects,
         companies,
         user_templates: userTemplates,
@@ -367,6 +370,21 @@ export function SettingsPage() {
               <div>
                 <label className="label">Project Location</label>
                 <input className="input" value={projectLocation} onChange={e => setProjectLocation(e.target.value)} placeholder="e.g., San Diego, CA" />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label className="label">Saved file name</label>
+                <input
+                  className="input"
+                  value={filenamePrefix}
+                  onChange={e => setFilenamePrefix(e.target.value)}
+                  placeholder="Morena Conveyance North"
+                />
+                <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                  Exported Word files are named{' '}
+                  <code style={{ fontFamily: 'var(--font-mono)' }}>
+                    {(filenamePrefix || 'Morena Conveyance North')} - Daily-TW-MM-DD-YYYY.docx
+                  </code>
+                </p>
               </div>
               <div>
                 <label className="label">

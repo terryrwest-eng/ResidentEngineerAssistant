@@ -140,6 +140,14 @@
         Loading reports…
       </div>
     </div>
+
+    <!-- Copy the report body (everything the Word export has except the
+         consolidated resource table) so it can be pasted straight in. -->
+    <button id="copyReportBtn" class="btn btn-secondary" style="width:100%; margin-top:8px;">
+      📋 Copy Report for Pasting
+    </button>
+    <div id="copyReportMsg"
+         style="display:none; font-size: 11px; text-align:center; margin-top:6px; color: rgba(255,255,255,0.7);"></div>
   </div>
 
   <!-- ═══════ FULL AUTOMATION SECTION ═══════ -->

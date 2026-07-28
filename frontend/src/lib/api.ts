@@ -78,10 +78,22 @@ export const reportApi = {
   },
 
   /** Download the Word .docx for a report */
+  /**
+   * Download a report as Word.
+   *
+   * `filename` is only a fallback — the backend owns the naming convention
+   * ("Morena Conveyance North - Daily-TW-MM-DD-YYYY.docx") and sends it in
+   * Content-Disposition, so the browser download, the desktop auto-save and the
+   * batch export cannot drift apart.
+   */
   downloadWord: async (id: string, filename: string) => {
     const response = await api.get(`/export/${id}/word`, {
       responseType: 'blob',
     });
+
+    const disposition = response.headers?.['content-disposition'] as string | undefined;
+    const named = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1];
+    if (named) filename = decodeURIComponent(named.trim());
 
     // The backend returns a correctly-typed Blob already. The previous version
     // did `new Blob([response.data])`, which re-wraps it and throws away the

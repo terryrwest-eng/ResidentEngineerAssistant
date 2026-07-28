@@ -783,6 +783,96 @@ async function loadReportPicker() {
     }
 }
 
+// ============================================
+// COPY REPORT FOR PASTING
+// ============================================
+// Copies the report body — everything the Word export contains EXCEPT the
+// consolidated resource table at the end. That is exactly what
+// /api/export/{id}/notes-html already produces ("Same content as Word doc
+// Page 1 — NO tables, NO consolidated resources"), so there is no second
+// formatter to keep in step with the Word one.
+//
+// Written to the clipboard as BOTH text/html and text/plain: pasting into a
+// rich editor (PMWeb Notes, Word, Outlook) keeps the bold labels and bullets,
+// and pasting into a plain text field still gives readable text rather than
+// raw markup.
+
+function htmlToPlainText(html) {
+    const el = document.createElement('div');
+    el.innerHTML = html
+        .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+        .replace(/<br\s*\/?>/gi, '\n');
+    const text = el.textContent || '';
+    return text
+        .split('\n')
+        .map(line => line.trim())
+        .filter((line, i, arr) => line || (arr[i - 1] || '').trim())  // collapse blank runs
+        .join('\n')
+        .trim();
+}
+
+function showCopyMsg(text, isError) {
+    const el = document.getElementById('copyReportMsg');
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.color = isError ? '#ff8f8f' : '#7ee2a8';
+    el.textContent = text;
+    setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+async function copyReportForPasting() {
+    const btn = document.getElementById('copyReportBtn');
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Copying…'; }
+
+    try {
+        const reportId = await getActiveReportId();
+        if (!reportId) return;   // getActiveReportId already told the user
+
+        const resp = await fetch(`${API_BASE}/api/export/${reportId}/notes-html`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const { html } = await resp.json();
+        if (!html) throw new Error('The report came back empty');
+
+        const plain = htmlToPlainText(html);
+
+        // Rich + plain flavours. Falls back to plain text where ClipboardItem
+        // is unavailable, so the button still does something useful.
+        if (window.ClipboardItem && navigator.clipboard?.write) {
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([html], { type: 'text/html' }),
+                    'text/plain': new Blob([plain], { type: 'text/plain' }),
+                }),
+            ]);
+        } else {
+            await navigator.clipboard.writeText(plain);
+        }
+
+        const lines = plain.split('\n').filter(Boolean).length;
+        showCopyMsg(`Copied — ${lines} lines. Paste anywhere.`, false);
+        console.log('[copy] Report copied,', plain.length, 'chars');
+    } catch (e) {
+        console.error('[copy] Failed', e);
+        showCopyMsg(`Copy failed: ${e.message}`, true);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = original || '📋 Copy Report for Pasting'; }
+    }
+}
+
+/** The selected report, or null after telling the user why not. */
+async function getActiveReportId() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/extension/context`);
+        const { report_id } = await resp.json();
+        if (report_id) return report_id;
+    } catch (e) {
+        console.warn('[copy] Context lookup failed', e);
+    }
+    showCopyMsg('No report selected — pick one from the list above.', true);
+    return null;
+}
+
 // Initialize on popup open
 document.addEventListener('DOMContentLoaded', () => {
     checkConnection().then(connected => {
@@ -795,6 +885,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     const refreshBtn = document.getElementById('refreshReportsBtn');
     if (refreshBtn) refreshBtn.addEventListener('click', loadReportPicker);
+    const copyBtn = document.getElementById('copyReportBtn');
+    if (copyBtn) copyBtn.addEventListener('click', copyReportForPasting);
     initRecordNumber();
     checkMonday();
     const autoFillBtn = document.getElementById('autoFillBtn');
