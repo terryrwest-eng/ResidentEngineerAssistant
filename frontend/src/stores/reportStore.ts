@@ -289,6 +289,10 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     const { report, isSaved } = get();
     if (!report) return null;
 
+    // What we are about to send. Kept so we can tell afterwards whether the
+    // user changed anything while the request was in flight.
+    const sent = report;
+
     set({ isSaving: true, saveError: null });
 
     try {
@@ -307,13 +311,42 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       }
 
       const now = new Date().toISOString();
+
+      // ── DATA LOSS FIX ────────────────────────────────────────────────────
+      // This used to write `{ ...report, ... }` — the snapshot captured BEFORE
+      // the await — straight back into the store, and set isDirty: false.
+      //
+      // Auto-save fires 2s after any change, and a save round-trip takes
+      // hundreds of milliseconds (much longer on a phone in the field). Anything
+      // typed during that window was overwritten by the stale snapshot when the
+      // response landed, AND marked clean, so it never reached disk either. The
+      // symptom was entered hours simply vanishing.
+      //
+      // Every update action replaces the report object immutably, so an
+      // identity check reliably tells us whether anything changed mid-flight.
+      const current = get().report;
+
+      if (!current) {
+        // The report was closed while saving — do not resurrect it.
+        set({ isSaving: false, lastSavedAt: now });
+        return savedId;
+      }
+
+      const changedDuringSave = current !== sent;
+
       set({
-        report: { ...report, id: savedId, updated_at: now },
+        report: { ...current, id: savedId, updated_at: current.updated_at || now },
         isSaved: true,
-        isDirty: false,
+        // Keep it dirty if newer edits exist, so they are not silently dropped.
+        isDirty: changedDuringSave,
         isSaving: false,
         lastSavedAt: now,
       });
+
+      if (changedDuringSave) {
+        console.debug('[ReportStore] Edits arrived during save — rescheduling');
+        get()._scheduleAutoSave();
+      }
 
       return savedId;
     } catch (err) {
