@@ -100,11 +100,13 @@ export function ActivityList() {
         flexWrap: 'wrap',
         gap: 'var(--space-sm)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-          <h2 style={{ margin: 0 }}>Activities</h2>
-          {activities.length > 0 && (
-            <span className="badge badge-info">{activities.length}</span>
-          )}
+        {/* Same section language as the rest of the document — the old big
+            bold heading with a count bubble was a different voice again. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', flex: 1, minWidth: 160 }}>
+          <span className="doc-section-label">
+            Activities{activities.length > 0 ? ` · ${activities.length}` : ''}
+          </span>
+          <span className="doc-section-rule" aria-hidden />
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
           <button

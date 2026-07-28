@@ -15,6 +15,7 @@
  */
 
 import { useState, useRef, useCallback, useMemo } from 'react';
+import { DocTally } from '@/components/ui/Doc';
 import { useReportStore } from '@/stores/reportStore';
 import { ResourceTable } from '@/components/report/ResourceTable';
 import { AIReportAssistant } from '@/components/report/AIReportAssistant';
@@ -408,67 +409,47 @@ export function ActivityEditor({
 
   return (
     <>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        {/* Collapsible Header */}
+      <div className="doc-activity" data-open={isExpanded}>
+        {/* Collapsible Header — the activity is the content of the report, so
+            it gets a number, a real heading, and its location as a subtitle.
+            Previously this was a thin strip with the same weight as everything
+            else on the page. */}
         <button
           type="button"
           onClick={onToggle}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            width: '100%',
-            padding: 'var(--space-md) var(--space-lg)',
-            border: 'none',
-            background: isExpanded ? 'var(--color-accent-light)' : 'var(--color-surface)',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-sans)',
-            transition: 'background 0.12s ease',
-            textAlign: 'left',
-          }}
+          className="doc-activity-head"
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-            {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-            <span className="font-semibold" style={{ fontSize: '0.9375rem' }}>
-              Activity {index + 1}
-              {activity.work_area ? ` — ${activity.work_area}` : ''}
+          <span className="doc-activity-index">{index + 1}</span>
+
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span className="doc-activity-title">
+              {activity.work_area || `Activity ${index + 1}`}
             </span>
-          </div>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-md)',
-            fontSize: '0.75rem',
-            color: 'var(--color-text-tertiary)',
+            {(activity.stations || !activity.work_area) && (
+              <span className="doc-activity-sub">
+                {activity.stations || 'No location set'}
+              </span>
+            )}
+          </span>
+
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
+            flexShrink: 0,
           }}>
-            {mpCount > 0 && <span>{mpCount} personnel</span>}
-            {eqCount > 0 && <span>{eqCount} equipment</span>}
-            {/* What this activity is still missing, visible without expanding it */}
+            {mpCount > 0 && <DocTally value={mpCount} label="crew" />}
+            {eqCount > 0 && <DocTally value={eqCount} label="equip" />}
             {gaps.length > 0 ? (
               <span
+                className="doc-status doc-status-warn"
                 title={`Still needed: ${gaps.join(', ')}`}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                  padding: '2px 8px',
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--color-warning-light)',
-                  color: 'var(--color-warning)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                }}
               >
-                <AlertTriangle size={11} />
                 {gaps.length === 1 ? gaps[0] : `${gaps.length} missing`}
               </span>
             ) : (
-              <span
-                title="Location, summary, crew and hours are all filled in"
-                style={{ display: 'inline-flex', alignItems: 'center', color: 'var(--color-success)' }}
-              >
-                <CheckCircle2 size={14} />
-              </span>
+              <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
             )}
-          </div>
+            {isExpanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+          </span>
         </button>
 
         {/* Expanded Content */}

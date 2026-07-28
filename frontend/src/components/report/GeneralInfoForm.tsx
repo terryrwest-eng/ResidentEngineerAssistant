@@ -16,7 +16,7 @@ import { SkyIcon } from '@/lib/skyIcons';
 import { weatherApi } from '@/lib/api';
 import type { WeatherData } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
-import { Cloud, Thermometer, Wind, MapPin, Loader2 } from 'lucide-react';
+import { Thermometer, Wind, MapPin, Loader2 } from 'lucide-react';
 import { Sheet } from '@/components/ui/Sheet';
 
 export function GeneralInfoForm() {
@@ -228,7 +228,7 @@ export function GeneralInfoForm() {
   }
 
   return (
-    <div className="card">
+    <div>
       <Sheet
         open={askingZip}
         onClose={() => setAskingZip(false)}
@@ -248,9 +248,9 @@ export function GeneralInfoForm() {
           </>
         }
       >
-        <label className="label">Project ZIP code</label>
+        <label className="doc-field-label">Project ZIP code</label>
         <input
-          className="input"
+          className="doc-input"
           value={zipDraft}
           onChange={(e) => setZipDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submitZip(); }}
@@ -264,16 +264,17 @@ export function GeneralInfoForm() {
         </p>
       </Sheet>
 
-      <div className="card-header">
-        <h3 style={{ margin: 0 }}>Report Details</h3>
+      <div className="doc-section-head">
+        <span className="doc-section-label">Report Details</span>
+        <span className="doc-section-rule" aria-hidden />
       </div>
-      <div className="card-body">
+      <div>
         {/* Row 1: Project info */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
           <div>
-            <label className="label">Project Name</label>
+            <label className="doc-field-label">Project Name</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.project_name}
               onChange={handleInputChange('project_name')}
@@ -294,9 +295,9 @@ export function GeneralInfoForm() {
             )}
           </div>
           <div>
-            <label className="label">Project Number</label>
+            <label className="doc-field-label">Project Number</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.project_number}
               onChange={handleInputChange('project_number')}
@@ -312,9 +313,9 @@ export function GeneralInfoForm() {
         {/* Row 2: Location + Inspector */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
           <div>
-            <label className="label">Project Location</label>
+            <label className="doc-field-label">Project Location</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.project_location}
               onChange={handleInputChange('project_location')}
@@ -327,9 +328,9 @@ export function GeneralInfoForm() {
             />
           </div>
           <div>
-            <label className="label">Inspector Name</label>
+            <label className="doc-field-label">Inspector Name</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.inspector_name}
               onChange={handleInputChange('inspector_name')}
@@ -346,9 +347,9 @@ export function GeneralInfoForm() {
         {/* Row 3: RE + Date */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
           <div>
-            <label className="label">Resident Engineer</label>
+            <label className="doc-field-label">Resident Engineer</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.resident_engineer}
               onChange={handleInputChange('resident_engineer')}
@@ -361,9 +362,9 @@ export function GeneralInfoForm() {
             />
           </div>
           <div>
-            <label className="label">Report Date</label>
+            <label className="doc-field-label">Report Date</label>
             <input
-              className="input"
+              className="doc-input"
               type="date"
               value={gen.report_date}
               onChange={(e) => handleChange('report_date', e.target.value)}
@@ -371,18 +372,18 @@ export function GeneralInfoForm() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
             <div>
-              <label className="label">Start Time</label>
+              <label className="doc-field-label">Start Time</label>
               <input
-                className="input"
+                className="doc-input"
                 type="time"
                 value={gen.start_time}
                 onChange={(e) => handleChange('start_time', e.target.value)}
               />
             </div>
             <div>
-              <label className="label">End Time</label>
+              <label className="doc-field-label">End Time</label>
               <input
-                className="input"
+                className="doc-input"
                 type="time"
                 value={gen.end_time}
                 onChange={(e) => handleChange('end_time', e.target.value)}
@@ -391,23 +392,18 @@ export function GeneralInfoForm() {
           </div>
         </div>
 
-        {/* Weather Section */}
-        <div style={{
-          background: 'var(--color-bg)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-md)',
-          marginBottom: 'var(--space-md)',
-        }}>
+        {/* Weather — a section of the document, not a grey box nested inside a
+            white card. That container-in-a-container was the loudest thing on
+            the old page and it was the least important content on it. */}
+        <div style={{ marginTop: 'var(--space-xl)', marginBottom: 'var(--space-md)' }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            gap: 'var(--space-sm)',
             marginBottom: 'var(--space-md)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <Cloud size={18} style={{ color: 'var(--color-accent)' }} />
-              <span className="font-medium" style={{ fontSize: '0.875rem' }}>Weather</span>
-            </div>
+            <span className="doc-section-label">Weather</span>
+            <span className="doc-section-rule" aria-hidden />
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
               {weatherError && (
                 <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)' }}>
@@ -476,13 +472,13 @@ export function GeneralInfoForm() {
           {/* Temp + wind */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
             <div>
-              <label className="label">
+              <label className="doc-field-label">
                 <Thermometer size={12} style={{ display: 'inline', marginRight: '4px' }} />
                 High (°F)
               </label>
               <input
                 key={`temp_high_${weatherRevision}`}
-                className="input"
+                className="doc-input"
                 type="text"
                 inputMode="numeric"
                 defaultValue={gen.temperature_high}
@@ -494,13 +490,13 @@ export function GeneralInfoForm() {
               />
             </div>
             <div>
-              <label className="label">
+              <label className="doc-field-label">
                 <Thermometer size={12} style={{ display: 'inline', marginRight: '4px' }} />
                 Low (°F)
               </label>
               <input
                 key={`temp_low_${weatherRevision}`}
-                className="input"
+                className="doc-input"
                 type="text"
                 inputMode="numeric"
                 defaultValue={gen.temperature_low}
@@ -512,13 +508,13 @@ export function GeneralInfoForm() {
               />
             </div>
             <div>
-              <label className="label">
+              <label className="doc-field-label">
                 <Wind size={12} style={{ display: 'inline', marginRight: '4px' }} />
                 Wind
               </label>
               <input
                 key={`wind_${weatherRevision}`}
-                className="input"
+                className="doc-input"
                 type="text"
                 defaultValue={gen.wind_info}
                 onChange={handleInputChange('wind_info')}
@@ -534,7 +530,7 @@ export function GeneralInfoForm() {
 
         {/* General Notes */}
         <div>
-          <label className="label">General Notes</label>
+          <label className="doc-field-label">General Notes</label>
           <textarea
             className="textarea"
             defaultValue={gen.notes}
