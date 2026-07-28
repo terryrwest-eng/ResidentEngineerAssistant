@@ -155,7 +155,7 @@ export function NewReportPage() {
 
   const handleSubmit = useCallback(async () => {
     await submitReport();
-    toast('Report submitted — a Word copy has been downloaded');
+    toast('Report submitted — a Word copy has been saved');
   }, [submitReport, toast]);
 
   const handleDownloadWord = useCallback(async () => {
@@ -163,8 +163,19 @@ export function NewReportPage() {
     setIsDownloading(true);
     try {
       const date = report.general?.report_date || 'unknown';
-      await reportApi.downloadWord(report.id, `DailyReport_${date}.docx`);
-      toast('Word document downloaded');
+      const outcome = await reportApi.downloadWord(report.id, `DailyReport_${date}.docx`);
+      // Say what actually happened. On the phone the file goes to the browser's
+      // downloads, not the app, and "downloaded" would leave you looking in the
+      // wrong place.
+      if (outcome === 'cancelled') {
+        // Deliberate cancel — nothing to report.
+      } else if (outcome === 'external') {
+        toast('Opened in your browser — check Downloads');
+      } else if (outcome === 'saved-to-chosen-folder') {
+        toast('Word document saved');
+      } else {
+        toast('Word document downloaded');
+      }
     } catch (err) {
       // This used to log to the console and nothing else, so a failed export
       // was indistinguishable from a successful one.

@@ -6,6 +6,14 @@
  */
 
 import axios, { type AxiosInstance } from 'axios';
+import { Capacitor } from '@capacitor/core';
+
+/**
+ * How a Word export ended up with the user. The caller needs this to say the
+ * right thing — "downloaded" is wrong when the file went to a folder they
+ * chose, and wronger still when it opened in the phone's browser.
+ */
+export type WordSaveResult = 'external' | 'saved-to-chosen-folder' | 'downloaded' | 'cancelled';
 
 // In development, Vite's proxy handles /api → localhost:8000
 // In production, the backend serves the frontend (same origin)
@@ -86,7 +94,23 @@ export const reportApi = {
    * Content-Disposition, so the browser download, the desktop auto-save and the
    * batch export cannot drift apart.
    */
-  downloadWord: async (id: string, filename: string) => {
+  downloadWord: async (id: string, filename: string): Promise<WordSaveResult> => {
+    // ── ANDROID ─────────────────────────────────────────────────────────────
+    // The blob-download path below cannot work inside the Capacitor WebView:
+    // Android ignores `blob:` downloads unless the native app registers a
+    // DownloadListener, and none is registered. Export would fire, report
+    // success, and produce no file.
+    //
+    // The APK bundles its assets locally while the API lives on Railway, so the
+    // export URL is a different origin — Capacitor hands those to the system
+    // browser, which downloads the .docx properly. No plugin required.
+    if (Capacitor.isNativePlatform()) {
+      const url = `${BASE_URL}/api/export/${id}/word`;
+      window.open(url, '_blank');
+      console.debug('[Export] Opened externally for native download:', url);
+      return 'external';
+    }
+
     const response = await api.get(`/export/${id}/word`, {
       responseType: 'blob',
     });
@@ -130,13 +154,13 @@ export const reportApi = {
         await writable.write(blob);
         await writable.close();
         console.debug('[Export] Saved via file picker:', filename, `${blob.size} bytes`);
-        return;
+        return 'saved-to-chosen-folder';
       } catch (err) {
         // Cancelling the dialog is a normal outcome, not a failure — swallow it
         // so the caller does not report an error for a deliberate cancel.
         if ((err as { name?: string })?.name === 'AbortError') {
           console.debug('[Export] Save cancelled by user');
-          return;
+          return 'cancelled';
         }
         // Anything else (permission, sandboxed iframe): fall through to the anchor.
         console.warn('[Export] File picker unavailable, falling back to download:', err);
@@ -163,6 +187,7 @@ export const reportApi = {
     }, 30_000);
 
     console.debug('[Export] Word download triggered:', filename, `${blob.size} bytes`);
+    return 'downloaded';
   },
 
   /** Get PMWeb Combined rows (11 cols) for the preview panel */
