@@ -54,6 +54,83 @@ attempt will land where the second one did.
 
 ---
 
+## 2b. The measurable diagnosis — DYNAMIC RANGE
+
+A second attempt (2026-07-27) restyled the report page: document header, uppercase
+micro-labels, stripped-back sections, numbered activities. Terry's verdict: *"it
+looks exactly the same… some new menus and a dark/light switch, but the overall
+style and look is almost identical."*
+
+Correct again. That pass changed **organization** — hierarchy, grouping, labels —
+and left the **style** untouched: still Inter, still white ground, still grey
+fills, still a blue accent, still 8px radii.
+
+Reference points Terry supplied (dribbble.com/search/construction-app-design,
+webflow.com/blog/luxury-brand-websites, pageflows.com/web). Measured against
+them, the difference is not taste, it is range:
+
+| | References | This app |
+|---|---|---|
+| Type scale | 56px headline vs 16px body — **3.5×** | 24px vs 11px — **2×**, everything crammed in that band |
+| Value | Near-black ground, white text — full range | `#FAFBFC` / `#FFF` / `#F4F6F8` — three greys within **5%** |
+| Colour | Saturated blocks at size (magenta panel, yellow button, amber charts) | Blue as 1px borders, small icons, one button |
+| Focal point | Every reference has one obvious entry point | None — every element carries identical weight |
+
+**The specifically damning one:** the construction shots make the *data* the
+visual — progress rings, bar charts, "70.50%" set enormous. This app is full of
+real data (crew counts, hours, stations, tonnage, percent complete) and renders
+all of it as 15px grey text inside form fields.
+
+Concrete implications for the plan:
+
+- Commit to a ground — near-black, or true paper — not a fourth shade of grey.
+- Type ratios of 3-4×. The project name should be genuinely large.
+- One saturated colour used **at size**, not as hairlines. Amber/safety-orange is
+  what the construction references converge on and it suits the domain.
+- Pull the numbers out of the form fields and set them large in tabular figures.
+  Hours, crew counts and stations are the content; they should look like it.
+- Real contrast between the page ground and the surfaces on it.
+
+Anything that does not move these numbers will read as "almost identical" again,
+no matter how well organised it is.
+
+---
+
+## 2c. Third attempt, also rejected — and the pattern
+
+A third pass (same day) took the §2b measurements as an explicit target and hit
+them: 4x type range (44px hero), an ink-dark masthead on warm paper for full
+value contrast, amber replacing blue as a filled block rather than hairlines,
+radii 8px→4px, and the report's real figures (crew count, labor hours,
+equipment) pulled out at 32px in tabular numerals.
+
+Terry: *"no i want it different still and an upgraded UI."*
+
+**The pattern across all three attempts is the important part:**
+
+1. Attempt 1 — executed a task list (dark mode, mobile cards, nav). Changed
+   nothing about the look.
+2. Attempt 2 — improved information design (hierarchy, labels, grouping). Still
+   the default skin.
+3. Attempt 3 — hit specific measurable style targets. Produced one strong
+   element (the masthead) bolted onto an otherwise unchanged page.
+
+Each attempt was technically responsive to the previous critique and still
+missed. The through-line: **treating design as a set of measurable properties to
+satisfy.** Range, contrast, scale and token values are consequences of a design
+idea, not substitutes for one. None of the three attempts started from a
+conception of what this product should feel like; each started from a checklist,
+and checklists produce competent, characterless work.
+
+**What the next attempt needs that none of these had:** a stated design concept
+first — what this thing IS, in one or two sentences, with real reference points —
+and every subsequent decision derived from it. Then the whole screen executed to
+that concept, not one element. A masthead that is designed sitting above a body
+that is not reads worse than consistent mediocrity, because it shows what the
+rest could have been.
+
+---
+
 ## 3. What the app is, and who uses it
 
 A daily field-reporting app for a **Resident Engineer on a City of San Diego
