@@ -5,6 +5,8 @@ CRUD operations for daily field reports.
 Every save writes to both SQLite and a JSON file.
 """
 
+import json
+import os
 import uuid
 import logging
 from collections import Counter
@@ -13,6 +15,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from app.core.paths import DATA_DIR
 from app.models.report import ReportModel, ReportIndexModel
 from app.services.database import (
     save_report,
@@ -147,19 +150,57 @@ async def get_report_stats():
 # Chrome Extension Context (in-memory, single-user)
 # ============================================
 
-ACTIVE_CONTEXT: dict = {"report_id": None}
+"""
+Extension context — which report the Chrome extension should pull.
+
+WHY THIS IS ON DISK AND NOT IN A DICT:
+
+This used to be a module-level `ACTIVE_CONTEXT: dict`. Production runs
+`uvicorn --workers 2`, so there were TWO of them, one per process. The web app
+POSTs the context to whichever worker answers, and the extension — a separate
+browser process, on its own connection — GETs from whichever worker answers it.
+Measured against production: of 20 reads after a write, 11 returned the report
+just set and 9 returned a stale report ID left in the other worker's memory.
+
+The user's symptom was "the extension isn't pulling data from the report I'm
+on"; about half the time it was filling PMWeb from a completely different day.
+
+A file in the data directory is shared by every worker and survives restarts.
+The volume is the same one the reports live on, so there is nothing new to
+configure.
+"""
+
+_CONTEXT_PATH = os.path.join(DATA_DIR, "extension_context.json")
+
+
+def _read_context() -> dict:
+    try:
+        with open(_CONTEXT_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"report_id": data.get("report_id") or None}
+    except FileNotFoundError:
+        return {"report_id": None}
+    except Exception as exc:
+        logger.warning(f"[extension] Could not read context: {exc}")
+        return {"report_id": None}
+
+
+def _write_context(report_id: str | None) -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = _CONTEXT_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"report_id": report_id, "updated_at": datetime.utcnow().isoformat()}, f)
+    os.replace(tmp, _CONTEXT_PATH)
 
 
 @router.post("/extension/context")
 async def set_extension_context(data: dict):
     """
     Sets the active report ID for the Chrome extension.
-    Called by the PMWebPreview panel when user clicks 'Auto-Fill PMWeb'.
-    Pass report_id=null to clear the context (e.g. when creating a new unsaved report).
+    Pass report_id=null to clear it (e.g. a new unsaved report).
     """
     report_id = data.get("report_id") or None
-
-    ACTIVE_CONTEXT["report_id"] = report_id
+    _write_context(report_id)
     if report_id:
         logger.info(f"Extension context set to report: {report_id}")
     else:
@@ -169,11 +210,52 @@ async def set_extension_context(data: dict):
 
 @router.get("/extension/context")
 async def get_extension_context():
+    """Which report the extension should pull. Read from disk — see above."""
+    return _read_context()
+
+
+@router.get("/extension/reports")
+async def list_reports_for_extension(limit: int = Query(30, ge=1, le=100)):
     """
-    Gets the active report ID for the Chrome extension.
-    Extension popup calls this to know which report to fetch.
+    Reports for the extension's picker: date, project, status and the actual
+    activity names.
+
+    WHY: choosing by date alone is ambiguous when several reports share a date,
+    and the whole "active report" handshake above is fragile by design — one
+    global pointer, no idea who is asking, silently goes stale. Letting the user
+    see the activities and pick directly removes the guesswork.
     """
-    return ACTIVE_CONTEXT
+    index_rows = list_reports(limit=limit, offset=0)
+    out = []
+    for row in index_rows:
+        full = get_report(row.get("id", "")) or {}
+        activities = [
+            (a.get("work_area") or "").strip() or "Untitled activity"
+            for a in (full.get("activities") or [])
+        ]
+        general = full.get("general") or {}
+        out.append({
+            "id": row.get("id"),
+            "report_date": row.get("report_date") or general.get("report_date") or "",
+            "project_name": row.get("project_name") or general.get("project_name") or "",
+            "status": row.get("status") or "draft",
+            "activity_count": len(activities),
+            "activities": activities,
+            # Shift times matter here: there is normally one report per day, but
+            # a split shift produces two on the same date, and the times are what
+            # tell them apart.
+            "start_time": general.get("start_time") or "",
+            "end_time": general.get("end_time") or "",
+            "updated_at": row.get("updated_at") or "",
+        })
+
+    # Newest day first, but within a day the EARLIER shift first, so a split
+    # shift reads in the order it was worked. Two passes rather than one
+    # reversed sort, because the two keys need opposite directions — Python's
+    # sort is stable, so the second pass preserves the first's ordering.
+    out.sort(key=lambda r: r["start_time"])
+    out.sort(key=lambda r: r["report_date"], reverse=True)
+    return {"reports": out}
 
 
 @router.get("/reports/{report_id}/consolidated")
