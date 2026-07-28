@@ -180,9 +180,20 @@ Do not throw these away; they are sound foundations, just not a design.
 - **React 19 + Vite + TypeScript.** No component library is installed. Adding one
   (shadcn, Radix, Mantine…) is a legitimate proposal — say so explicitly and
   account for bundle size; the bundle is already ~610 KB and warns at build.
-- **Tailwind v4 is imported** (`@import "tailwindcss"`) but essentially unused —
-  the app is inline styles plus hand-written CSS. Deciding whether to commit to
-  Tailwind or drop it is a real fork in the road; do not leave it ambiguous.
+- **Tailwind v4 is imported** (`@import "tailwindcss"`) and essentially unused.
+  Measured: zero occurrences of `flex`, `grid`, `p-4`, `bg-white`, `rounded`,
+  `w-full` or `items-center` in any `className`, against 137 `btn`, 90 `card`,
+  70 `input`, 54 `doc-`. It contributes its preflight reset and a set of theme
+  variables, nothing more.
+
+  It does **not** break anything. Tailwind emits `--radius-*`, `--shadow-*`,
+  `--font-*` and `--tracking-*` into `@layer theme`; the app's `:root` block is
+  unlayered and declared later, so the app's values win on both counts. (An
+  earlier note here claimed Tailwind was overriding the design tokens — that was
+  a misreading of the built CSS and is wrong.)
+
+  Still a real fork the plan must decide: commit to Tailwind, or drop it and
+  stop carrying two systems where only one is used. Do not leave it ambiguous.
 - **Three surfaces from one build**: web, desktop (PyWebView shell loading the
   same URL), and an Android APK via Capacitor. Nothing may assume a mouse.
 - **No click-outside-to-close on overlays.** Deliberate and non-negotiable —
