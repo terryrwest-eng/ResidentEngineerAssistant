@@ -45,8 +45,36 @@ def add_hours_to_time(time_str: str, add_hours: float) -> str:
 # HELPERS
 # ============================================
 
+def _num(value, default: float = 0.0) -> float:
+    """
+    Coerce a resource-row number to a float, tolerating null and junk.
+
+    WHY THIS EXISTS: every call site used float(item.get("hours", 0)), and a
+    dict default only applies when the key is ABSENT. Rows routinely carry
+    `"hours": null` — the key is present, `.get` returns None, and float(None)
+    raises TypeError. That crashed the whole Word export with a 500 for any
+    report containing a single row with a blank hours field, which is most real
+    reports.
+
+    Also handles the string values the AI endpoints and the frontend can emit
+    ("8", "8.5", "", "  ").
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):  # bool is an int subclass — never a quantity
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        text = str(value).strip()
+        return float(text) if text else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _format_number(val) -> str:
     """Format number: integer if whole, else 1 decimal."""
+    val = _num(val)
     if val == 0:
         return "0"
     if isinstance(val, float) and val.is_integer():
@@ -308,8 +336,8 @@ def generate_word_document(report: dict) -> io.BytesIO:
                 else:
                     raw = (item.get("trade") or item.get("name") or "").strip()
 
-                qty = float(item.get("qty", 0))
-                hours = float(item.get("hours", 0))
+                qty = _num(item.get("qty"))
+                hours = _num(item.get("hours"))
                 company = (item.get("company") or "OHL NA").strip()
 
                 if qty <= 0 or hours <= 0:
@@ -508,8 +536,8 @@ def generate_notes_html(report: dict) -> str:
                 else:
                     raw = (item.get("trade") or item.get("name") or "").strip()
 
-                qty = float(item.get("qty", 0))
-                hours = float(item.get("hours", 0))
+                qty = _num(item.get("qty"))
+                hours = _num(item.get("hours"))
                 company = (item.get("company") or "OHL NA").strip()
 
                 if qty <= 0 or hours <= 0:
@@ -604,8 +632,8 @@ def _aggregate_for_word(report: dict) -> list:
                     raw = (item.get("trade") or item.get("name") or "").strip()
 
                 resource = lookup_resource(raw)
-                qty = float(item.get("qty", 0))
-                hours = float(item.get("hours", 0))
+                qty = _num(item.get("qty"))
+                hours = _num(item.get("hours"))
 
                 if qty <= 0 or hours <= 0:
                     continue
@@ -684,8 +712,8 @@ def aggregate_for_pmweb(report: dict) -> list:
                     raw = (item.get("trade") or item.get("name") or "").strip()
 
                 resource = lookup_resource(raw)
-                qty = float(item.get("qty", 0))
-                hours = float(item.get("hours", 0))
+                qty = _num(item.get("qty"))
+                hours = _num(item.get("hours"))
 
                 if qty <= 0 or hours <= 0:
                     continue

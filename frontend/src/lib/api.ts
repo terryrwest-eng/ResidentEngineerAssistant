@@ -92,6 +92,45 @@ export const reportApi = {
           type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         });
 
+    // Let the user choose where it goes, when the browser allows it.
+    // An `a[download]` always dumps to the Downloads folder with no prompt,
+    // which is wrong for a document that belongs in a project work folder.
+    // Chrome and Edge on desktop support the File System Access API; Firefox,
+    // Safari and Android WebView do not, so the anchor remains the fallback.
+    const picker = (window as unknown as {
+      showSaveFilePicker?: (opts: unknown) => Promise<{
+        createWritable: () => Promise<{ write: (d: Blob) => Promise<void>; close: () => Promise<void> }>;
+      }>;
+    }).showSaveFilePicker;
+
+    if (typeof picker === 'function') {
+      try {
+        const handle = await picker({
+          suggestedName: filename,
+          types: [{
+            description: 'Word document',
+            accept: {
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+            },
+          }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        console.debug('[Export] Saved via file picker:', filename, `${blob.size} bytes`);
+        return;
+      } catch (err) {
+        // Cancelling the dialog is a normal outcome, not a failure — swallow it
+        // so the caller does not report an error for a deliberate cancel.
+        if ((err as { name?: string })?.name === 'AbortError') {
+          console.debug('[Export] Save cancelled by user');
+          return;
+        }
+        // Anything else (permission, sandboxed iframe): fall through to the anchor.
+        console.warn('[Export] File picker unavailable, falling back to download:', err);
+      }
+    }
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -101,7 +140,8 @@ export const reportApi = {
     // BOTH of these matter and neither was here:
     //  - the anchor must be IN the document or the click is a no-op in Firefox
     //  - revoking the object URL synchronously after click() cancels the
-    //    download in Chrome before it has started. Hence the timeout.
+    //    download in Chrome before it has started, which leaves a stalled .tmp
+    //    in the Downloads folder. Hence the timeout.
     document.body.appendChild(a);
     a.click();
 

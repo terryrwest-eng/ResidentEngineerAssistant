@@ -7,6 +7,7 @@ python3 backend/tests/test_parse_report.py
 python3 backend/tests/test_weather.py
 python3 backend/tests/test_dictation.py
 python3 backend/tests/test_backfill.py
+python3 backend/tests/test_word_export.py
 ```
 
 Each prints PASS/FAIL per check and exits non-zero if anything fails.
@@ -27,3 +28,4 @@ DAILY_REPORTER_DATA_DIR=/tmp/rea-test python3 backend/tests/test_dictation.py
 | `test_weather.py` | Archive-gap fallback to the forecast API, safe indexing, clean 404 when no source has the date |
 | `test_dictation.py` | Two-step dictation, the short-transcript sanity gate, and that **no** audio endpoint builds data from audio it couldn't read |
 | `test_backfill.py` | The makeup pipeline: filename-weekday date checksum (catches the year typos), the 805 tunnel scope rule, that a struck-through worker never becomes labor, that `[illegible]` is never guessed away, and that a tunnel-only day produces **no** report |
+| `test_word_export.py` | The Word export against the messy data real reports contain — null/blank/string hours and qty. One row with an empty hours box used to 500 the entire export |
