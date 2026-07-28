@@ -82,13 +82,35 @@ export const reportApi = {
     const response = await api.get(`/export/${id}/word`, {
       responseType: 'blob',
     });
-    // Trigger browser download
-    const url = URL.createObjectURL(new Blob([response.data]));
+
+    // The backend returns a correctly-typed Blob already. The previous version
+    // did `new Blob([response.data])`, which re-wraps it and throws away the
+    // MIME type, so the file arrived as application/octet-stream.
+    const blob = response.data instanceof Blob
+      ? response.data
+      : new Blob([response.data], {
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        });
+
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    a.rel = 'noopener';
+
+    // BOTH of these matter and neither was here:
+    //  - the anchor must be IN the document or the click is a no-op in Firefox
+    //  - revoking the object URL synchronously after click() cancels the
+    //    download in Chrome before it has started. Hence the timeout.
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 30_000);
+
+    console.debug('[Export] Word download triggered:', filename, `${blob.size} bytes`);
   },
 
   /** Get PMWeb Combined rows (11 cols) for the preview panel */

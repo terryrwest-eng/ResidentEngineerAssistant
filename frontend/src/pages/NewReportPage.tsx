@@ -21,6 +21,7 @@ import { ReportChat } from '@/components/report/ReportChat';
 import { ScheduleSection } from '@/components/report/ScheduleSection';
 import { SectionNav, type NavSection } from '@/components/report/SectionNav';
 import { Doc, DocHeader, DocStatus } from '@/components/ui/Doc';
+import { useToast } from '@/components/ui/ConfirmProvider';
 import { formatReportDate, formatQty } from '@/lib/formatters';
 
 const REPORT_SECTIONS: NavSection[] = [
@@ -70,6 +71,7 @@ import {
 export function NewReportPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const {
     report,
@@ -153,7 +155,8 @@ export function NewReportPage() {
 
   const handleSubmit = useCallback(async () => {
     await submitReport();
-  }, [submitReport]);
+    toast('Report submitted — a Word copy has been downloaded');
+  }, [submitReport, toast]);
 
   const handleDownloadWord = useCallback(async () => {
     if (!report?.id) return;
@@ -161,12 +164,16 @@ export function NewReportPage() {
     try {
       const date = report.general?.report_date || 'unknown';
       await reportApi.downloadWord(report.id, `DailyReport_${date}.docx`);
+      toast('Word document downloaded');
     } catch (err) {
+      // This used to log to the console and nothing else, so a failed export
+      // was indistinguishable from a successful one.
       console.error('[Export] Word download failed:', err);
+      toast('Word export failed — check your connection and try again', 'err');
     } finally {
       setIsDownloading(false);
     }
-  }, [report]);
+  }, [report, toast]);
 
   // Loading state
   if (isLoading) {

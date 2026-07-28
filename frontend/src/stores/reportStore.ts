@@ -362,10 +362,11 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       const pywebview = (window as unknown as Record<string, unknown>).pywebview as
         | { api: { auto_save_word: (id: string, date: string) => Promise<{ success: boolean; path?: string; error?: string; skipped?: boolean }> } }
         | undefined;
+      const currentReport = get().report;
+      const reportDate = currentReport?.general?.report_date || 'unknown';
+
       if (pywebview?.api?.auto_save_word) {
-        const currentReport = get().report;
         if (currentReport?.id) {
-          const reportDate = currentReport.general?.report_date || 'unknown';
           const result = await pywebview.api.auto_save_word(currentReport.id, reportDate);
           if (result?.skipped) {
             console.info('[Desktop] Word already saved for this report — no duplicate created');
@@ -375,11 +376,23 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
             console.warn('[Desktop] Word auto-save failed:', result?.error);
           }
         }
+      } else if (currentReport?.id) {
+        // WEB AND MOBILE — the copy step used to live ONLY inside the
+        // pywebview branch above, so on the web app (which is how this is
+        // actually used most of the time) submitting produced no copy at all.
+        // A browser cannot write to a work folder, so the equivalent is to
+        // hand the file to the user's downloads.
+        await reportApi.downloadWord(
+          currentReport.id,
+          `DailyReport_${reportDate}.docx`,
+        );
+        console.info('[Submit] Word copy downloaded for', reportDate);
       }
     } catch (err) {
-      // Silent catch — must NEVER break the submit flow
-      // The report is already saved to the cloud at this point
-      console.warn('[Desktop] Auto-save Word error (non-fatal):', err);
+      // Silent catch — must NEVER break the submit flow.
+      // The report is already saved at this point, so a failed copy is an
+      // inconvenience, not data loss.
+      console.warn('[Submit] Word copy failed (non-fatal):', err);
     }
   },
 
