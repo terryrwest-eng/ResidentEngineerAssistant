@@ -1810,17 +1810,44 @@ OUTPUT FORMAT — CRITICAL:
 - Use periods at the end of every bullet point.
 - Write entirely in past tense."""
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=[system_prompt, f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}'],
             config=genai_types.GenerateContentConfig(
-                max_output_tokens=4096,
+                # gemini-2.5-pro is a thinking model and thinking tokens are spent
+                # out of max_output_tokens. The old 4096 budget could be consumed
+                # entirely by thinking, leaving no answer at all — cap thinking so
+                # there is always room for the rewritten bullets.
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=4096),
+                max_output_tokens=16384,
             ),
         )
 
-        text = response.text.strip()
-        text = re.sub(r'```[a-z]*\n?', '', text).strip()
+        raw_text = response.text
+        if not raw_text or not raw_text.strip():
+            # Empty candidate — usually MAX_TOKENS or a safety block, both of
+            # which used to surface as an AttributeError on None.
+            finish_reason = 'unknown'
+            try:
+                finish_reason = str(response.candidates[0].finish_reason)
+            except (AttributeError, IndexError, TypeError):
+                pass
+            logger.error(f'[rewrite] Model returned no text (finish_reason={finish_reason})')
+            raise HTTPException(
+                status_code=502,
+                detail=f'The AI returned an empty response (reason: {finish_reason}). Try again.',
+            )
+
+        text = re.sub(r'```[a-z]*\n?', '', raw_text.strip()).strip()
         cleaned_text = _clean_summary_bullets(text)
+        if not cleaned_text:
+            logger.error(f'[rewrite] Cleaner emptied a {len(text)}-char response')
+            raise HTTPException(
+                status_code=502,
+                detail='The AI response could not be formatted into bullets. Try again.',
+            )
+
         logger.info(f'[rewrite] Polished {len(cleaned_text)} chars')
         return {'status': 'success', 'text': cleaned_text}
 

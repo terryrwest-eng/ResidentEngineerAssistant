@@ -40,6 +40,8 @@ import {
   MicOff,
   FileText,
   Clock,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 
 // ============================================
@@ -180,6 +182,7 @@ export function ActivityEditor({
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isUpdatePanelOpen, setIsUpdatePanelOpen] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [showPhoneScanner, setShowPhoneScanner] = useState(false);
   const [scanningFromCamera, setScanningFromCamera] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -404,14 +407,22 @@ export function ActivityEditor({
   async function handleRewrite() {
     if (!activity.summary?.trim() || isRewriting) return;
     setIsRewriting(true);
+    setRewriteError(null);
     try {
       const data = await scanApi.rewrite(activity.summary);
       const polished = data.text || data.report_text || '';
-      if (polished) {
-        updateActivity(activity.id, { summary: polished });
+      if (!polished) {
+        // Server said OK but sent nothing usable — don't wipe the summary
+        throw new Error('The AI returned an empty rewrite. Your notes are unchanged.');
       }
+      updateActivity(activity.id, { summary: polished });
     } catch (err) {
       console.error('[ActivityEditor] Rewrite failed:', err);
+      const httpErr = err as { response?: { data?: { detail?: string } } };
+      setRewriteError(
+        httpErr?.response?.data?.detail
+        || (err instanceof Error ? err.message : 'Rewrite failed. Try again.')
+      );
     } finally {
       setIsRewriting(false);
     }
@@ -605,6 +616,30 @@ export function ActivityEditor({
                   </button>
                 </div>
               </div>
+              {rewriteError && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '6px',
+                  padding: '8px 10px',
+                  marginBottom: '6px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-danger-bg, #FEF2F2)',
+                  color: 'var(--color-danger, #dc2626)',
+                  fontSize: '0.75rem',
+                }}>
+                  <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ flex: 1 }}>{rewriteError}</span>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    onClick={() => setRewriteError(null)}
+                    aria-label="Dismiss"
+                    style={{ width: 18, height: 18, padding: 0, flexShrink: 0 }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               <textarea
                 className="textarea"
                 value={activity.summary}
