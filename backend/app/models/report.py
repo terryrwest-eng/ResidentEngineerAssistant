@@ -27,6 +27,8 @@ class ManpowerRowModel(BaseModel):
     is_consultant: bool = False
     is_3rd_party: bool = False
     locked: bool = False
+    # Whether the per-activity "Set End Time" button fills this row's stop time
+    apply_end_time: bool = True
 
 
 class EquipmentRowModel(BaseModel):
@@ -46,6 +48,8 @@ class EquipmentRowModel(BaseModel):
     is_consultant: bool = False
     is_rental: bool = False
     locked: bool = False
+    # Whether the per-activity "Set End Time" button fills this row's stop time
+    apply_end_time: bool = True
 
 
 class PhotoModel(BaseModel):

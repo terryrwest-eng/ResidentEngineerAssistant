@@ -22,6 +22,7 @@ import { ActivityUpdatePanel } from '@/components/report/ActivityUpdatePanel';
 import { PhoneScannerModal } from '@/components/report/PhoneScannerModal';
 import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
+import { applyEndTimeToRows, isEndTimeApplied, formatEndTime } from '@/lib/dispatchHelpers';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
 import {
   ChevronDown,
@@ -38,6 +39,7 @@ import {
   Mic,
   MicOff,
   FileText,
+  Clock,
 } from 'lucide-react';
 
 // ============================================
@@ -154,6 +156,14 @@ interface ActivityEditorProps {
   onToggle: () => void;
   onRemove: () => void;
   companyOptions?: string[];
+  /**
+   * End time the first activity in this report was closed out with. Pre-fills
+   * this activity's box so crews that finished together only get typed once —
+   * it is only a starting value and can be changed before applying.
+   */
+  sharedEndTime?: string;
+  /** Called when this activity applies an end time, so later ones inherit it. */
+  onEndTimeApplied?: (endTime: string) => void;
 }
 
 export function ActivityEditor({
@@ -163,6 +173,8 @@ export function ActivityEditor({
   onToggle,
   onRemove,
   companyOptions,
+  sharedEndTime = '',
+  onEndTimeApplied,
 }: ActivityEditorProps) {
   const { report, updateActivity } = useReportStore();
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
@@ -177,6 +189,11 @@ export function ActivityEditor({
   // Collapsible resource table sections — expand only when needed
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
+  // End time for this activity. Null means "untouched" — show whatever the first
+  // closed-out activity used, so typing it once covers crews that left together.
+  const [typedEndTime, setTypedEndTime] = useState<string | null>(null);
+  const endTime = typedEndTime ?? sharedEndTime;
+
   // Derive defaults from manpower rows to cascade to equipment tables.
   // Contract manpower → contract equipment, extra work manpower → extra work equipment.
   const mpDefaults = useMemo(
@@ -187,6 +204,18 @@ export function ActivityEditor({
     () => deriveManpowerDefaults(activity.extra_work_manpower || []),
     [activity.extra_work_manpower],
   );
+
+  // How many rows the end time would land on, for the button's caption
+  const endTimeTargets = useMemo(() => {
+    const all = [
+      ...(activity.manpower || []),
+      ...(activity.equipment || []),
+      ...(activity.extra_work_manpower || []),
+      ...(activity.extra_work_equipment || []),
+      ...(activity.consultant_manpower || []),
+    ];
+    return { checked: all.filter(isEndTimeApplied).length, total: all.length };
+  }, [activity]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -352,6 +381,23 @@ export function ActivityEditor({
 
   function handleConsultantManpowerChange(rows: (ManpowerRow | EquipmentRow)[]) {
     updateActivity(activity.id, { consultant_manpower: rows as ManpowerRow[] });
+  }
+
+  // --- Set End Time: stamp stop times + hours across this activity's tables ---
+  function handleApplyEndTime() {
+    if (!endTime) return;
+
+    updateActivity(activity.id, {
+      manpower: applyEndTimeToRows(activity.manpower || [], endTime),
+      equipment: applyEndTimeToRows(activity.equipment || [], endTime),
+      extra_work_manpower: applyEndTimeToRows(activity.extra_work_manpower || [], endTime),
+      extra_work_equipment: applyEndTimeToRows(activity.extra_work_equipment || [], endTime),
+      consultant_manpower: applyEndTimeToRows(activity.consultant_manpower || [], endTime),
+    });
+
+    // Later activities inherit this time as their starting value
+    onEndTimeApplied?.(endTime);
+    console.debug('[ActivityEditor] End time applied to activity', activity.id, '→', endTime);
   }
 
   // --- AI Rewrite ---
@@ -576,6 +622,59 @@ export function ActivityEditor({
                 onClose={() => setIsUpdatePanelOpen(false)}
               />
             )}
+
+            {/* --- Set End Time --- */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-sm)',
+              flexWrap: 'wrap',
+              padding: 'var(--space-sm) var(--space-md)',
+              marginTop: 'var(--space-md)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-bg)',
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                color: 'var(--color-text-secondary)',
+              }}>
+                <Clock size={14} />
+                End Time
+              </div>
+              <input
+                className="input"
+                type="time"
+                value={endTime}
+                onChange={(e) => setTypedEndTime(e.target.value)}
+                style={{ width: '130px', fontSize: '0.8125rem' }}
+                id={`activity-${index}-end-time`}
+              />
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleApplyEndTime}
+                disabled={!endTime || endTimeTargets.checked === 0}
+                title={
+                  endTimeTargets.checked === 0
+                    ? 'No rows are checked in the End column'
+                    : `Set stop time and recalculate hours for ${endTimeTargets.checked} row(s)`
+                }
+                style={{ fontSize: '0.75rem' }}
+              >
+                Set End Time
+              </button>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
+                {endTimeTargets.total === 0
+                  ? 'No resource rows yet'
+                  : `Applies to ${endTimeTargets.checked} of ${endTimeTargets.total} rows${
+                      endTime ? ` — stops at ${formatEndTime(endTime)}` : ''
+                    }. Untick a row's End box to leave it alone.`}
+              </span>
+            </div>
 
             {/* --- Contract Manpower --- */}
             <CollapsibleResourceSection

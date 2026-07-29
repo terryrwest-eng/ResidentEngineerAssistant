@@ -1,17 +1,25 @@
 /**
  * Daily Reporter V3 — Auto-Create Dialog
  *
- * One-click report factory: enter a date + end time → press Create Report
- * → system automatically fetches weather, loads dispatch from library,
- * matches schedule shift, builds activities, and generates TC description.
+ * One-click report factory: enter a date + start time → press Create Report
+ * → system fetches weather, seeds the header from Settings, and — only when a
+ * dispatch PDF exists for that date — loads it, matches the schedule shift and
+ * builds activities.
+ *
+ * Most days there is no dispatch (they only exist for paving work with one
+ * particular company), so every dispatch-driven step is optional. Without one
+ * you get a report with the header and weather filled in and no activities.
+ *
+ * Crew hours are deliberately left at 0 until the day is closed out — use the
+ * "Set End Time" button on each activity in the report.
  *
  * The dialog shows real-time progress for each step.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '@/stores/reportStore';
-import { weatherApi, dispatchApi, scheduleApi, tcApi } from '@/lib/api';
+import { weatherApi, dispatchApi, scheduleApi } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
 import { buildActivity } from '@/lib/dispatchHelpers';
 import { loadResourceAliases } from '@/lib/resourceMatcher';
@@ -19,14 +27,13 @@ import { SKY_CONDITIONS } from '@/lib/constants';
 import type {
   DispatchJob,
   ScheduleShift,
-  Activity,
   GeneralInfo,
-  ManpowerRow,
 } from '@/types';
 import type { WeatherData } from '@/lib/api';
 import {
   Zap, Calendar, FileText,
   Loader2, CheckCircle2, AlertCircle, X, Upload, Clock,
+  MapPin, Hash,
 } from 'lucide-react';
 
 // ============================================
@@ -34,6 +41,9 @@ import {
 // ============================================
 
 type StepStatus = 'pending' | 'running' | 'success' | 'error' | 'skipped';
+
+/** Where the weather lookup gets its location from */
+type LocationMode = 'device' | 'zip';
 
 interface StepState {
   status: StepStatus;
@@ -55,15 +65,37 @@ const INITIAL_STEPS: StepState[] = [
   { status: 'pending', label: 'Load dispatch', detail: '' },
   { status: 'pending', label: 'Match schedule', detail: '' },
   { status: 'pending', label: 'Build activities', detail: '' },
-  { status: 'pending', label: 'Traffic control', detail: '' },
 ];
 
-// ============================================
-// Helper: Generate unique IDs
-// ============================================
+/** Browser geolocation — resolves to coordinates or rejects. */
+function getDeviceCoords(): Promise<{ lat: number; lon: number }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('This device does not support location services'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      err => reject(new Error(err.message || 'Could not get device location')),
+      { timeout: 10_000, maximumAge: 300_000 },
+    );
+  });
+}
 
-function generateId(): string {
-  return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+/** Convert a "7:00 AM" settings value into the "07:00" a time input expects. */
+function to24Hour(value: string): string {
+  if (!value?.trim()) return '';
+  const match12 = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (match12) {
+    let hrs = parseInt(match12[1]);
+    const period = match12[3].toUpperCase();
+    if (period === 'PM' && hrs !== 12) hrs += 12;
+    if (period === 'AM' && hrs === 12) hrs = 0;
+    return `${hrs.toString().padStart(2, '0')}:${match12[2]}`;
+  }
+  const match24 = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) return `${match24[1].padStart(2, '0')}:${match24[2]}`;
+  return '';
 }
 
 // ============================================
@@ -82,7 +114,10 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
 
   // --- Form state ---
   const [date, setDate] = useState('');
-  const [endTime, setEndTime] = useState('05:00');
+  const [startTime, setStartTime] = useState('');
+  const [locationMode, setLocationMode] = useState<LocationMode>('device');
+  const [zipInput, setZipInput] = useState('');
+  const [defaultZip, setDefaultZip] = useState('');
 
   // --- Progress state ---
   const [isRunning, setIsRunning] = useState(false);
@@ -90,26 +125,26 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
   const [steps, setSteps] = useState<StepState[]>([...INITIAL_STEPS]);
   const [overallError, setOverallError] = useState<string | null>(null);
 
-  // --- Dispatch upload fallback ---
-  const [needsUpload, setNeedsUpload] = useState(false);
+  // --- Optional dispatch upload ---
+  const [canUploadDispatch, setCanUploadDispatch] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+
+  // ── Seed the form from settings ──
+  useEffect(() => {
+    settingsApi.get()
+      .then(s => {
+        const seeded = to24Hour(s.default_start_time || '');
+        if (seeded) setStartTime(seeded);
+        setDefaultZip(s.default_zip_code || '');
+        console.debug('[AutoCreate] Form seeded from settings — start:', seeded, 'zip:', s.default_zip_code);
+      })
+      .catch(err => console.warn('[AutoCreate] Could not seed form from settings:', err));
+  }, []);
 
   // ── Step updater ──
   const updateStep = useCallback((index: number, updates: Partial<StepState>) => {
     setSteps(prev => prev.map((s, i) => i === index ? { ...s, ...updates } : s));
   }, []);
-
-  // ── Format end time for display ──
-  function formatEndTimeDisplay(t: string): string {
-    const match = t.match(/(\d{1,2}):(\d{2})/);
-    if (!match) return t;
-    let hrs = parseInt(match[1]);
-    const mins = match[2];
-    const period = hrs >= 12 ? 'PM' : 'AM';
-    if (hrs > 12) hrs -= 12;
-    if (hrs === 0) hrs = 12;
-    return `${hrs}:${mins} ${period}`;
-  }
 
   // ── Format date for display ──
   function formatDateDisplay(d: string): string {
@@ -132,11 +167,11 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
       return;
     }
 
-    console.debug('[AutoCreate] Starting automation for date:', date, 'endTime:', endTime);
+    console.debug('[AutoCreate] Starting automation for date:', date, 'startTime:', startTime);
     setIsRunning(true);
     setIsDone(false);
     setOverallError(null);
-    setNeedsUpload(false);
+    setCanUploadDispatch(false);
     setSteps([...INITIAL_STEPS]);
 
     try {
@@ -157,32 +192,20 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
         console.warn('[AutoCreate] Settings fetch failed, using defaults:', err);
       }
 
-      // Close any existing report and start fresh
+      // Close any existing report and start fresh. Header fields come from
+      // Settings where they've been filled in, and stay blank where they haven't.
       closeReport();
       const reportDefaults: Partial<GeneralInfo> = {
         project_name: (settings.default_project as string) || '',
+        project_number: (settings.default_project_number as string) || '',
+        project_location: (settings.default_project_location as string) || '',
+        inspector_name: (settings.default_inspector_name as string) || '',
         resident_engineer: (settings.default_resident_engineer as string) || '',
         report_date: date,
-        start_time: endTime, // Night work — start time might differ, but we'll use settings
-        end_time: endTime,
+        start_time: startTime,
+        // Filled in later by "Set End Time" on each activity
+        end_time: '',
       };
-
-      // Use settings start time if available
-      const startTimeSetting = settings.default_start_time as string;
-      if (startTimeSetting) {
-        // Convert 12h to 24h if needed
-        const match12 = startTimeSetting.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (match12) {
-          let hrs = parseInt(match12[1]);
-          const mins = match12[2];
-          const period = match12[3].toUpperCase();
-          if (period === 'PM' && hrs !== 12) hrs += 12;
-          if (period === 'AM' && hrs === 12) hrs = 0;
-          reportDefaults.start_time = `${hrs.toString().padStart(2, '0')}:${mins}`;
-        } else {
-          reportDefaults.start_time = startTimeSetting;
-        }
-      }
 
       newReport(reportDefaults);
       updateStep(0, {
@@ -193,9 +216,39 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
       // ─── STEP 1: Fetch weather ───
       updateStep(1, { status: 'running' });
       try {
-        const zipCode = (settings.default_zip_code as string) || '92101';
-        console.debug('[AutoCreate] Fetching weather for', date, 'ZIP:', zipCode);
-        const weather: WeatherData = await weatherApi.fetchByZip(zipCode, date);
+        const settingsZip = (settings.default_zip_code as string) || '';
+        let weather: WeatherData;
+        let sourceLabel: string;
+
+        if (locationMode === 'device') {
+          // Device location chosen — send the device's current position.
+          // If it's refused or unavailable, fall back to the Settings ZIP.
+          try {
+            const { lat, lon } = await getDeviceCoords();
+            console.debug('[AutoCreate] Device location:', lat, lon);
+            weather = await weatherApi.fetchByCoords(lat, lon, date);
+            sourceLabel = 'device location';
+          } catch (locErr) {
+            console.warn('[AutoCreate] Device location unavailable:', locErr);
+            if (!settingsZip) {
+              throw new Error(
+                'Device location unavailable and no default ZIP set in Settings',
+                { cause: locErr },
+              );
+            }
+            weather = await weatherApi.fetchByZip(settingsZip, date);
+            sourceLabel = `ZIP ${settingsZip} (Settings fallback)`;
+          }
+        } else {
+          // ZIP chosen — use what was typed, or the Settings default if blank.
+          const zip = zipInput.trim() || settingsZip;
+          if (!zip) {
+            throw new Error('Enter a ZIP code, or set a default ZIP in Settings');
+          }
+          console.debug('[AutoCreate] Fetching weather for ZIP:', zip);
+          weather = await weatherApi.fetchByZip(zip, date);
+          sourceLabel = `ZIP ${zip}${zipInput.trim() ? '' : ' (Settings default)'}`;
+        }
 
         // Apply weather to report
         const weatherUpdates: Partial<GeneralInfo> = {
@@ -216,221 +269,135 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
         bumpRevision();
         updateStep(1, {
           status: 'success',
-          detail: `${weather.temperature_high}°F / ${weather.temperature_low}°F — ${weather.condition}`,
+          detail: `${weather.temperature_high}°F / ${weather.temperature_low}°F — ${weather.condition} (${sourceLabel})`,
         });
       } catch (err) {
         console.warn('[AutoCreate] Weather fetch failed:', err);
-        updateStep(1, { status: 'error', detail: 'Weather unavailable — fill manually' });
+        const msg = err instanceof Error ? err.message : 'Weather unavailable';
+        updateStep(1, { status: 'error', detail: `${msg} — fill manually` });
         // Non-fatal: continue without weather
       }
 
-      // ─── STEP 2: Load dispatch ───
+      // ─── STEP 2: Load dispatch (optional) ───
+      // Dispatches only exist for paving work with one particular company, so
+      // most days there won't be one. Never block on it.
       updateStep(2, { status: 'running' });
-      let dispatchData: { date: string; company: string; jobs: DispatchJob[] };
+      let dispatchData: { date: string; company: string; jobs: DispatchJob[] } | null = null;
       try {
-        console.debug('[AutoCreate] Loading dispatch for date:', date);
+        console.debug('[AutoCreate] Looking for dispatch for date:', date);
         dispatchData = await dispatchApi.getByDate(date);
         console.debug('[AutoCreate] Dispatch loaded:', {
-          company: dispatchData.company,
-          jobCount: dispatchData.jobs.length,
+          company: dispatchData?.company,
+          jobCount: dispatchData?.jobs.length,
         });
         updateStep(2, {
           status: 'success',
-          detail: `${dispatchData.jobs.length} jobs — ${dispatchData.company}`,
+          detail: `${dispatchData?.jobs.length} jobs — ${dispatchData?.company}`,
         });
       } catch (err: unknown) {
-        const httpErr = err as { response?: { status?: number } };
-        if (httpErr?.response?.status === 404) {
-          console.warn('[AutoCreate] No dispatch found for date:', date);
-          updateStep(2, { status: 'error', detail: 'No dispatch found — upload one below' });
-          setNeedsUpload(true);
-          setIsRunning(false);
-          return; // Stop — need user to upload
-        }
-        throw err; // Re-throw unexpected errors
-      }
-
-      // ─── STEP 3: Match schedule shift ───
-      updateStep(3, { status: 'running' });
-      let matchedShift: ScheduleShift | null = null;
-      let matchedShiftKey = '';
-      let detectedScheduleType: 'digout' | 'grind_overlay' = 'digout';
-      try {
-        console.debug('[AutoCreate] Loading active schedule...');
-        const schedule = await scheduleApi.getActive();
-        const shifts = schedule.shifts as Record<string, ScheduleShift>;
-        const shiftKeys = Object.keys(shifts);
-        detectedScheduleType = (schedule.schedule_type as 'digout' | 'grind_overlay') || 'digout';
-        console.debug('[AutoCreate] Schedule loaded, type:', detectedScheduleType, 'shifts:', shiftKeys);
-
-        // Match by date string — schedule keys are like "June 18, 2026"
-        const formattedDate = formatDateDisplay(date);
-        const dateKey = shiftKeys.find(k =>
-          k.toLowerCase() === formattedDate.toLowerCase()
-        );
-
-        if (dateKey) {
-          matchedShift = shifts[dateKey];
-          matchedShiftKey = dateKey;
-          console.debug('[AutoCreate] Schedule shift matched:', dateKey, {
-            rows: matchedShift.rows.length,
-            totalSF: matchedShift.total_sf,
-            totalTons: matchedShift.total_tons,
-          });
-          updateStep(3, {
-            status: 'success',
-            detail: `${dateKey} — ${matchedShift.total_sf.toLocaleString()} SF / ${matchedShift.total_tons.toLocaleString()} Tons`,
-          });
+        const httpErr = err as { response?: { status?: number; data?: { detail?: string } } };
+        const status = httpErr?.response?.status;
+        if (status === 404) {
+          console.debug('[AutoCreate] No dispatch for date:', date, '— continuing without one');
+          updateStep(2, { status: 'skipped', detail: 'No dispatch for this date' });
         } else {
-          console.warn('[AutoCreate] No schedule shift matches date:', formattedDate);
-          updateStep(3, { status: 'skipped', detail: 'No matching shift in schedule' });
+          // A dispatch file existed but couldn't be parsed, or the server
+          // errored. Report it and carry on — the report is still usable.
+          const detail = httpErr?.response?.data?.detail
+            || (err instanceof Error ? err.message : 'Dispatch could not be loaded');
+          console.warn('[AutoCreate] Dispatch load failed:', detail);
+          updateStep(2, { status: 'error', detail });
         }
-      } catch (err) {
-        console.warn('[AutoCreate] Schedule load failed:', err);
-        updateStep(3, { status: 'skipped', detail: 'No schedule uploaded' });
-        // Non-fatal: continue without schedule data
+        setCanUploadDispatch(true);
       }
 
-      // ─── STEP 4: Build activities from dispatch + schedule ───
-      updateStep(4, { status: 'running' });
-      const company = (settings.default_company as string) || dispatchData.company || '';
+      if (dispatchData) {
+        // ─── STEP 3: Match schedule shift ───
+        updateStep(3, { status: 'running' });
+        let matchedShift: ScheduleShift | null = null;
+        let matchedShiftKey = '';
+        let detectedScheduleType: 'digout' | 'grind_overlay' = 'digout';
+        try {
+          console.debug('[AutoCreate] Loading active schedule...');
+          const schedule = await scheduleApi.getActive();
+          const shifts = schedule.shifts as Record<string, ScheduleShift>;
+          const shiftKeys = Object.keys(shifts);
+          detectedScheduleType = (schedule.schedule_type as 'digout' | 'grind_overlay') || 'digout';
+          console.debug('[AutoCreate] Schedule loaded, type:', detectedScheduleType, 'shifts:', shiftKeys);
 
-      // Build the activity using shared helper (same logic as DispatchImportDialog)
-      // Note: station ranges are empty for auto-create — user can add them manually after
-      console.debug('[AutoCreate] Building activity from', dispatchData.jobs.length, 'jobs, company:', company);
-      const activity = buildActivity(
-        dispatchData.jobs,
-        company,
-        endTime,
-        matchedShift,
-        matchedShiftKey,
-        detectedScheduleType,
-      );
+          // Match by date string — schedule keys are like "June 18, 2026"
+          const formattedDate = formatDateDisplay(date);
+          const dateKey = shiftKeys.find(k =>
+            k.toLowerCase() === formattedDate.toLowerCase()
+          );
 
-      // Add the activity to the report
-      addActivity(activity);
-
-      const totalManpower = activity.manpower.length +
-        activity.extra_work_manpower.length +
-        activity.consultant_manpower.length;
-      const totalEquipment = activity.equipment.length +
-        activity.extra_work_equipment.length;
-
-      updateStep(4, {
-        status: 'success',
-        detail: `${totalManpower} crew, ${totalEquipment} equipment`,
-      });
-      console.debug('[AutoCreate] Activity built:', {
-        workArea: activity.work_area,
-        manpower: activity.manpower.length,
-        ewManpower: activity.extra_work_manpower.length,
-        equipment: activity.equipment.length,
-        ewEquipment: activity.extra_work_equipment.length,
-      });
-
-      // ─── STEP 5: Generate traffic control activity ───
-      updateStep(5, { status: 'running' });
-      try {
-        // Gather TC crew from all jobs
-        const tcCrew: { name: string; time: string }[] = [];
-        let subTc: { company: string; details: string; count?: number; time?: string } | null = null;
-
-        for (const job of dispatchData.jobs) {
-          for (const tc of (job.traffic_control || [])) {
-            tcCrew.push(tc);
-          }
-          if (job.sub_traffic_control?.company && job.sub_traffic_control.details !== 'N/A') {
-            subTc = job.sub_traffic_control;
-          }
-        }
-
-        // Collect work location info
-        const allStreets = new Set<string>();
-        const allLocations = new Set<string>();
-        for (const job of dispatchData.jobs) {
-          (job.streets || []).forEach((s: string) => { if (s && s !== 'N/A') allStreets.add(s); });
-          if (job.location && job.location !== 'N/A') allLocations.add(job.location);
-        }
-
-        if (tcCrew.length > 0 || subTc) {
-          console.debug('[AutoCreate] Generating TC activity:', {
-            tcCrewCount: tcCrew.length,
-            subTc: subTc?.company,
-            streets: [...allStreets],
-          });
-
-          const tcResult = await tcApi.generate({
-            streets: [...allStreets],
-            location: [...allLocations].join(' / '),
-            tc_crew: tcCrew,
-            sub_tc: subTc,
-            work_description: activity.summary.slice(0, 500),
-            schedule_shift: matchedShiftKey,
-            start_time: dispatchData.jobs[0]?.start_time || '',
-            end_time: formatEndTimeDisplay(endTime),
-          });
-
-          // Build TC manpower from the TC crew
-          const tcManpower: ManpowerRow[] = tcCrew.map(tc => ({
-            id: generateId(),
-            trade: 'LL-03- Laborers',
-            name: tc.name,
-            qty: 1,
-            hours: 0, // Will be calculated below
-            start_time: tc.time || '',
-            stop_time: formatEndTimeDisplay(endTime),
-            company,
-            classification: '',
-            is_3rd_party: false,
-            is_extra_work: false,
-            is_consultant: false,
-            locked: false,
-          }));
-
-          // Add sub TC if present
-          if (subTc) {
-            tcManpower.push({
-              id: generateId(),
-              trade: 'LL-03- Laborers',
-              name: `${subTc.company} Flagger`,
-              qty: subTc.count || 1,
-              hours: 0,
-              start_time: subTc.time || dispatchData.jobs[0]?.start_time || '',
-              stop_time: formatEndTimeDisplay(endTime),
-              company: subTc.company,
-              classification: '',
-              is_3rd_party: true,
-              is_extra_work: false,
-              is_consultant: false,
-              locked: false,
+          if (dateKey) {
+            matchedShift = shifts[dateKey];
+            matchedShiftKey = dateKey;
+            console.debug('[AutoCreate] Schedule shift matched:', dateKey, {
+              rows: matchedShift.rows.length,
+              totalSF: matchedShift.total_sf,
+              totalTons: matchedShift.total_tons,
             });
+            updateStep(3, {
+              status: 'success',
+              detail: `${dateKey} — ${matchedShift.total_sf.toLocaleString()} SF / ${matchedShift.total_tons.toLocaleString()} Tons`,
+            });
+          } else {
+            console.debug('[AutoCreate] No schedule shift matches date:', formattedDate);
+            updateStep(3, { status: 'skipped', detail: 'No matching shift in schedule' });
           }
-
-          const tcActivity: Activity = {
-            id: generateId(),
-            work_area: tcResult.work_area || 'Traffic Control',
-            stations: [...allStreets].join(' / '),
-            summary: tcResult.summary,
-            manpower: tcManpower,
-            equipment: [],
-            extra_work_manpower: [],
-            extra_work_equipment: [],
-            consultant_manpower: [],
-          };
-
-          addActivity(tcActivity);
-          updateStep(5, {
-            status: 'success',
-            detail: `TC activity created (${tcCrew.length} crew${subTc ? ` + ${subTc.company}` : ''})`,
-          });
-        } else {
-          console.debug('[AutoCreate] No TC crew found in dispatch — skipping TC activity');
-          updateStep(5, { status: 'skipped', detail: 'No TC crew in dispatch' });
+        } catch (err) {
+          console.debug('[AutoCreate] Schedule unavailable:', err);
+          updateStep(3, { status: 'skipped', detail: 'No schedule uploaded' });
+          // Non-fatal: continue without schedule data
         }
-      } catch (err) {
-        console.warn('[AutoCreate] TC generation failed:', err);
-        updateStep(5, { status: 'error', detail: 'TC generation failed — add manually' });
-        // Non-fatal: report is still usable without TC
+
+        // ─── STEP 4: Build activities from dispatch + schedule ───
+        updateStep(4, { status: 'running' });
+        try {
+          const company = (settings.default_company as string) || dispatchData.company || '';
+
+          // Station ranges are empty for auto-create — add them manually after.
+          // The end time is empty on purpose: hours stay 0 until the day is
+          // closed out with "Set End Time" on the activity.
+          console.debug('[AutoCreate] Building activity from', dispatchData.jobs.length, 'jobs, company:', company);
+          const activity = buildActivity(
+            dispatchData.jobs,
+            company,
+            '',
+            matchedShift,
+            matchedShiftKey,
+            detectedScheduleType,
+          );
+
+          addActivity(activity);
+
+          const totalManpower = activity.manpower.length +
+            activity.extra_work_manpower.length +
+            activity.consultant_manpower.length;
+          const totalEquipment = activity.equipment.length +
+            activity.extra_work_equipment.length;
+
+          updateStep(4, {
+            status: 'success',
+            detail: `${totalManpower} crew, ${totalEquipment} equipment — hours set when you close out`,
+          });
+          console.debug('[AutoCreate] Activity built:', {
+            workArea: activity.work_area,
+            manpower: activity.manpower.length,
+            ewManpower: activity.extra_work_manpower.length,
+            equipment: activity.equipment.length,
+            ewEquipment: activity.extra_work_equipment.length,
+          });
+        } catch (err) {
+          console.error('[AutoCreate] Activity build failed:', err);
+          updateStep(4, { status: 'error', detail: 'Could not build activities — add them manually' });
+        }
+      } else {
+        // No dispatch — nothing to derive activities from
+        updateStep(3, { status: 'skipped', detail: 'Needs a dispatch' });
+        updateStep(4, { status: 'skipped', detail: 'Add activities in the report' });
       }
 
       // ─── DONE ───
@@ -444,10 +411,13 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
     } finally {
       setIsRunning(false);
     }
-  }, [date, endTime, newReport, updateGeneral, addActivity, closeReport, bumpRevision, updateStep]);
+  }, [
+    date, startTime, locationMode, zipInput,
+    newReport, updateGeneral, addActivity, closeReport, bumpRevision, updateStep,
+  ]);
 
   // ============================================
-  // DISPATCH UPLOAD HANDLER (Fallback)
+  // DISPATCH UPLOAD HANDLER (Optional)
   // ============================================
 
   const handleDispatchUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -459,7 +429,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
     try {
       await dispatchApi.upload(file, date);
       console.debug('[AutoCreate] Dispatch uploaded successfully, re-running automation...');
-      setNeedsUpload(false);
+      setCanUploadDispatch(false);
       // Re-run the full automation now that the dispatch is available
       await runAutomation();
     } catch (err) {
@@ -467,6 +437,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
       setOverallError('Failed to upload dispatch. Please try again.');
     } finally {
       setIsUploading(false);
+      if (e.target) e.target.value = '';
     }
   }, [date, runAutomation]);
 
@@ -482,6 +453,25 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
   // ============================================
   // RENDER
   // ============================================
+
+  const fieldStyle: React.CSSProperties = {
+    width: '100%',
+    padding: 'var(--space-sm) var(--space-md)',
+    borderRadius: 'var(--radius-sm)',
+    border: '1px solid var(--color-border)',
+    fontSize: '1rem',
+    background: 'var(--color-bg)',
+  };
+
+  const labelStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 'var(--space-xs)',
+    marginBottom: 'var(--space-xs)',
+    fontSize: '0.875rem',
+    fontWeight: 600,
+    color: 'var(--color-text-secondary)',
+  };
 
   return (
     <div
@@ -537,18 +527,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
         <div className="card-body" style={{ padding: 'var(--space-lg)' }}>
           {/* Date Input */}
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <label
-              htmlFor="auto-create-date"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-xs)',
-                marginBottom: 'var(--space-xs)',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: 'var(--color-text-secondary)',
-              }}
-            >
+            <label htmlFor="auto-create-date" style={labelStyle}>
               <Calendar size={14} />
               Report Date
             </label>
@@ -558,55 +537,82 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
               value={date}
               onChange={e => setDate(e.target.value)}
               disabled={isRunning}
-              style={{
-                width: '100%',
-                padding: 'var(--space-sm) var(--space-md)',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--color-border)',
-                fontSize: '1rem',
-                background: 'var(--color-bg)',
-              }}
+              style={fieldStyle}
             />
           </div>
 
-          {/* End Time Input */}
+          {/* Start Time Input */}
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <label
-              htmlFor="auto-create-end-time"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-xs)',
-                marginBottom: 'var(--space-xs)',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                color: 'var(--color-text-secondary)',
-              }}
-            >
+            <label htmlFor="auto-create-start-time" style={labelStyle}>
               <Clock size={14} />
-              End Time
+              Start Time
             </label>
             <input
-              id="auto-create-end-time"
+              id="auto-create-start-time"
               type="time"
-              value={endTime}
-              onChange={e => setEndTime(e.target.value)}
+              value={startTime}
+              onChange={e => setStartTime(e.target.value)}
               disabled={isRunning}
-              style={{
-                width: '100%',
-                padding: 'var(--space-sm) var(--space-md)',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--color-border)',
-                fontSize: '1rem',
-                background: 'var(--color-bg)',
-              }}
+              style={fieldStyle}
             />
             <p style={{
               margin: 'var(--space-xs) 0 0',
               fontSize: '0.75rem',
               color: 'var(--color-text-tertiary)',
             }}>
-              When did the crew finish? (Night work default: 5:00 AM)
+              When did the crew start? Set the end time from the report when the
+              day is done — that's what fills in hours.
+            </p>
+          </div>
+
+          {/* Weather Location */}
+          <div style={{ marginBottom: 'var(--space-lg)' }}>
+            <label style={labelStyle}>
+              <MapPin size={14} />
+              Weather Location
+            </label>
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)' }}>
+              {([
+                { mode: 'device' as LocationMode, label: 'Current location' },
+                { mode: 'zip' as LocationMode, label: 'Enter ZIP' },
+              ]).map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  id={`auto-create-location-${mode}`}
+                  onClick={() => setLocationMode(mode)}
+                  disabled={isRunning}
+                  className={locationMode === mode ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm'}
+                  style={{ flex: 1, fontSize: '0.8125rem' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {locationMode === 'zip' && (
+              <input
+                id="auto-create-zip"
+                type="text"
+                inputMode="numeric"
+                value={zipInput}
+                onChange={e => setZipInput(e.target.value)}
+                disabled={isRunning}
+                placeholder={defaultZip ? `${defaultZip} (Settings default)` : 'e.g. 92101'}
+                style={fieldStyle}
+              />
+            )}
+            <p style={{
+              margin: 'var(--space-xs) 0 0',
+              fontSize: '0.75rem',
+              color: 'var(--color-text-tertiary)',
+            }}>
+              {locationMode === 'device'
+                ? defaultZip
+                  ? `Uses this device's location. Falls back to ZIP ${defaultZip} from Settings.`
+                  : "Uses this device's location."
+                : defaultZip
+                  ? `Leave blank to use ZIP ${defaultZip} from Settings.`
+                  : 'No default ZIP is set in Settings, so enter one here.'}
             </p>
           </div>
 
@@ -673,31 +679,34 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
             </div>
           )}
 
-          {/* Dispatch Upload Fallback */}
-          {needsUpload && (
+          {/* Optional Dispatch Upload — offered, never required */}
+          {canUploadDispatch && (
             <div style={{
               padding: 'var(--space-md)',
-              background: 'var(--color-warning-bg, #FFFBEB)',
+              background: 'var(--color-bg)',
+              border: '1px solid var(--color-border)',
               borderRadius: 'var(--radius-md)',
               marginBottom: 'var(--space-md)',
             }}>
               <p style={{
-                margin: '0 0 var(--space-sm)',
+                margin: '0 0 var(--space-xs)',
                 fontSize: '0.875rem',
                 fontWeight: 600,
-                color: 'var(--color-warning)',
               }}>
-                No dispatch found for {formatDateDisplay(date)}
+                <Hash size={13} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                Paving day?
               </p>
               <p style={{
                 margin: '0 0 var(--space-md)',
                 fontSize: '0.8125rem',
                 color: 'var(--color-text-secondary)',
               }}>
-                Upload the dispatch PDF and automation will continue.
+                Only if there's a dispatch for {formatDateDisplay(date)} — upload it
+                and the crew and equipment get filled in automatically. Otherwise
+                just open the report and add the work yourself.
               </p>
               <label
-                className="btn btn-primary btn-sm"
+                className="btn btn-outline btn-sm"
                 style={{
                   cursor: isUploading ? 'wait' : 'pointer',
                   display: 'inline-flex',

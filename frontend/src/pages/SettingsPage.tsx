@@ -65,6 +65,11 @@ export function SettingsPage() {
   // Preferences form state
   const [defaultProject, setDefaultProject]   = useState('');
   const [defaultRE, setDefaultRE]              = useState('');
+  const [defaultProjectNumber, setDefaultProjectNumber]     = useState('');
+  const [defaultProjectLocation, setDefaultProjectLocation] = useState('');
+  const [defaultInspector, setDefaultInspector]             = useState('');
+  const [defaultCompany, setDefaultCompany]                 = useState('');
+  const [defaultZip, setDefaultZip]                         = useState('');
   const [defaultStart, setDefaultStart]        = useState('7:00 AM');
   const [defaultStop, setDefaultStop]          = useState('3:30 PM');
   const [projects, setProjects]                = useState<string[]>([]);
@@ -100,6 +105,11 @@ export function SettingsPage() {
         setSettings(s);
         setDefaultProject(s.default_project || '');
         setDefaultRE(s.default_resident_engineer || '');
+        setDefaultProjectNumber(s.default_project_number || '');
+        setDefaultProjectLocation(s.default_project_location || '');
+        setDefaultInspector(s.default_inspector_name || '');
+        setDefaultCompany(s.default_company || '');
+        setDefaultZip(s.default_zip_code || '');
         setDefaultStart(s.default_start_time || '7:00 AM');
         setDefaultStop(s.default_stop_time || '3:30 PM');
         setProjects(s.projects || []);
@@ -135,6 +145,11 @@ export function SettingsPage() {
         ...settings,
         default_project: defaultProject.trim(),
         default_resident_engineer: defaultRE.trim(),
+        default_project_number: defaultProjectNumber.trim(),
+        default_project_location: defaultProjectLocation.trim(),
+        default_inspector_name: defaultInspector.trim(),
+        default_company: defaultCompany.trim(),
+        default_zip_code: defaultZip.trim(),
         default_start_time: defaultStart.trim(),
         default_stop_time: defaultStop.trim(),
         projects,
@@ -349,6 +364,32 @@ export function SettingsPage() {
               <div>
                 <label className="label">Default Resident Engineer</label>
                 <input className="input" value={defaultRE} onChange={e => setDefaultRE(e.target.value)} placeholder="e.g., John Smith" />
+              </div>
+              <div>
+                <label className="label">Default Project Number</label>
+                <input className="input" value={defaultProjectNumber} onChange={e => setDefaultProjectNumber(e.target.value)} placeholder="e.g., C-346" />
+              </div>
+              <div>
+                <label className="label">Default Project Location</label>
+                <input className="input" value={defaultProjectLocation} onChange={e => setDefaultProjectLocation(e.target.value)} placeholder="e.g., San Diego, CA" />
+              </div>
+              <div>
+                <label className="label">Default Inspector</label>
+                <input className="input" value={defaultInspector} onChange={e => setDefaultInspector(e.target.value)} placeholder="e.g., Jane Doe" />
+              </div>
+              <div>
+                <label className="label">Default Company</label>
+                <input className="input" value={defaultCompany} onChange={e => setDefaultCompany(e.target.value)} placeholder="e.g., OHL NA" list="default-company-opts" autoComplete="off" />
+                <datalist id="default-company-opts">
+                  {companies.map((c, i) => <option key={i} value={c} />)}
+                </datalist>
+              </div>
+              <div>
+                <label className="label">Default ZIP Code</label>
+                <input className="input" value={defaultZip} onChange={e => setDefaultZip(e.target.value)} placeholder="e.g., 92101" inputMode="numeric" />
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Used for weather when device location isn't available, or when you leave the ZIP blank on Quick Create.
+                </p>
               </div>
             </div>
           </div>

@@ -73,6 +73,12 @@ export interface ManpowerRow {
   is_extra_work: boolean;
   is_consultant: boolean;
   locked: boolean;       // Protected from bulk apply
+  /**
+   * Whether the activity's "Set End Time" button fills this row's stop time.
+   * Undefined counts as checked, so rows saved before this field existed —
+   * and rows built anywhere that doesn't set it — default to included.
+   */
+  apply_end_time?: boolean;
 }
 
 /** A single equipment entry */
@@ -90,6 +96,8 @@ export interface EquipmentRow {
   is_consultant: boolean;
   is_rental: boolean;
   locked: boolean;       // Protected from bulk apply
+  /** See ManpowerRow.apply_end_time — undefined counts as checked. */
+  apply_end_time?: boolean;
 }
 
 /** Photo attached to a report */
