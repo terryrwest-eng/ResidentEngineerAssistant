@@ -25,7 +25,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.config import GEMINI_API_KEY
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -72,7 +72,7 @@ def _gemini_call_with_retry(client: Any, model_name: str, max_retries: int = 3, 
 # LAZY IMPORT — Only initialize Gemini when needed
 # ============================================
 
-def _get_gemini_client(model_name: str = "gemini-2.5-pro"):
+def _get_gemini_client(model_name: str = GEMINI_MODEL_NAME):
     """Initialize the Gemini client on first use."""
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured. Set it in .env")
@@ -1815,11 +1815,11 @@ OUTPUT FORMAT — CRITICAL:
             model_name,
             contents=[system_prompt, f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}'],
             config=genai_types.GenerateContentConfig(
-                # gemini-2.5-pro is a thinking model and thinking tokens are spent
-                # out of max_output_tokens. The old 4096 budget could be consumed
-                # entirely by thinking, leaving no answer at all — cap thinking so
-                # there is always room for the rewritten bullets.
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=4096),
+                # Thinking tokens are spent out of max_output_tokens. The old 4096
+                # budget could be consumed entirely by thinking, leaving no answer
+                # at all — polishing notes into bullets needs little reasoning, so
+                # keep thinking low and leave plenty of room for the output.
+                thinking_config=genai_types.ThinkingConfig(thinking_level='LOW'),
                 max_output_tokens=16384,
             ),
         )
@@ -2647,7 +2647,8 @@ async def parse_dispatch(file: UploadFile = File(...)):
                 ],
                 config=genai_types.GenerateContentConfig(
                     system_instruction=DISPATCH_READ_PROMPT,
-                    thinking_config=genai_types.ThinkingConfig(thinking_budget=24576),
+                    # Reading a scanned dispatch sheet — think hard
+                    thinking_config=genai_types.ThinkingConfig(thinking_level='HIGH'),
                     max_output_tokens=32768,
                 ),
             )

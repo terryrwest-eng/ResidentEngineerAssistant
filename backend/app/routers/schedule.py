@@ -31,7 +31,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.config import GEMINI_API_KEY
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
@@ -50,7 +50,7 @@ os.makedirs(SCHEDULES_DIR, exist_ok=True)
 # WHY local: avoids circular imports from ai.py
 # ============================================
 
-def _get_gemini_client(model_name: str = "gemini-2.5-pro"):
+def _get_gemini_client(model_name: str = GEMINI_MODEL_NAME):
     """Initialize the Gemini client on first use (matches ai.py pattern)."""
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured. Set it in .env")
@@ -289,7 +289,8 @@ async def upload_schedule(file: UploadFile = File(...)):
             contents=[SCHEDULE_READ_PROMPT] + image_parts,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=32768,
-                thinking_config=genai_types.ThinkingConfig(thinking_budget=8192),
+                # Reading a schedule PDF — moderate reasoning is enough
+                thinking_config=genai_types.ThinkingConfig(thinking_level='MEDIUM'),
             ),
         )
 

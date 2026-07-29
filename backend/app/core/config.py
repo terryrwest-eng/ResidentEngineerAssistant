@@ -27,6 +27,12 @@ if os.path.isfile(_env_path):
 
 # --- Export config values ---
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
+
+# Model used by every AI endpoint. Override with GEMINI_MODEL to try another one
+# without touching code. Gemini 3 models think by default; how hard they think is
+# set per call site with ThinkingConfig(thinking_level=...) — note that Gemini 3
+# rejects the older thinking_budget parameter, so don't reintroduce it here.
+GEMINI_MODEL_NAME: str = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 SECRET_KEY: str = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
 

@@ -25,7 +25,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from PyPDF2 import PdfReader
 from io import BytesIO
 
-from app.core.config import GEMINI_API_KEY
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pdf-search"])
@@ -35,7 +35,7 @@ SPECS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file_
 os.makedirs(SPECS_DIR, exist_ok=True)
 
 
-def _get_gemini_client(model_name: str = "gemini-2.5-pro"):
+def _get_gemini_client(model_name: str = GEMINI_MODEL_NAME):
     """Initialize the Gemini client (matches ai.py pattern)."""
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
