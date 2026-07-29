@@ -54,3 +54,6 @@ desktop/build/
 
 # Gemini agent state
 .gemini/
+
+# Railway CLI local link state (project/service IDs, per machine)
+.railway/
