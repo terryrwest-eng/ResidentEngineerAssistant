@@ -20,6 +20,7 @@ from app.services.database import (
     list_reports,
     delete_report,
     get_report_count,
+    find_report_by_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,21 +32,55 @@ async def create_report(request: Request):
     """
     Create a new daily field report.
     Accepts raw JSON — no Pydantic validation.
-    Generates a unique ID and saves to both SQLite and a JSON file.
+    Saves to both SQLite and a JSON file.
+
+    Idempotent per day: if a report already exists for this date and project,
+    that report is updated instead of a second one being created. Clients
+    auto-save constantly, and without this a save that fired before the first
+    one returned would mint a fresh UUID and leave two copies of the same day
+    in the history. Pass "allow_duplicate": true to opt out (used by Save As).
     """
     report_dict = await request.json()
-
-    if not report_dict.get("id"):
-        report_dict["id"] = str(uuid.uuid4())
+    allow_duplicate = bool(report_dict.pop("allow_duplicate", False))
 
     now = datetime.utcnow().isoformat()
-    report_dict["created_at"] = now
+    reused = False
+
+    if not report_dict.get("id"):
+        general = report_dict.get("general") or {}
+        existing = (
+            None if allow_duplicate
+            else find_report_by_date(
+                general.get("report_date", ""),
+                general.get("project_name", ""),
+            )
+        )
+        if existing:
+            # Adopt the existing report for this day rather than duplicating it
+            report_dict["id"] = existing["id"]
+            report_dict["created_at"] = existing["created_at"] or now
+            reused = True
+            logger.info(
+                f"Report for {general.get('report_date', '')} already exists "
+                f"({existing['id']}) — updating it instead of creating a duplicate"
+            )
+        else:
+            report_dict["id"] = str(uuid.uuid4())
+            report_dict["created_at"] = now
+    else:
+        report_dict.setdefault("created_at", now)
+
     report_dict["updated_at"] = now
 
     file_path = save_report(report_dict)
-    logger.info(f"Created report {report_dict['id']} → {file_path}")
+    logger.info(f"{'Updated' if reused else 'Created'} report {report_dict['id']} → {file_path}")
 
-    return {"id": report_dict["id"], "file_path": file_path, "message": "Report created"}
+    return {
+        "id": report_dict["id"],
+        "file_path": file_path,
+        "reused_existing": reused,
+        "message": "Report updated" if reused else "Report created",
+    }
 
 
 @router.get("/reports")

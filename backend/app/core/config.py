@@ -33,6 +33,10 @@ GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
 # set per call site with ThinkingConfig(thinking_level=...) — note that Gemini 3
 # rejects the older thinking_budget parameter, so don't reintroduce it here.
 GEMINI_MODEL_NAME: str = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+
+# How hard the model thinks on every call. One of MINIMAL / LOW / MEDIUM / HIGH.
+# Applied at every call site so no endpoint silently falls back to a model default.
+GEMINI_THINKING_LEVEL: str = os.environ.get("GEMINI_THINKING_LEVEL", "HIGH")
 SECRET_KEY: str = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
 

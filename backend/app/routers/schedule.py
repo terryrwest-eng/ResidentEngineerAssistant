@@ -31,7 +31,7 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
@@ -289,8 +289,7 @@ async def upload_schedule(file: UploadFile = File(...)):
             contents=[SCHEDULE_READ_PROMPT] + image_parts,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=32768,
-                # Reading a schedule PDF — moderate reasoning is enough
-                thinking_config=genai_types.ThinkingConfig(thinking_level='MEDIUM'),
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
             ),
         )
 
@@ -316,6 +315,7 @@ async def upload_schedule(file: UploadFile = File(...)):
             client, model_name,
             contents=[pass2_prompt],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type="application/json",
                 max_output_tokens=65536,
             ),

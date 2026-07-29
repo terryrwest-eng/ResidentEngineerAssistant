@@ -25,7 +25,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -494,6 +494,7 @@ async def scan_notes(
                 model=model_name,
                 contents=[NOTE_SCAN_PROMPT] + parts_list,
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     response_mime_type='application/json',
                     max_output_tokens=65536,
                 ),
@@ -559,6 +560,7 @@ async def scan_extra_work(
             model=model_name,
             contents=[prompt, genai_types.Part.from_bytes(data=content, mime_type=mime_type)],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
             ),
         )
@@ -602,6 +604,7 @@ async def scan_consultant(file: UploadFile = File(...)):
             model=model_name,
             contents=[CONSULTANT_PROMPT, genai_types.Part.from_bytes(data=content, mime_type=mime_type)],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
             ),
         )
@@ -686,6 +689,7 @@ Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPO
                 genai_types.Part.from_bytes(data=audio_bytes, mime_type=request.mime_type),
             ],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 max_output_tokens=16384,
             ),
         )
@@ -740,6 +744,7 @@ Return JSON:
             model=model_name,
             contents=[pass2_prompt],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
                 max_output_tokens=32768,
             ),
@@ -953,6 +958,7 @@ Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPO
                 genai_types.Part.from_bytes(data=audio_bytes, mime_type=request.mime_type),
             ],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 max_output_tokens=16384,
             ),
         )
@@ -1002,6 +1008,7 @@ Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPO
             model=model_name,
             contents=[pass2_prompt],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
                 max_output_tokens=32768,
             ),
@@ -1115,6 +1122,7 @@ Return JSON:
             model=model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
                 max_output_tokens=1000,
             ),
@@ -1232,6 +1240,7 @@ Generate the professional report text now (bullet points, past tense, factual):"
             model=model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 max_output_tokens=8192,
             ),
         )
@@ -1322,6 +1331,7 @@ Return JSON:"""
             model=model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
                 max_output_tokens=32768,
             ),
@@ -1431,6 +1441,7 @@ Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPO
                     genai_types.Part.from_bytes(data=audio_bytes, mime_type=request.mime_type),
                 ],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     max_output_tokens=16384,
                 ),
             )
@@ -1593,6 +1604,7 @@ Return JSON:"""
             model=model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 response_mime_type='application/json',
                 max_output_tokens=65536,
             ),
@@ -1745,6 +1757,7 @@ Write the combined email body now:"""
             model_name,
             contents=[system_prompt, user_prompt],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 max_output_tokens=16384,
             ),
         )
@@ -1817,9 +1830,8 @@ OUTPUT FORMAT — CRITICAL:
             config=genai_types.GenerateContentConfig(
                 # Thinking tokens are spent out of max_output_tokens. The old 4096
                 # budget could be consumed entirely by thinking, leaving no answer
-                # at all — polishing notes into bullets needs little reasoning, so
-                # keep thinking low and leave plenty of room for the output.
-                thinking_config=genai_types.ThinkingConfig(thinking_level='LOW'),
+                # at all, so keep the output ceiling well clear of the thinking.
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 max_output_tokens=16384,
             ),
         )
@@ -1943,6 +1955,7 @@ Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPO
                     ]),
                 ],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     max_output_tokens=16384,
                 ),
             )
@@ -1995,6 +2008,7 @@ Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPO
                 model=model_name,
                 contents=[pass2_prompt],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     response_mime_type='application/json',
                     max_output_tokens=32768,
                 ),
@@ -2130,6 +2144,7 @@ OUTPUT JSON:
                     ]),
                 ],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     response_mime_type='application/json',
                     max_output_tokens=8192,
                 ),
@@ -2170,6 +2185,7 @@ OUTPUT JSON:
                     ]),
                 ],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     response_mime_type='application/json',
                     max_output_tokens=8192,
                 ),
@@ -2271,6 +2287,7 @@ Extract EVERYTHING — do not summarize or skip any activities."""
                     ]),
                 ],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     system_instruction=system_prompt,
                     response_mime_type='application/json',
                     max_output_tokens=32768,
@@ -2647,8 +2664,7 @@ async def parse_dispatch(file: UploadFile = File(...)):
                 ],
                 config=genai_types.GenerateContentConfig(
                     system_instruction=DISPATCH_READ_PROMPT,
-                    # Reading a scanned dispatch sheet — think hard
-                    thinking_config=genai_types.ThinkingConfig(thinking_level='HIGH'),
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     max_output_tokens=32768,
                 ),
             )
@@ -2671,6 +2687,7 @@ async def parse_dispatch(file: UploadFile = File(...)):
                 client, model_name,
                 contents=[pass2_prompt],
                 config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                     response_mime_type='application/json',
                     max_output_tokens=65536,
                 ),
@@ -2950,6 +2967,7 @@ async def generate_tc(request: TCGenerateRequest):
                 genai_types.Content(role='user', parts=user_parts),
             ],
             config=genai_types.GenerateContentConfig(
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
                 system_instruction=TC_GENERATION_PROMPT,
                 max_output_tokens=2048,
             ),

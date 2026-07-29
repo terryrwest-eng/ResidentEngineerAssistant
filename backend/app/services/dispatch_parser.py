@@ -19,16 +19,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
 
 logger = logging.getLogger(__name__)
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 PDF_RENDER_DPI = 300
-# Transcribing a dispatch off a scanned PDF is the hardest job in the app —
-# think hard. (Gemini 3 replaced the old numeric thinking_budget with a level.)
-PASS1_THINKING_LEVEL = "HIGH"
+# Thinking level comes from GEMINI_THINKING_LEVEL in app/core/config.py.
 PASS1_MAX_OUTPUT_TOKENS = 32768
 PASS2_MAX_OUTPUT_TOKENS = 65536
 MIN_PASS1_TEXT_LENGTH = 50
@@ -377,7 +375,7 @@ async def parse_dispatch_pdf(file_bytes: bytes, filename: str) -> DispatchParseR
         ],
         config=genai_types.GenerateContentConfig(
             system_instruction=DISPATCH_READ_PROMPT,
-            thinking_config=genai_types.ThinkingConfig(thinking_level=PASS1_THINKING_LEVEL),
+            thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
             max_output_tokens=PASS1_MAX_OUTPUT_TOKENS,
         ),
     )
@@ -400,6 +398,7 @@ async def parse_dispatch_pdf(file_bytes: bytes, filename: str) -> DispatchParseR
         client, model_name,
         contents=[pass2_prompt],
         config=genai_types.GenerateContentConfig(
+            thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
             response_mime_type='application/json',
             max_output_tokens=PASS2_MAX_OUTPUT_TOKENS,
         ),
