@@ -40,6 +40,13 @@ export interface AppSettings {
   default_start_time: string;
   default_stop_time: string;
   companies: string[];
+  /** Report header defaults — seeded onto every new report by Quick Create */
+  default_project_number: string;
+  default_project_location: string;
+  default_inspector_name: string;
+  default_company: string;
+  /** Fallback ZIP for weather when device location is unavailable */
+  default_zip_code: string;
   master_lists: MasterLists;
   custom_resource_codes: CustomResourceCodes;
   user_templates: UserTemplate[];
