@@ -21,7 +21,9 @@ PyMuPDF==1.25.4
 httpx==0.28.1
 
 # Data validation
-pydantic==2.11.3
+# Must stay >=2.12.5: google-genai 2.15.0 requires it. Pinning 2.11.3 alongside
+# that SDK makes the image impossible to build (pip ResolutionImpossible).
+pydantic==2.13.4
 pydantic-settings==2.9.1
 
 # Logging
