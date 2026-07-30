@@ -1,10 +1,13 @@
 /**
  * Daily Reporter V3 — Report Store (Zustand)
  *
- * Manages report state with Word/Excel-style save behavior:
- * - New reports: NO auto-save until first explicit Save
- * - After first save: auto-save on every change (debounced)
- * - Version history: each save creates a snapshot
+ * Manages report state and persistence:
+ * - Auto-save from the first edit — a new report is written as soon as it has
+ *   anything in it, then re-saved on every change (debounced by 2s)
+ * - One report per day: the server folds a create onto the existing report for
+ *   the same date + project, so an early save can't leave duplicate copies
+ * - Single-flight: only one save request runs at a time; edits made during a
+ *   save are flushed immediately after it returns
  * - Navigation guard: warns if unsaved changes
  */
 
@@ -53,6 +56,8 @@ interface ReportStoreState {
 
   // --- Auto-save timer ---
   _autoSaveTimer: ReturnType<typeof setTimeout> | null;
+  /** Edits landed while a save was in flight — save again once it finishes. */
+  _pendingSave: boolean;
 
   /** Revision counter — incremented when AI applies changes. Used as React key to force remount. */
   revision: number;
@@ -76,8 +81,12 @@ interface ReportStoreState {
   replaceActivities: (activities: Activity[]) => void;
   /** Bump revision counter to force remount of defaultValue components (AI use only) */
   bumpRevision: () => void;
-  /** First-time save (creates the report file) */
-  saveReport: () => Promise<string | null>;
+  /**
+   * Save the report. Creates it on first call, updates it after.
+   * Pass allowDuplicate to force a second report on a date that already has
+   * one — only Save As should ever need this.
+   */
+  saveReport: (options?: { allowDuplicate?: boolean }) => Promise<string | null>;
   /** Save As (creates a copy with a new ID) */
   saveReportAs: () => Promise<string | null>;
   /** Mark report as submitted */
@@ -101,6 +110,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
   isLoading: false,
   loadError: null,
   _autoSaveTimer: null,
+  _pendingSave: false,
   revision: 0,
 
   // --- Actions ---
@@ -131,9 +141,10 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       isLoading: false,
       loadError: null,
       _autoSaveTimer: null,
+      _pendingSave: false,
     });
 
-    console.debug('[ReportStore] New blank report created (not saved to disk)');
+    console.debug('[ReportStore] New blank report created — auto-saves on first edit');
   },
 
   loadReport: async (id) => {
@@ -279,11 +290,20 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     console.debug('[ReportStore] Revision bumped to', revision + 1);
   },
 
-  saveReport: async () => {
-    const { report, isSaved } = get();
+  saveReport: async (options) => {
+    const { report, isSaved, isSaving } = get();
     if (!report) return null;
 
-    set({ isSaving: true, saveError: null });
+    // Single-flight. Two saves running at once on a report that has no ID yet
+    // would both POST, mint two IDs, and leave duplicate reports for the same
+    // day. Fold this call into the one already running instead.
+    if (isSaving) {
+      console.debug('[ReportStore] Save already in flight — queuing another');
+      set({ _pendingSave: true });
+      return null;
+    }
+
+    set({ isSaving: true, saveError: null, _pendingSave: false });
 
     try {
       let savedId: string;
@@ -294,25 +314,50 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
         savedId = result.id;
         console.debug(`[ReportStore] Updated report ${savedId}`);
       } else {
-        // First save — create new report
-        const result = await reportApi.create(report as unknown as Record<string, unknown>);
+        // First save. The server collapses this onto an existing report for the
+        // same date + project unless we explicitly ask for a duplicate.
+        const payload = {
+          ...(report as unknown as Record<string, unknown>),
+          ...(options?.allowDuplicate ? { allow_duplicate: true } : {}),
+        };
+        const result = await reportApi.create(payload);
         savedId = result.id;
-        console.debug(`[ReportStore] Created report ${savedId}`);
+        console.debug(
+          `[ReportStore] Created report ${savedId}`,
+          result.reused_existing ? '(adopted the existing report for this date)' : '',
+        );
+      }
+
+      // Re-read from the store rather than reusing the captured `report`: the
+      // user keeps typing while the request is in flight, and writing the stale
+      // snapshot back would silently discard whatever they entered meanwhile.
+      const current = get().report;
+      if (!current) {
+        // Report was closed mid-save — nothing left to update
+        set({ isSaving: false, _pendingSave: false });
+        return savedId;
       }
 
       const now = new Date().toISOString();
+      const stillPending = get()._pendingSave;
       set({
-        report: { ...report, id: savedId, updated_at: now },
+        report: { ...current, id: savedId },
         isSaved: true,
-        isDirty: false,
+        isDirty: stillPending,
         isSaving: false,
         lastSavedAt: now,
       });
 
+      // Edits arrived while we were saving — flush them now
+      if (stillPending) {
+        set({ _pendingSave: false });
+        return await get().saveReport(options);
+      }
+
       return savedId;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save report';
-      set({ isSaving: false, saveError: msg });
+      set({ isSaving: false, saveError: msg, _pendingSave: false });
       console.error('[ReportStore] Save failed:', err);
       return null;
     }
@@ -322,11 +367,13 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     const { report } = get();
     if (!report) return null;
 
-    // Create a copy with no ID (forces a new file)
+    // Create a copy with no ID (forces a new file). allowDuplicate is required
+    // here — otherwise the server would fold the copy back onto the original,
+    // since it has the same date and project.
     const copy = { ...report, id: '' };
     set({ report: copy, isSaved: false });
 
-    return get().saveReport();
+    return get().saveReport({ allowDuplicate: true });
   },
 
   submitReport: async () => {
@@ -389,6 +436,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       lastSavedAt: null,
       saveError: null,
       _autoSaveTimer: null,
+      _pendingSave: false,
     });
 
     console.debug('[ReportStore] Report closed');
@@ -410,10 +458,12 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
 
   // --- Internal: Auto-save scheduler ---
   _scheduleAutoSave: () => {
-    const { isSaved, _autoSaveTimer } = get();
+    const { _autoSaveTimer } = get();
 
-    // Only auto-save if the report has been saved at least once
-    if (!isSaved) return;
+    // Auto-save from the very first edit — a new report is written as soon as
+    // there is anything in it, so nothing is lost by closing the tab. The
+    // server keeps this from creating a second report for a date that already
+    // has one, and saveReport() will not run two requests at once.
 
     // Clear existing timer
     if (_autoSaveTimer) clearTimeout(_autoSaveTimer);

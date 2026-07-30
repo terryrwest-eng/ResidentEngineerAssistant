@@ -19,15 +19,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.core.config import GEMINI_API_KEY
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
 
 logger = logging.getLogger(__name__)
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-GEMINI_MODEL_NAME = "gemini-2.5-pro"
 PDF_RENDER_DPI = 300
-PASS1_THINKING_BUDGET = 24576
+# Thinking level comes from GEMINI_THINKING_LEVEL in app/core/config.py.
 PASS1_MAX_OUTPUT_TOKENS = 32768
 PASS2_MAX_OUTPUT_TOKENS = 65536
 MIN_PASS1_TEXT_LENGTH = 50
@@ -376,7 +375,7 @@ async def parse_dispatch_pdf(file_bytes: bytes, filename: str) -> DispatchParseR
         ],
         config=genai_types.GenerateContentConfig(
             system_instruction=DISPATCH_READ_PROMPT,
-            thinking_config=genai_types.ThinkingConfig(thinking_budget=PASS1_THINKING_BUDGET),
+            thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
             max_output_tokens=PASS1_MAX_OUTPUT_TOKENS,
         ),
     )
@@ -399,6 +398,7 @@ async def parse_dispatch_pdf(file_bytes: bytes, filename: str) -> DispatchParseR
         client, model_name,
         contents=[pass2_prompt],
         config=genai_types.GenerateContentConfig(
+            thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
             response_mime_type='application/json',
             max_output_tokens=PASS2_MAX_OUTPUT_TOKENS,
         ),

@@ -9,7 +9,7 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.3.0
 
 # AI - Google Gemini (CURRENT SDK - not deprecated google.generativeai)
-google-genai==1.14.0
+google-genai==2.15.0
 
 # Document processing
 python-docx==1.1.2

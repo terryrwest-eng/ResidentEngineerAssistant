@@ -94,6 +94,12 @@ export function parseTimeToMinutes(t: string): number {
 // ============================================
 
 export function calcHours(startTimeStr: string, endTimeStr: string): number {
+  // No end time yet (report built from a start time only) — hours stay 0 until
+  // the activity's "Set End Time" button fills them in.
+  if (!startTimeStr?.trim() || !endTimeStr?.trim()) {
+    console.debug('[dispatchHelpers] calcHours: missing time, returning 0');
+    return 0;
+  }
   const startMins = parseTimeToMinutes(startTimeStr);
   const endMins = parseTimeToMinutes(endTimeStr);
   let diff = endMins - startMins;
@@ -108,6 +114,7 @@ export function calcHours(startTimeStr: string, endTimeStr: string): number {
 // ============================================
 
 export function formatEndTime(t: string): string {
+  if (!t?.trim()) return '';
   const match = t.match(/(\d{1,2}):(\d{2})/);
   if (!match) {
     console.debug('[dispatchHelpers] formatEndTime (no match):', t);
@@ -121,6 +128,40 @@ export function formatEndTime(t: string): string {
   const result = `${hrs}:${mins} ${period}`;
   console.debug('[dispatchHelpers] formatEndTime:', t, '→', result);
   return result;
+}
+
+// ============================================
+// Helper: Apply an end time across resource rows
+// ============================================
+
+/** A row is included unless its checkbox was explicitly unticked. */
+export function isEndTimeApplied(row: { apply_end_time?: boolean }): boolean {
+  return row.apply_end_time !== false;
+}
+
+/**
+ * Stamp an end time onto every checked row and recalculate its hours.
+ *
+ * `endTime` arrives as a 24h "HH:MM" value from the time input and is stored in
+ * the same display format the tables already use ("5:00 AM"). Unchecked rows are
+ * returned untouched — including their existing hours.
+ */
+export function applyEndTimeToRows<T extends { start_time: string; stop_time: string; hours: number; apply_end_time?: boolean }>(
+  rows: T[],
+  endTime: string,
+): T[] {
+  const formatted = formatEndTime(endTime);
+  if (!formatted) return rows;
+
+  let applied = 0;
+  const updated = rows.map(row => {
+    if (!isEndTimeApplied(row)) return row;
+    applied += 1;
+    return { ...row, stop_time: formatted, hours: calcHours(row.start_time, formatted) };
+  });
+
+  console.debug('[dispatchHelpers] applyEndTimeToRows:', formatted, '→', applied, 'of', rows.length, 'rows');
+  return updated;
 }
 
 // ============================================

@@ -283,6 +283,41 @@ def save_report(report_data: dict) -> str:
     return file_path
 
 
+def find_report_by_date(report_date: str, project_name: str = "") -> Optional[dict]:
+    """
+    Find an existing report for a given date (and project, when one is given).
+
+    WHY: a daily report is one-per-day-per-project. Creating a second one for a
+    date that already has one is always an accident — an auto-save that fired
+    before the first save came back, a double-click, a second tab — and it
+    litters the history with copies of the same day. Callers use this to reuse
+    the existing report instead of minting a new ID.
+
+    Returns the oldest match, so repeated accidents keep collapsing onto the
+    original rather than hopping between duplicates.
+    """
+    if not report_date:
+        return None
+
+    conn = get_connection()
+    try:
+        if project_name:
+            row = conn.execute(
+                "SELECT * FROM reports WHERE report_date = ? AND project_name = ? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (report_date, project_name),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM reports WHERE report_date = ? "
+                "ORDER BY created_at ASC LIMIT 1",
+                (report_date,),
+            ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def get_report(report_id: str) -> Optional[dict]:
     """
     Get a full report by ID.

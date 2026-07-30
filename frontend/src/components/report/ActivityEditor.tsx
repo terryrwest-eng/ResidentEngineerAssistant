@@ -22,6 +22,7 @@ import { ActivityUpdatePanel } from '@/components/report/ActivityUpdatePanel';
 import { PhoneScannerModal } from '@/components/report/PhoneScannerModal';
 import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
+import { applyEndTimeToRows, isEndTimeApplied, formatEndTime } from '@/lib/dispatchHelpers';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
 import {
   ChevronDown,
@@ -38,6 +39,9 @@ import {
   Mic,
   MicOff,
   FileText,
+  Clock,
+  AlertCircle,
+  X,
 } from 'lucide-react';
 
 // ============================================
@@ -154,6 +158,14 @@ interface ActivityEditorProps {
   onToggle: () => void;
   onRemove: () => void;
   companyOptions?: string[];
+  /**
+   * End time the first activity in this report was closed out with. Pre-fills
+   * this activity's box so crews that finished together only get typed once —
+   * it is only a starting value and can be changed before applying.
+   */
+  sharedEndTime?: string;
+  /** Called when this activity applies an end time, so later ones inherit it. */
+  onEndTimeApplied?: (endTime: string) => void;
 }
 
 export function ActivityEditor({
@@ -163,11 +175,14 @@ export function ActivityEditor({
   onToggle,
   onRemove,
   companyOptions,
+  sharedEndTime = '',
+  onEndTimeApplied,
 }: ActivityEditorProps) {
   const { report, updateActivity } = useReportStore();
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isUpdatePanelOpen, setIsUpdatePanelOpen] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [showPhoneScanner, setShowPhoneScanner] = useState(false);
   const [scanningFromCamera, setScanningFromCamera] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -176,6 +191,11 @@ export function ActivityEditor({
 
   // Collapsible resource table sections — expand only when needed
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+
+  // End time for this activity. Null means "untouched" — show whatever the first
+  // closed-out activity used, so typing it once covers crews that left together.
+  const [typedEndTime, setTypedEndTime] = useState<string | null>(null);
+  const endTime = typedEndTime ?? sharedEndTime;
 
   // Derive defaults from manpower rows to cascade to equipment tables.
   // Contract manpower → contract equipment, extra work manpower → extra work equipment.
@@ -187,6 +207,18 @@ export function ActivityEditor({
     () => deriveManpowerDefaults(activity.extra_work_manpower || []),
     [activity.extra_work_manpower],
   );
+
+  // How many rows the end time would land on, for the button's caption
+  const endTimeTargets = useMemo(() => {
+    const all = [
+      ...(activity.manpower || []),
+      ...(activity.equipment || []),
+      ...(activity.extra_work_manpower || []),
+      ...(activity.extra_work_equipment || []),
+      ...(activity.consultant_manpower || []),
+    ];
+    return { checked: all.filter(isEndTimeApplied).length, total: all.length };
+  }, [activity]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -354,18 +386,43 @@ export function ActivityEditor({
     updateActivity(activity.id, { consultant_manpower: rows as ManpowerRow[] });
   }
 
+  // --- Set End Time: stamp stop times + hours across this activity's tables ---
+  function handleApplyEndTime() {
+    if (!endTime) return;
+
+    updateActivity(activity.id, {
+      manpower: applyEndTimeToRows(activity.manpower || [], endTime),
+      equipment: applyEndTimeToRows(activity.equipment || [], endTime),
+      extra_work_manpower: applyEndTimeToRows(activity.extra_work_manpower || [], endTime),
+      extra_work_equipment: applyEndTimeToRows(activity.extra_work_equipment || [], endTime),
+      consultant_manpower: applyEndTimeToRows(activity.consultant_manpower || [], endTime),
+    });
+
+    // Later activities inherit this time as their starting value
+    onEndTimeApplied?.(endTime);
+    console.debug('[ActivityEditor] End time applied to activity', activity.id, '→', endTime);
+  }
+
   // --- AI Rewrite ---
   async function handleRewrite() {
     if (!activity.summary?.trim() || isRewriting) return;
     setIsRewriting(true);
+    setRewriteError(null);
     try {
       const data = await scanApi.rewrite(activity.summary);
       const polished = data.text || data.report_text || '';
-      if (polished) {
-        updateActivity(activity.id, { summary: polished });
+      if (!polished) {
+        // Server said OK but sent nothing usable — don't wipe the summary
+        throw new Error('The AI returned an empty rewrite. Your notes are unchanged.');
       }
+      updateActivity(activity.id, { summary: polished });
     } catch (err) {
       console.error('[ActivityEditor] Rewrite failed:', err);
+      const httpErr = err as { response?: { data?: { detail?: string } } };
+      setRewriteError(
+        httpErr?.response?.data?.detail
+        || (err instanceof Error ? err.message : 'Rewrite failed. Try again.')
+      );
     } finally {
       setIsRewriting(false);
     }
@@ -559,6 +616,30 @@ export function ActivityEditor({
                   </button>
                 </div>
               </div>
+              {rewriteError && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '6px',
+                  padding: '8px 10px',
+                  marginBottom: '6px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-danger-bg, #FEF2F2)',
+                  color: 'var(--color-danger, #dc2626)',
+                  fontSize: '0.75rem',
+                }}>
+                  <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ flex: 1 }}>{rewriteError}</span>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    onClick={() => setRewriteError(null)}
+                    aria-label="Dismiss"
+                    style={{ width: 18, height: 18, padding: 0, flexShrink: 0 }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
               <textarea
                 className="textarea"
                 value={activity.summary}
@@ -576,6 +657,59 @@ export function ActivityEditor({
                 onClose={() => setIsUpdatePanelOpen(false)}
               />
             )}
+
+            {/* --- Set End Time --- */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-sm)',
+              flexWrap: 'wrap',
+              padding: 'var(--space-sm) var(--space-md)',
+              marginTop: 'var(--space-md)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--color-bg)',
+            }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                color: 'var(--color-text-secondary)',
+              }}>
+                <Clock size={14} />
+                End Time
+              </div>
+              <input
+                className="input"
+                type="time"
+                value={endTime}
+                onChange={(e) => setTypedEndTime(e.target.value)}
+                style={{ width: '130px', fontSize: '0.8125rem' }}
+                id={`activity-${index}-end-time`}
+              />
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleApplyEndTime}
+                disabled={!endTime || endTimeTargets.checked === 0}
+                title={
+                  endTimeTargets.checked === 0
+                    ? 'No rows are checked in the End column'
+                    : `Set stop time and recalculate hours for ${endTimeTargets.checked} row(s)`
+                }
+                style={{ fontSize: '0.75rem' }}
+              >
+                Set End Time
+              </button>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
+                {endTimeTargets.total === 0
+                  ? 'No resource rows yet'
+                  : `Applies to ${endTimeTargets.checked} of ${endTimeTargets.total} rows${
+                      endTime ? ` — stops at ${formatEndTime(endTime)}` : ''
+                    }. Untick a row's End box to leave it alone.`}
+              </span>
+            </div>
 
             {/* --- Contract Manpower --- */}
             <CollapsibleResourceSection

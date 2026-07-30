@@ -6,6 +6,7 @@
  */
 
 import axios, { type AxiosInstance } from 'axios';
+import type { Report } from '@/types';
 
 // In development, Vite's proxy handles /api → localhost:8000
 // In production, the backend serves the frontend (same origin)
@@ -57,9 +58,9 @@ export const reportApi = {
     return response.data;
   },
 
-  get: async (id: string) => {
+  get: async (id: string): Promise<Report> => {
     const response = await api.get(`/reports/${id}`);
-    return response.data;
+    return response.data as Report;
   },
 
   create: async (report: Record<string, unknown>) => {

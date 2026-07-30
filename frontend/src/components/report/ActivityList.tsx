@@ -34,6 +34,11 @@ export function ActivityList() {
   const [isEmailSummaryOpen, setIsEmailSummaryOpen] = useState(false);
   const [companyOptions, setCompanyOptions] = useState<string[]>([]);
 
+  // End time the first closed-out activity used — whichever activity that is,
+  // not necessarily the first in the list. Pre-fills the rest so a crew that
+  // finished together only needs the time typed once.
+  const [sharedEndTime, setSharedEndTime] = useState('');
+
   // Load company list from settings on mount
   useEffect(() => {
     settingsApi.get()
@@ -184,6 +189,8 @@ export function ActivityList() {
             onToggle={() => toggleExpand(activity.id)}
             onRemove={() => handleRemoveActivity(activity.id)}
             companyOptions={companyOptions}
+            sharedEndTime={sharedEndTime}
+            onEndTimeApplied={setSharedEndTime}
           />
         ))}
       </div>

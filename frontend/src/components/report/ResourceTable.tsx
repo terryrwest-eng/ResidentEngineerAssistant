@@ -137,6 +137,7 @@ export function ResourceTable({
           is_extra_work: false,
           is_consultant: false,
           locked: false,
+          apply_end_time: true,
         } as ManpowerRow
       : {
           id: generateId(),
@@ -152,6 +153,7 @@ export function ResourceTable({
           is_consultant: false,
           is_rental: false,
           locked: false,
+          apply_end_time: true,
         } as EquipmentRow;
 
     onChange([...rows, newRow]);
@@ -269,6 +271,12 @@ export function ResourceTable({
               {!isManpower && <th style={{ ...headerStyle, width: '4%', textAlign: 'center' }}>Ren</th>}
               <th style={{ ...headerStyle, width: '4%', textAlign: 'center' }}></th>
               <th style={{ ...headerStyle, width: '3%', textAlign: 'center' }}>🔒</th>
+              <th
+                style={{ ...headerStyle, width: '4%', textAlign: 'center' }}
+                title="Checked rows get the end time when you use Set End Time on this activity"
+              >
+                End
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -335,7 +343,7 @@ export function ResourceTable({
                   <input type="checkbox" checked={bulkRental} onChange={(e) => setBulkRental(e.target.checked)} style={{ width: '14px', height: '14px' }} />
                 </td>
               )}
-              <td style={{ ...cellStyle, textAlign: 'center' }} colSpan={2}>
+              <td style={{ ...cellStyle, textAlign: 'center' }} colSpan={3}>
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={applyBulkValues}
@@ -584,6 +592,18 @@ function ResourceRow({
             ? <Lock size={12} style={{ color: 'var(--color-warning, #f59e0b)' }} />
             : <Unlock size={12} style={{ color: 'var(--color-text-placeholder)' }} />}
         </button>
+      </td>
+
+      {/* Apply-end-time toggle — checked rows receive the activity's end time */}
+      <td style={{ ...cellStyle, textAlign: 'center' }}>
+        <input
+          type="checkbox"
+          checked={row.apply_end_time !== false}
+          onChange={(e) => onUpdate('apply_end_time', e.target.checked)}
+          title="Apply this activity's end time to this row"
+          style={{ width: '14px', height: '14px' }}
+          id={`activity-${type}-${idx}-apply_end_time`}
+        />
       </td>
     </tr>
   );

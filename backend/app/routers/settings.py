@@ -82,6 +82,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "custom_resource_codes": {"labor": [], "equipment": []},
     "default_company": "",
     "default_zip_code": "",
+    "default_project_number": "",
+    "default_project_location": "",
+    "default_inspector_name": "",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
     "updated_at": "",
@@ -113,6 +116,12 @@ class SettingsPayload(BaseModel):
     default_start_time: str = "7:00 AM"
     default_stop_time: str = "3:30 PM"
     companies: list[str] = []
+    # Report header defaults — seeded onto every new report by Quick Create
+    default_project_number: str = ""
+    default_project_location: str = ""
+    default_inspector_name: str = ""
+    default_company: str = ""
+    default_zip_code: str = ""
     master_lists: MasterLists = Field(default_factory=MasterLists)
     custom_resource_codes: CustomResourceCodes = Field(default_factory=CustomResourceCodes)
     user_templates: list[dict[str, Any]] = []
