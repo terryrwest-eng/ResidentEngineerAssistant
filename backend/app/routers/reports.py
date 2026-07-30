@@ -34,53 +34,58 @@ async def create_report(request: Request):
     Accepts raw JSON — no Pydantic validation.
     Saves to both SQLite and a JSON file.
 
-    Idempotent per day: if a report already exists for this date and project,
-    that report is updated instead of a second one being created. Clients
-    auto-save constantly, and without this a save that fired before the first
-    one returned would mint a fresh UUID and leave two copies of the same day
-    in the history. Pass "allow_duplicate": true to opt out (used by Save As).
+    A create NEVER overwrites an existing report. If one already exists for this
+    date and project, this returns 409 with its ID and writes nothing at all —
+    the caller decides whether to open that report or deliberately keep both.
+
+    WHY 409 rather than silently updating the existing report: clients auto-save
+    from the first keystroke, so a report opened by accident on a day that has
+    already been written would otherwise replace a finished report with an empty
+    one. Losing a day's work is far worse than a duplicate, and neither outcome
+    should be chosen on the user's behalf without asking.
+
+    Pass "allow_duplicate": true to create a second report for a day that
+    already has one (Save As, or the user answering the warning).
     """
     report_dict = await request.json()
     allow_duplicate = bool(report_dict.pop("allow_duplicate", False))
 
     now = datetime.utcnow().isoformat()
-    reused = False
 
     if not report_dict.get("id"):
         general = report_dict.get("general") or {}
-        existing = (
-            None if allow_duplicate
-            else find_report_by_date(
-                general.get("report_date", ""),
-                general.get("project_name", ""),
-            )
-        )
-        if existing:
-            # Adopt the existing report for this day rather than duplicating it
-            report_dict["id"] = existing["id"]
-            report_dict["created_at"] = existing["created_at"] or now
-            reused = True
-            logger.info(
-                f"Report for {general.get('report_date', '')} already exists "
-                f"({existing['id']}) — updating it instead of creating a duplicate"
-            )
-        else:
-            report_dict["id"] = str(uuid.uuid4())
-            report_dict["created_at"] = now
+        report_date = general.get("report_date", "")
+        project_name = general.get("project_name", "")
+
+        if not allow_duplicate:
+            existing = find_report_by_date(report_date, project_name)
+            if existing:
+                logger.info(
+                    f"Refusing to create a second report for {report_date!r} "
+                    f"(project {project_name!r}) — {existing['id']} already exists"
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "report_exists_for_date",
+                        "existing_id": existing["id"],
+                        "report_date": report_date,
+                        "project_name": project_name,
+                        "message": "A report already exists for this date.",
+                    },
+                )
+
+        report_dict["id"] = str(uuid.uuid4())
+        report_dict["created_at"] = now
     else:
         report_dict.setdefault("created_at", now)
 
     report_dict["updated_at"] = now
 
     file_path = save_report(report_dict)
-    logger.info(f"{'Updated' if reused else 'Created'} report {report_dict['id']} → {file_path}")
+    logger.info(f"Created report {report_dict['id']} → {file_path}")
 
-    return {
-        "id": report_dict["id"],
-        "file_path": file_path,
-        "reused_existing": reused,
-        "message": "Report updated" if reused else "Report created",
-    }
+    return {"id": report_dict["id"], "file_path": file_path, "message": "Report created"}
 
 
 @router.get("/reports")

@@ -4,8 +4,9 @@
  * Manages report state and persistence:
  * - Auto-save from the first edit — a new report is written as soon as it has
  *   anything in it, then re-saved on every change (debounced by 2s)
- * - One report per day: the server folds a create onto the existing report for
- *   the same date + project, so an early save can't leave duplicate copies
+ * - A create NEVER overwrites: if a report already exists for the same date and
+ *   project the server returns 409 having written nothing, auto-save stops, and
+ *   the user is asked whether to open that report or keep both
  * - Single-flight: only one save request runs at a time; edits made during a
  *   save are flushed immediately after it returns
  * - Navigation guard: warns if unsaved changes
@@ -59,6 +60,18 @@ interface ReportStoreState {
   /** Edits landed while a save was in flight — save again once it finishes. */
   _pendingSave: boolean;
 
+  /**
+   * Set when the server refused to create this report because one already
+   * exists for its date and project. Auto-save stops while this is set and the
+   * report stays in memory, untouched and unsaved, until the user answers the
+   * warning. Nothing on the server has been modified.
+   */
+  duplicateConflict: {
+    existingId: string;
+    reportDate: string;
+    projectName: string;
+  } | null;
+
   /** Revision counter — incremented when AI applies changes. Used as React key to force remount. */
   revision: number;
 
@@ -89,6 +102,10 @@ interface ReportStoreState {
   saveReport: (options?: { allowDuplicate?: boolean }) => Promise<string | null>;
   /** Save As (creates a copy with a new ID) */
   saveReportAs: () => Promise<string | null>;
+  /** Answer the duplicate warning by opening the report that already exists. */
+  openConflictingReport: () => Promise<void>;
+  /** Answer the duplicate warning by deliberately keeping both reports. */
+  keepBothReports: () => Promise<string | null>;
   /** Mark report as submitted */
   submitReport: () => Promise<void>;
   /** Clear the current report from memory */
@@ -111,6 +128,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
   loadError: null,
   _autoSaveTimer: null,
   _pendingSave: false,
+  duplicateConflict: null,
   revision: 0,
 
   // --- Actions ---
@@ -142,6 +160,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       loadError: null,
       _autoSaveTimer: null,
       _pendingSave: false,
+      duplicateConflict: null,
     });
 
     console.debug('[ReportStore] New blank report created — auto-saves on first edit');
@@ -160,6 +179,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       };
       set({
         report: cleanedData,
+        duplicateConflict: null,
         isSaved: true,      // It exists on disk
         isDirty: false,      // Just loaded — no changes yet
         isLoading: false,
@@ -356,11 +376,53 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
 
       return savedId;
     } catch (err) {
+      // 409 = a report already exists for this date + project. The server wrote
+      // nothing. Stop auto-saving and hold everything in memory until the user
+      // answers the warning — never overwrite, never discard.
+      const httpErr = err as {
+        response?: { status?: number; data?: { detail?: Record<string, string> } };
+      };
+      if (httpErr?.response?.status === 409) {
+        const detail = httpErr.response?.data?.detail || {};
+        console.warn('[ReportStore] A report already exists for this date — asking the user');
+        set({
+          isSaving: false,
+          _pendingSave: false,
+          isDirty: true,
+          duplicateConflict: {
+            existingId: detail.existing_id || '',
+            reportDate: detail.report_date || '',
+            projectName: detail.project_name || '',
+          },
+        });
+        return null;
+      }
+
       const msg = err instanceof Error ? err.message : 'Failed to save report';
       set({ isSaving: false, saveError: msg, _pendingSave: false });
       console.error('[ReportStore] Save failed:', err);
       return null;
     }
+  },
+
+  openConflictingReport: async () => {
+    const conflict = get().duplicateConflict;
+    if (!conflict?.existingId) return;
+
+    // Discards only what was entered into this unsaved report — the report on
+    // the server is opened untouched.
+    const timer = get()._autoSaveTimer;
+    if (timer) clearTimeout(timer);
+
+    set({ duplicateConflict: null, _autoSaveTimer: null, _pendingSave: false });
+    await get().loadReport(conflict.existingId);
+    console.debug('[ReportStore] Opened the existing report', conflict.existingId);
+  },
+
+  keepBothReports: async () => {
+    if (!get().duplicateConflict) return null;
+    set({ duplicateConflict: null });
+    return get().saveReport({ allowDuplicate: true });
   },
 
   saveReportAs: async () => {
@@ -437,6 +499,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       saveError: null,
       _autoSaveTimer: null,
       _pendingSave: false,
+      duplicateConflict: null,
     });
 
     console.debug('[ReportStore] Report closed');
@@ -458,7 +521,11 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
 
   // --- Internal: Auto-save scheduler ---
   _scheduleAutoSave: () => {
-    const { _autoSaveTimer } = get();
+    const { _autoSaveTimer, duplicateConflict } = get();
+
+    // A report already exists for this date and the user has not said what to
+    // do about it. Retrying would just 409 forever — wait for their answer.
+    if (duplicateConflict) return;
 
     // Auto-save from the very first edit — a new report is written as soon as
     // there is anything in it, so nothing is lost by closing the tab. The
