@@ -37,11 +37,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
 # Data directory for schedules
-SCHEDULES_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "data",
-    "schedules",
-)
+from app.core.paths import SCHEDULES_DIR  # noqa: E402
+
 os.makedirs(SCHEDULES_DIR, exist_ok=True)
 
 
@@ -483,35 +480,6 @@ async def get_active_schedule():
 
 
 # ============================================
-# ENDPOINT: Get Schedule by ID
-# ============================================
-
-@router.get("/{schedule_id}")
-async def get_schedule_by_id(schedule_id: str):
-    """Return a specific schedule's full parsed data by ID."""
-    schedule_dir = os.path.join(SCHEDULES_DIR, schedule_id)
-    if not os.path.isdir(schedule_dir):
-        raise HTTPException(status_code=404, detail=f"Schedule '{schedule_id}' not found.")
-
-    json_path = os.path.join(schedule_dir, f"{schedule_id}.json")
-    if not os.path.exists(json_path):
-        raise HTTPException(status_code=404, detail=f"Schedule data missing for '{schedule_id}'.")
-
-    try:
-        with open(json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        # Retroactively infer schedule_type for legacy data
-        data['schedule_type'] = _infer_schedule_type(data)
-
-        logger.info(f"[schedule/{schedule_id}] Returning schedule (type={data['schedule_type']})")
-        return data
-    except (json.JSONDecodeError, OSError) as e:
-        logger.exception(f"[schedule/{schedule_id}] Failed to read: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to read schedule: {e}")
-
-
-# ============================================
 # ENDPOINT: List All Schedules
 # ============================================
 
@@ -557,6 +525,35 @@ async def list_schedules():
     except Exception as exc:
         logger.exception(f"[schedule/list] Error: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================
+# ENDPOINT: Get Schedule by ID
+# ============================================
+
+@router.get("/{schedule_id}")
+async def get_schedule_by_id(schedule_id: str):
+    """Return a specific schedule's full parsed data by ID."""
+    schedule_dir = os.path.join(SCHEDULES_DIR, schedule_id)
+    if not os.path.isdir(schedule_dir):
+        raise HTTPException(status_code=404, detail=f"Schedule '{schedule_id}' not found.")
+
+    json_path = os.path.join(schedule_dir, f"{schedule_id}.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail=f"Schedule data missing for '{schedule_id}'.")
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Retroactively infer schedule_type for legacy data
+        data['schedule_type'] = _infer_schedule_type(data)
+
+        logger.info(f"[schedule/{schedule_id}] Returning schedule (type={data['schedule_type']})")
+        return data
+    except (json.JSONDecodeError, OSError) as e:
+        logger.exception(f"[schedule/{schedule_id}] Failed to read: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read schedule: {e}")
 
 
 # ============================================

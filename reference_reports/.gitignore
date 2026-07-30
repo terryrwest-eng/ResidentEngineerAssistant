@@ -1,0 +1,8 @@
+# Source documents live here on purpose.
+# The root .gitignore excludes *.pdf globally; re-allow it inside this folder
+# so subcontractor emails and scanned timesheets actually get committed.
+!*.pdf
+!*.docx
+!*.jpg
+!*.jpeg
+!*.png

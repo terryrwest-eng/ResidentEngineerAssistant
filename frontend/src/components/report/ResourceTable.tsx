@@ -19,6 +19,7 @@ import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT, DEFAULT_COMPANY } from '@/lib/cons
 import { settingsApi } from '@/lib/settingsApi';
 import { ResourceDropdown } from '@/components/report/ResourceDropdown';
 import { Plus, Trash2, Copy, Lock, Unlock } from 'lucide-react';
+import { useConfirm } from '@/components/ui/ConfirmProvider';
 
 type ResourceType = 'manpower' | 'equipment';
 
@@ -60,6 +61,7 @@ export function ResourceTable({
   defaultCompany,
 }: ResourceTableProps) {
   const isManpower = type === 'manpower';
+  const confirm = useConfirm();
 
   // Load custom resource codes from settings and merge with hardcoded defaults
   const [customCodes, setCustomCodes] = useState<string[]>([]);
@@ -190,9 +192,16 @@ export function ResourceTable({
     }
   }
 
-  function deleteSelected() {
+  async function deleteSelected() {
     if (selectedRows.size === 0) return;
-    if (!window.confirm(`Delete ${selectedRows.size} selected rows?`)) return;
+    const count = selectedRows.size;
+    const ok = await confirm({
+      title: `Delete ${count} selected row${count === 1 ? '' : 's'}?`,
+      message: 'The rows are removed from this activity. Nothing is saved until you save the report.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     onChange(rows.filter((_, i) => !selectedRows.has(i)));
     setSelectedRows(new Set());
   }
@@ -248,8 +257,8 @@ export function ResourceTable({
 
   return (
     <div style={{ marginBottom: 'var(--space-sm)' }}>
-      <div style={{ overflowX: 'auto' }}>
-        <table className="table" style={{ minWidth: '1050px', fontSize: '0.75rem' }}>
+      <div className="resource-table-scroll" style={{ overflowX: 'auto' }}>
+        <table className="table resource-table" style={{ minWidth: '1050px', fontSize: '0.75rem' }}>
           <thead>
             <tr>
               <th style={{ ...headerStyle, width: '30px', textAlign: 'center' }}>
@@ -270,7 +279,9 @@ export function ResourceTable({
               <th style={{ ...headerStyle, width: '10%', textAlign: 'center' }}>3rd / EW / Con</th>
               {!isManpower && <th style={{ ...headerStyle, width: '4%', textAlign: 'center' }}>Ren</th>}
               <th style={{ ...headerStyle, width: '4%', textAlign: 'center' }}></th>
-              <th style={{ ...headerStyle, width: '3%', textAlign: 'center' }}>🔒</th>
+              <th style={{ ...headerStyle, width: '3%', textAlign: 'center' }} title="Locked">
+                <Lock size={11} style={{ display: 'inline', verticalAlign: 'middle' }} />
+              </th>
               <th
                 style={{ ...headerStyle, width: '4%', textAlign: 'center' }}
                 title="Checked rows get the end time when you use Set End Time on this activity"
@@ -434,7 +445,7 @@ function ResourceRow({
       </td>
 
       {/* Resource (PMWeb dropdown — portal-based, never clipped by table overflow) */}
-      <td style={cellStyle}>
+      <td data-label="Resource" style={cellStyle}>
         <ResourceDropdown
           value={currentValue}
           onChange={(val) => onUpdate(isManpower ? 'trade' : 'name', val)}
@@ -445,7 +456,7 @@ function ResourceRow({
       </td>
 
       {/* Name (manpower) / Equipment Number (equipment) */}
-      <td style={cellStyle}>
+      <td data-label={isManpower ? "Name" : "Equip #"} style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -457,7 +468,7 @@ function ResourceRow({
       </td>
 
       {/* Qty */}
-      <td style={cellStyle}>
+      <td data-label="Qty" style={cellStyle}>
         <input
           className="input"
           type="number"
@@ -471,7 +482,7 @@ function ResourceRow({
       </td>
 
       {/* Hours */}
-      <td style={cellStyle}>
+      <td data-label="Hours" style={cellStyle}>
         <input
           className="input"
           type="number"
@@ -486,7 +497,7 @@ function ResourceRow({
       </td>
 
       {/* Start Time */}
-      <td style={cellStyle}>
+      <td data-label="Start" style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -498,7 +509,7 @@ function ResourceRow({
       </td>
 
       {/* Stop Time */}
-      <td style={cellStyle}>
+      <td data-label="Stop" style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -510,7 +521,7 @@ function ResourceRow({
       </td>
 
       {/* Company (combobox — text input + datalist for suggestions) */}
-      <td style={cellStyle}>
+      <td data-label="Company" style={cellStyle}>
         <input
           className="input"
           style={inputStyle}
@@ -527,7 +538,7 @@ function ResourceRow({
       </td>
 
       {/* 3rd Party / EW / Consultant checkboxes */}
-      <td style={{ ...cellStyle, textAlign: 'center' }}>
+      <td data-label="Flags" style={{ ...cellStyle, textAlign: 'center' }}>
         <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
           <label style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
             <span style={checkLabelStyle}>3rd</span>
@@ -589,7 +600,7 @@ function ResourceRow({
           style={{ width: '24px', height: '24px', padding: '2px' }}
         >
           {row.locked
-            ? <Lock size={12} style={{ color: 'var(--color-warning, #f59e0b)' }} />
+            ? <Lock size={12} style={{ color: 'var(--color-warning)' }} />
             : <Unlock size={12} style={{ color: 'var(--color-text-placeholder)' }} />}
         </button>
       </td>

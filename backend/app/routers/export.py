@@ -16,7 +16,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from datetime import datetime
-from app.services.word import generate_word_document, aggregate_for_pmweb, generate_notes_html
+from app.services.word import (
+    generate_word_document,
+    aggregate_for_pmweb,
+    generate_notes_html,
+    build_report_filename,
+)
 from app.services.reports import get_report
 
 logger = logging.getLogger(__name__)
@@ -39,9 +44,17 @@ async def download_word_report(report_id: str):
         logger.exception(f"Word generation failed for report {report_id}")
         raise HTTPException(status_code=500, detail="Failed to generate Word document")
 
-    # Build filename:  DailyReport_2026-05-06.docx
-    report_date = report.get("general", {}).get("report_date", "unknown")
-    filename = f"DailyReport_{report_date}.docx"
+    # Filename follows the project's existing filing convention:
+    #   Morena Conveyance North - Daily-TW-07-28-2026.docx
+    # The backend owns this so the browser download, the desktop auto-save and
+    # the batch export cannot drift apart.
+    from app.routers.settings import _load as _load_settings
+
+    try:
+        prefix = (_load_settings() or {}).get("word_filename_prefix", "")
+    except Exception:
+        prefix = ""
+    filename = build_report_filename(report, prefix)
 
     return StreamingResponse(
         doc_bytes,

@@ -6,7 +6,7 @@
  * Strategy:
  * 1. Exact substring match → 100% confidence → auto-apply
  * 2. Prefer GENERIC titles (e.g., "LE-109- Excavator") over specific
- *    manufacturer+model titles (e.g., "LE-05- CAT 330 Excavator")
+ * manufacturer+model titles (e.g., "LE-05- CAT 330 Excavator")
  * 3. If ambiguous → return top candidates for user selection
  *
  * Ported from V1 resourceMatcher.js — logic is identical.
@@ -301,7 +301,7 @@ export class ResourceMatcher {
    * Process a full array of equipment entries from AI, matching descriptions to LE tags.
    *
    * AI returns: { name: TAG/ID (e.g. "F450"), description: TYPE (e.g. "Crew Truck") }
-   * We need:    Col 1 (name) = LE tag,  Col 2 (description) = equipment number
+   * We need: Col 1 (name) = LE tag, Col 2 (description) = equipment number
    */
   processEquipment(equipmentRows: Record<string, unknown>[]): { rows: Record<string, unknown>[]; needsReview: boolean } {
     if (!equipmentRows || !Array.isArray(equipmentRows)) {

@@ -10,11 +10,13 @@
 
 /* --- Design Tokens --- */
 :root {
-  /* Primary palette */
-  --color-bg: #FAFBFC;
+  /* Primary palette
+     Warm paper rather than another cool grey. #F5F2EC against a #FFFFFF card
+     is a real edge you can see; #FAFBFC against #FFFFFF was not. */
+  --color-bg: #F5F2EC;
   --color-surface: #FFFFFF;
-  --color-surface-hover: #F4F6F8;
-  --color-surface-active: #EEF1F5;
+  --color-surface-hover: #EDE9E1;
+  --color-surface-active: #E4DFD5;
 
   /* Text hierarchy */
   --color-text-primary: #1A1D23;
@@ -23,9 +25,9 @@
   --color-text-placeholder: #B0B7C3;
 
   /* Accent — muted professional blue */
-  --color-accent: #3B6FE0;
-  --color-accent-hover: #2F5BC4;
-  --color-accent-light: #EBF1FD;
+  --color-accent: #C2610A;
+  --color-accent-hover: #A34F06;
+  --color-accent-light: #FDF3E3;
   --color-accent-text: #FFFFFF;
 
   /* Status colors */
@@ -38,18 +40,31 @@
   --color-info: #0065FF;
   --color-info-light: #E6F0FF;
 
+  /* Status borders — the outline on a tinted status box. Previously hardcoded
+     (#FECACA, #BBF7D0, #FCD34D, #BFDBFE) in a dozen components, which is what
+     made those boxes glow white in dark mode. */
+  --color-success-border: #BBF7D0;
+  --color-warning-border: #FCD34D;
+  --color-danger-border: #FECACA;
+  --color-info-border: #BFDBFE;
+
+  /* AI features are purple throughout the app — a distinct meaning, not the
+     primary accent, so it gets its own token rather than collapsing into it. */
+  --color-ai: #7C3AED;
+  --color-ai-light: #F3EEFF;
+
   /* Borders & shadows */
   --color-border: #E1E4E8;
   --color-border-hover: #CCD0D5;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-focus: 0 0 0 3px rgba(59, 111, 224, 0.2);
+  --shadow-focus: 0 0 0 3px rgba(194, 97, 10, 0.22);
 
   /* Radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
   --radius-full: 9999px;
 
   /* Spacing scale */
@@ -63,6 +78,571 @@
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  color-scheme: light;
+}
+
+/* --- Dark theme ---
+   Applied by setting data-theme="dark" on <html> (see lib/theme.ts). The switch
+   offers Light / Dark / Auto and defaults to Light — the app never forces a
+   theme on anyone.
+
+   WHY THIS EXISTS: shifts run to 8:30 PM and later. A #FAFBFC screen held up in
+   the dark is glare, and glare on a phone in the field is a real problem, not a
+   preference. Every token below maps one-for-one to the light set above, so
+   components that use the vars need no changes.
+
+   Not pure black: #12151A keeps a little warmth and stops the OLED smearing you
+   get from #000 when scrolling. Text tops out at #E6E9EF rather than #FFF
+   because full-white on near-black haloes. */
+:root[data-theme="dark"] {
+  --color-bg: #0E1013;
+  --color-surface: #16191E;
+  --color-surface-hover: #1E2229;
+  --color-surface-active: #272C34;
+
+  --color-text-primary: #E6E9EF;
+  --color-text-secondary: #A8B0BD;
+  --color-text-tertiary: #78808E;
+  --color-text-placeholder: #5A6270;
+
+  /* Accent lifts on dark — #3B6FE0 fails contrast against #12151A */
+  --color-accent: #F59E0B;
+  --color-accent-hover: #FBBF24;
+  --color-accent-light: #2A1E0C;
+  --color-accent-text: #FFFFFF;
+
+  --color-success: #3DCA8E;
+  --color-success-light: #12301F;
+  --color-warning: #F5A524;
+  --color-warning-light: #33260A;
+  --color-danger: #F87462;
+  --color-danger-light: #3A1512;
+  --color-info: #4C9AFF;
+  --color-info-light: #10233F;
+
+  --color-success-border: #1E5C42;
+  --color-warning-border: #6B4E10;
+  --color-danger-border: #6E2A25;
+  --color-info-border: #22436E;
+
+  --color-ai: #A78BFA;
+  --color-ai-light: #241C3D;
+
+  --color-border: #2A303A;
+  --color-border-hover: #3A424F;
+
+  /* Shadows carry less on a dark surface — lean on borders instead */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.55);
+  --shadow-focus: 0 0 0 3px rgba(245, 158, 11, 0.3);
+
+  color-scheme: dark;
+}
+
+/* ============================================
+   RESOURCE TABLE — phone layout
+   ============================================
+   On desktop this is a 12-column grid, which is right: entering a crew is
+   comparing rows against each other. On a phone that same grid is a 1050px
+   horizontal scroll with 24px tap targets, which is unusable with gloves on.
+
+   Under 640px each row becomes a card, and each field is labelled from its
+   data-label attribute (set in ResourceTable.tsx — inert on desktop). No JS,
+   no second component to keep in sync with the first.
+   ============================================ */
+@media (max-width: 640px) {
+  .resource-table-scroll {
+    overflow-x: visible !important;
+  }
+
+  .resource-table {
+    min-width: 0 !important;
+    display: block;
+    font-size: 0.875rem !important;
+  }
+
+  /* The header row has nothing to label once rows are stacked. */
+  .resource-table thead {
+    display: none;
+  }
+
+  .resource-table tbody,
+  .resource-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .resource-table tr {
+    position: relative;
+    margin-bottom: var(--space-sm);
+    padding: var(--space-sm);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .resource-table td {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    width: 100% !important;
+    padding: 3px 0 !important;
+    border: none !important;
+  }
+
+  .resource-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 84px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--color-text-tertiary);
+  }
+
+  /* Gloved hands. 44px is the accessibility floor, not a preference. */
+  .resource-table td .input,
+  .resource-table td input[type="text"],
+  .resource-table td input[type="number"],
+  .resource-table td select,
+  .resource-table td button {
+    min-height: 44px;
+    font-size: 1rem !important;   /* under 16px iOS zooms the whole page on focus */
+    max-width: none !important;
+  }
+
+  .resource-table td input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* The select checkbox has no label — float it to the card corner. */
+  .resource-table td:first-child {
+    position: absolute;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    width: auto !important;
+    padding: 0 !important;
+  }
+}
+
+/* ============================================================================
+   DOCUMENT LAYER — the redesign
+   ============================================================================
+   THE POSITION: this app produces a formal document that goes to the City. It
+   should feel like a precise technical instrument, not a consumer app. Calm,
+   dense, authoritative — closer to a well-set engineering drawing than to a
+   dashboard.
+
+   What the old look got wrong, and what changes:
+
+   1. EVERY BOX LOOKED THE SAME. Report details, schedule and activities all had
+      identical borders, radius and near-white fill, so nothing led and the eye
+      had no entry point. Here, chrome is removed almost entirely: sections are
+      separated by space and a hairline, not by nested containers. Weight comes
+      from typography, not from outlines.
+
+   2. ONE TYPOGRAPHIC VOICE. Everything was 13-15px Inter, which makes hierarchy
+      impossible to express. There is now a real scale, and — the key move — a
+      micro-label style: 11px, uppercase, wide tracking, muted. That single
+      style is what makes a dense form read as a spec sheet instead of a
+      web form.
+
+   3. INPUTS AS A GRID OF BOXES. Fourteen outlined rectangles in a column reads
+      as effort. Fields here sit on a tinted ground with a bottom rule and take
+      a visible border only on focus, so a dense form is quiet until you touch
+      it.
+
+   4. THE CONTENT HAD THE LEAST PRESENCE. Activities are the report, and they
+      were three thin strips at the bottom under a page of form chrome. They now
+      carry a number, a real heading, and their location as a subtitle.
+
+   Everything below is token-driven, so it themes light and dark for free.
+   ============================================================================ */
+
+:root {
+  /* ---- Type scale ----
+     The previous pass ran 11px to 24px — a 2x range — and everything on the
+     page lived inside it, so nothing could lead. The references Terry gave run
+     3.5x (Webflow: 56px headline against 16px body). This is 4x. */
+  --text-hero: 2.75rem;      /* 44px — the project name. It is the document. */
+  --text-figure: 2rem;       /* 32px — the numbers that matter, tabular */
+  --text-display: 1.375rem;
+  --text-heading: 1.0625rem;
+  --text-body: 0.9375rem;
+  --text-small: 0.8125rem;
+  --text-micro: 0.6875rem;   /* uppercase labels */
+
+  --tracking-micro: 0.075em;
+  --tracking-tight: -0.02em;
+  --tracking-hero: -0.03em;
+
+  /* ---- Ink ----
+     A committed near-black, so there is a real top end to the value range.
+     The old palette's darkest text was #1A1D23 on #FAFBFC — technically high
+     contrast, but every SURFACE sat within 5% of every other, so the page read
+     as one flat grey field. */
+  --ink: #12161C;
+  --ink-soft: #1C2229;
+  --on-ink: #F2F0EC;
+  --on-ink-dim: #9AA3AE;
+}
+
+/* ---- Amber, at size ----
+   The domain colour. Every construction reference converges on it, and unlike
+   the old blue it is used as FILL — blocks, bars, large numerals — not as 1px
+   borders and 14px icons. */
+:root {
+  --amber: #C2610A;
+  --amber-bright: #F59E0B;
+  --amber-wash: #FDF3E3;
+}
+
+:root[data-theme="dark"] {
+  --amber: #F59E0B;
+  --amber-bright: #FBBF24;
+  --amber-wash: #2A1E0C;
+}
+
+/* --- Page shell --------------------------------------------------------- */
+
+.doc {
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+/* --- Masthead ------------------------------------------------------------
+   An ink-dark block at the top of a paper page. This is the single biggest
+   change: it gives the page a focal point and puts the full value range on
+   screen at once. The previous version had a 24px title on white with nothing
+   for the eye to land on.
+
+   Dark in BOTH themes on purpose — in light mode it provides the contrast, in
+   dark mode it reads as the elevated surface. */
+
+.doc-masthead {
+  position: relative;
+  padding: var(--space-xl);
+  margin-bottom: var(--space-xl);
+  background: var(--ink);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+/* Amber down the left edge — the project's colour at the scale of the whole
+   block, rather than as a 14px icon. */
+.doc-masthead::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--amber-bright);
+}
+
+.doc-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.doc-title {
+  margin: 0;
+  font-size: var(--text-hero);
+  font-weight: 600;
+  letter-spacing: var(--tracking-hero);
+  line-height: 1.05;
+  color: var(--on-ink);
+}
+
+.doc-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  font-size: var(--text-small);
+  color: var(--on-ink-dim);
+}
+
+/* --- Figures -------------------------------------------------------------
+   The report is measured in crews, hours and equipment, and every one of those
+   numbers used to be 15px grey text inside a form field. They are the content;
+   they should look like it. Tabular so the columns align. */
+
+.doc-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xl);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-lg);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.doc-figure { display: flex; flex-direction: column; gap: 3px; }
+
+.doc-figure-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-figure);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: var(--tracking-tight);
+  color: var(--on-ink);
+}
+
+.doc-figure-value.is-accent { color: var(--amber-bright); }
+
+.doc-figure-label {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+  color: var(--on-ink-dim);
+}
+
+/* Buttons sitting on ink need their own treatment — the app's ghost button is
+   invisible on a dark ground. */
+.doc-masthead .btn-ghost,
+.doc-masthead .btn-secondary {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--on-ink);
+}
+
+.doc-masthead .btn-ghost:hover,
+.doc-masthead .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+.doc-masthead .btn-primary {
+  background: var(--amber-bright);
+  border-color: var(--amber-bright);
+  color: #1A1206;
+  font-weight: 600;
+}
+
+.doc-masthead .btn-primary:hover {
+  background: #FFB020;
+  border-color: #FFB020;
+}
+
+.doc-masthead .doc-status-ok    { background: rgba(61, 202, 142, 0.14); color: #58D9A3; }
+.doc-masthead .doc-status-warn  { background: rgba(245, 165, 36, 0.16);  color: var(--amber-bright); }
+.doc-masthead .doc-status-err   { background: rgba(248, 116, 98, 0.16);  color: #F87462; }
+.doc-masthead .doc-status-muted { background: rgba(255, 255, 255, 0.08); color: var(--on-ink-dim); }
+
+.doc-meta-sep {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--color-border-hover);
+}
+
+/* Status pill — quiet, but unmistakable when it needs to be */
+.doc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+}
+
+.doc-status-ok    { background: var(--color-success-light); color: var(--color-success); }
+.doc-status-warn  { background: var(--color-warning-light);  color: var(--color-warning); }
+.doc-status-err   { background: var(--color-danger-light);   color: var(--color-danger); }
+.doc-status-muted { background: var(--color-surface-hover);  color: var(--color-text-tertiary); }
+
+/* --- Sections ----------------------------------------------------------- */
+/* No card, no border, no shadow. A label, a rule, and room. */
+
+.doc-section {
+  margin-bottom: var(--space-2xl);
+}
+
+.doc-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.doc-section-label {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+/* The hairline that runs out from the label to the edge — the detail that
+   makes a section read as part of a document rather than a widget. */
+.doc-section-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+/* --- Fields ------------------------------------------------------------- */
+
+.doc-grid {
+  display: grid;
+  gap: var(--space-md) var(--space-lg);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.doc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.doc-field-label {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-micro);
+  color: var(--color-text-tertiary);
+}
+
+.doc-input {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover);
+  border: 1px solid transparent;
+  border-bottom-color: var(--color-border);
+  border-radius: var(--radius-sm);
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.doc-input::placeholder { color: var(--color-text-placeholder); }
+
+.doc-input:hover:not(:focus) {
+  background: var(--color-surface-active);
+}
+
+.doc-input:focus {
+  outline: none;
+  background: var(--color-surface);
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-focus);
+}
+
+textarea.doc-input {
+  min-height: 84px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* --- Activities --------------------------------------------------------- */
+/* The content of the report. Given the presence it was missing. */
+
+.doc-activity {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  margin-bottom: var(--space-sm);
+  overflow: hidden;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.doc-activity:hover { border-color: var(--color-border-hover); }
+
+.doc-activity[data-open="true"] {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
+}
+
+.doc-activity-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+  padding: var(--space-md);
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+
+/* Numbered like a clause in a document */
+.doc-activity-index {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  font-weight: 500;
+}
+
+.doc-activity[data-open="true"] .doc-activity-index {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.doc-activity-title {
+  display: block;
+  font-size: var(--text-heading);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-activity-sub {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  letter-spacing: 0.01em;
+  color: var(--color-text-tertiary);
+}
+
+/* Counts, set in mono so the columns line up down the list */
+.doc-tally {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--text-small);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.doc-tally b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 640px) {
+  .doc-header { gap: var(--space-md); }
+  .doc-title { font-size: 1.25rem; }
+  .doc-section { margin-bottom: var(--space-xl); }
+  .doc-input { min-height: 44px; font-size: 1rem; }
+  .doc-activity-head { padding: var(--space-sm) var(--space-md); }
 }
 
 /* --- Base Reset --- */
@@ -616,6 +1196,135 @@ p {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ============================================
+   SHEET — the one overlay pattern
+   ============================================
+   Bottom sheet on a phone, centred card on a desktop. Eleven overlays had
+   drifted into eleven different looks; this is the shape they all collapse to.
+
+   Keeps the existing rule: NO click-outside-to-close. A stray tap must never
+   discard half-entered field data.
+   ============================================ */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-md);
+  animation: sheet-fade 0.15s ease-out;
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 640px;
+  max-height: min(88vh, 900px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: sheet-in 0.18s ease-out;
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.sheet-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-subtitle {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg);
+}
+
+.sheet-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+  /* Home-indicator clearance on iOS */
+  padding-bottom: max(var(--space-md), env(safe-area-inset-bottom));
+}
+
+@keyframes sheet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Phone: dock to the bottom edge, full width, thumb-reachable actions. */
+@media (max-width: 640px) {
+  .sheet-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .sheet {
+    max-width: none;
+    max-height: 92vh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    animation: sheet-up 0.22s ease-out;
+  }
+
+  .sheet-footer {
+    /* Stack actions so each one is a full-width target */
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .sheet-footer .btn {
+    min-height: 44px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  @keyframes sheet-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+}
+
+/* Someone who asked the OS to stop animating things means it. */
+@media (prefers-reduced-motion: reduce) {
+  .sheet-overlay,
+  .sheet,
+  .toast {
+    animation: none !important;
   }
 }
 

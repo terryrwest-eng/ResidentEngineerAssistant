@@ -3,7 +3,7 @@
  *
  * Project header section of a daily report.
  * Fields: project name, number, location, inspector, RE,
- *         date, times, weather, notes.
+ * date, times, weather, notes.
  *
  * Weather auto-fill: fetches current weather from Open-Meteo API
  * using GPS geolocation or user-specified ZIP code.
@@ -12,10 +12,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { SKY_CONDITIONS } from '@/lib/constants';
+import { SkyIcon } from '@/lib/skyIcons';
 import { weatherApi } from '@/lib/api';
 import type { WeatherData } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
-import { Cloud, Thermometer, Wind, MapPin, Loader2 } from 'lucide-react';
+import { Thermometer, Wind, MapPin, Loader2 } from 'lucide-react';
+import { Sheet } from '@/components/ui/Sheet';
 
 export function GeneralInfoForm() {
   const { report, updateGeneral } = useReportStore();
@@ -27,12 +29,21 @@ export function GeneralInfoForm() {
 
   // Project list from settings for autocomplete suggestions
   const [projectSuggestions, setProjectSuggestions] = useState<string[]>([]);
+  // Saved ZIP — lets weather resolve without asking when GPS is unavailable
+  // (which is most of the time on a desktop browser).
+  const [defaultZip, setDefaultZip] = useState('');
+  const [askingZip, setAskingZip] = useState(false);
+  const [zipDraft, setZipDraft] = useState('');
 
   useEffect(() => {
     settingsApi.get().then((s) => {
       if (s.projects?.length) {
         setProjectSuggestions(s.projects);
         console.debug('[GeneralInfoForm] Loaded project suggestions:', s.projects.length);
+      }
+      if (s.default_zip_code) {
+        setDefaultZip(s.default_zip_code);
+        console.debug('[GeneralInfoForm] Default ZIP loaded:', s.default_zip_code);
       }
     }).catch((err) => {
       console.warn('[GeneralInfoForm] Failed to load project suggestions:', err);
@@ -155,15 +166,20 @@ export function GeneralInfoForm() {
       console.warn('[Weather] GPS failed, trying ZIP fallback:', geoErr);
     }
 
-    // Fallback: prompt for ZIP code
+    // Fallback: the ZIP saved in Settings. Only ask if there isn't one — being
+    // prompted for the same ZIP on every report is the actual complaint here.
     try {
-      const zip = prompt('Enter ZIP code for weather lookup:');
-      if (!zip || !zip.trim()) {
-        setWeatherError('No ZIP entered');
+      const zip = defaultZip;
+
+      if (!zip) {
+        // No saved ZIP — ask in-app rather than with a browser prompt, and
+        // remember the answer so this is the only time.
+        setAskingZip(true);
+        setIsLoadingWeather(false);
         return;
       }
 
-      const data = await weatherApi.fetchByZip(zip.trim(), gen.report_date || undefined);
+      const data = await weatherApi.fetchByZip(zip, gen.report_date || undefined);
       if (data.status === 'success') {
         applyWeather(data);
       } else {
@@ -177,18 +193,88 @@ export function GeneralInfoForm() {
     }
   }
 
+  /** Look up weather with a ZIP the user just typed, and remember it. */
+  async function submitZip() {
+    const zip = zipDraft.trim();
+    if (!zip) return;
+
+    setAskingZip(false);
+    setIsLoadingWeather(true);
+    setWeatherError('');
+
+    // Save first so the next report never asks. Best-effort — a failed save
+    // must not cost the weather that was just requested.
+    try {
+      const current = await settingsApi.get();
+      await settingsApi.update({ ...current, default_zip_code: zip });
+      setDefaultZip(zip);
+    } catch (saveErr) {
+      console.warn('[Weather] Could not save default ZIP:', saveErr);
+    }
+
+    try {
+      const data = await weatherApi.fetchByZip(zip, gen.report_date || undefined);
+      if (data.status === 'success') {
+        applyWeather(data);
+      } else {
+        setWeatherError('Weather unavailable for that ZIP');
+      }
+    } catch (err) {
+      console.error('[Weather] Fetch error:', err);
+      setWeatherError('Failed to fetch weather');
+    } finally {
+      setIsLoadingWeather(false);
+    }
+  }
+
   return (
-    <div className="card">
-      <div className="card-header">
-        <h3 style={{ margin: 0 }}>Report Details</h3>
+    <div>
+      <Sheet
+        open={askingZip}
+        onClose={() => setAskingZip(false)}
+        title="Which ZIP code?"
+        subtitle="Saved to Settings — you'll only be asked once."
+        icon={<MapPin size={18} />}
+        closeOnEscape
+        maxWidth={420}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setAskingZip(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={submitZip} disabled={!zipDraft.trim()}>
+              Get weather
+            </button>
+          </>
+        }
+      >
+        <label className="doc-field-label">Project ZIP code</label>
+        <input
+          className="doc-input"
+          value={zipDraft}
+          onChange={(e) => setZipDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') submitZip(); }}
+          placeholder="e.g. 92122"
+          inputMode="numeric"
+          maxLength={10}
+        />
+        <p style={{ marginTop: 'var(--space-sm)', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
+          Used whenever GPS isn't available, and by the Backfill wizard for
+          historical weather on past dates.
+        </p>
+      </Sheet>
+
+      <div className="doc-section-head">
+        <span className="doc-section-label">Report Details</span>
+        <span className="doc-section-rule" aria-hidden />
       </div>
-      <div className="card-body">
+      <div>
         {/* Row 1: Project info */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
           <div>
-            <label className="label">Project Name</label>
+            <label className="doc-field-label">Project Name</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.project_name}
               onChange={handleInputChange('project_name')}
@@ -209,9 +295,9 @@ export function GeneralInfoForm() {
             )}
           </div>
           <div>
-            <label className="label">Project Number</label>
+            <label className="doc-field-label">Project Number</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.project_number}
               onChange={handleInputChange('project_number')}
@@ -227,9 +313,9 @@ export function GeneralInfoForm() {
         {/* Row 2: Location + Inspector */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
           <div>
-            <label className="label">Project Location</label>
+            <label className="doc-field-label">Project Location</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.project_location}
               onChange={handleInputChange('project_location')}
@@ -242,9 +328,9 @@ export function GeneralInfoForm() {
             />
           </div>
           <div>
-            <label className="label">Inspector Name</label>
+            <label className="doc-field-label">Inspector Name</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.inspector_name}
               onChange={handleInputChange('inspector_name')}
@@ -261,9 +347,9 @@ export function GeneralInfoForm() {
         {/* Row 3: RE + Date */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)', marginBottom: 'var(--space-md)' }}>
           <div>
-            <label className="label">Resident Engineer</label>
+            <label className="doc-field-label">Resident Engineer</label>
             <input
-              className="input"
+              className="doc-input"
               type="text"
               defaultValue={gen.resident_engineer}
               onChange={handleInputChange('resident_engineer')}
@@ -276,9 +362,9 @@ export function GeneralInfoForm() {
             />
           </div>
           <div>
-            <label className="label">Report Date</label>
+            <label className="doc-field-label">Report Date</label>
             <input
-              className="input"
+              className="doc-input"
               type="date"
               value={gen.report_date}
               onChange={(e) => handleChange('report_date', e.target.value)}
@@ -286,18 +372,18 @@ export function GeneralInfoForm() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
             <div>
-              <label className="label">Start Time</label>
+              <label className="doc-field-label">Start Time</label>
               <input
-                className="input"
+                className="doc-input"
                 type="time"
                 value={gen.start_time}
                 onChange={(e) => handleChange('start_time', e.target.value)}
               />
             </div>
             <div>
-              <label className="label">End Time</label>
+              <label className="doc-field-label">End Time</label>
               <input
-                className="input"
+                className="doc-input"
                 type="time"
                 value={gen.end_time}
                 onChange={(e) => handleChange('end_time', e.target.value)}
@@ -306,23 +392,18 @@ export function GeneralInfoForm() {
           </div>
         </div>
 
-        {/* Weather Section */}
-        <div style={{
-          background: 'var(--color-bg)',
-          borderRadius: 'var(--radius-md)',
-          padding: 'var(--space-md)',
-          marginBottom: 'var(--space-md)',
-        }}>
+        {/* Weather — a section of the document, not a grey box nested inside a
+            white card. That container-in-a-container was the loudest thing on
+            the old page and it was the least important content on it. */}
+        <div style={{ marginTop: 'var(--space-xl)', marginBottom: 'var(--space-md)' }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            gap: 'var(--space-sm)',
             marginBottom: 'var(--space-md)',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-              <Cloud size={18} style={{ color: 'var(--color-accent)' }} />
-              <span className="font-medium" style={{ fontSize: '0.875rem' }}>Weather</span>
-            </div>
+            <span className="doc-section-label">Weather</span>
+            <span className="doc-section-rule" aria-hidden />
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-xs)' }}>
               {weatherError && (
                 <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)' }}>
@@ -381,7 +462,7 @@ export function GeneralInfoForm() {
                     transition: 'all 0.12s ease',
                   }}
                 >
-                  <span>{sky.emoji}</span>
+                  <SkyIcon id={sky.id} />
                   <span>{sky.label}</span>
                 </button>
               );
@@ -391,13 +472,13 @@ export function GeneralInfoForm() {
           {/* Temp + wind */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-md)' }}>
             <div>
-              <label className="label">
+              <label className="doc-field-label">
                 <Thermometer size={12} style={{ display: 'inline', marginRight: '4px' }} />
                 High (°F)
               </label>
               <input
                 key={`temp_high_${weatherRevision}`}
-                className="input"
+                className="doc-input"
                 type="text"
                 inputMode="numeric"
                 defaultValue={gen.temperature_high}
@@ -409,13 +490,13 @@ export function GeneralInfoForm() {
               />
             </div>
             <div>
-              <label className="label">
+              <label className="doc-field-label">
                 <Thermometer size={12} style={{ display: 'inline', marginRight: '4px' }} />
                 Low (°F)
               </label>
               <input
                 key={`temp_low_${weatherRevision}`}
-                className="input"
+                className="doc-input"
                 type="text"
                 inputMode="numeric"
                 defaultValue={gen.temperature_low}
@@ -427,13 +508,13 @@ export function GeneralInfoForm() {
               />
             </div>
             <div>
-              <label className="label">
+              <label className="doc-field-label">
                 <Wind size={12} style={{ display: 'inline', marginRight: '4px' }} />
                 Wind
               </label>
               <input
                 key={`wind_${weatherRevision}`}
-                className="input"
+                className="doc-input"
                 type="text"
                 defaultValue={gen.wind_info}
                 onChange={handleInputChange('wind_info')}
@@ -449,7 +530,7 @@ export function GeneralInfoForm() {
 
         {/* General Notes */}
         <div>
-          <label className="label">General Notes</label>
+          <label className="doc-field-label">General Notes</label>
           <textarea
             className="textarea"
             defaultValue={gen.notes}

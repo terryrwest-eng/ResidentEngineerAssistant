@@ -129,7 +129,7 @@ async function fetchData() {
 
         // 2. STRICT MODE: Only proceed if Combined View is open
         if (!reportId) {
-            alert('No active report found!\n\nPlease open "Display Combined" in the Report App first.');
+            alert('No report selected.\n\nPick one from the Report list at the top of this popup.');
             fetchBtn.textContent = '📥 Fetch Data from App';
             fetchBtn.disabled = false;
             return;
@@ -327,7 +327,7 @@ async function fetchActivities() {
         }
 
         if (!reportId) {
-            alert('No active report found!\n\nPlease open "Display Combined" in the Report App first.');
+            alert('No report selected.\n\nPick one from the Report list at the top of this popup.');
             fetchBtn.textContent = '📥 Fetch Activities';
             fetchBtn.disabled = false;
             return;
@@ -503,7 +503,7 @@ async function fetchFullData() {
     }
 
     if (!reportId) {
-        alert('No active report found!\n\nPlease open "Display Combined" in the Report App first.');
+        alert('No report selected.\n\nPick one from the Report list at the top of this popup.');
         return null;
     }
 
@@ -642,6 +642,237 @@ async function checkMonday() {
     }
 }
 
+// ============================================
+// REPORT PICKER
+// ============================================
+// WHY: the extension used to depend on a single "active report" pointer that
+// the web app set on the server. In production the API runs two uvicorn
+// workers, each holding its own copy of that pointer in memory, so a read had
+// roughly a 50% chance of returning a stale report from the other worker —
+// which is why PMWeb was being filled from the wrong day. Picking the report
+// here is explicit, and it also saves navigating back into the app to switch
+// days.
+
+let pickerReports = [];
+
+function fmtPickerDate(iso) {
+    if (!iso) return 'No date';
+    const d = new Date(`${iso}T12:00:00`);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-US', {
+        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    });
+}
+
+function fmtShift(report) {
+    const a = report.start_time || '';
+    const b = report.end_time || '';
+    if (!a && !b) return '';
+    return `${a}${a && b ? '–' : ''}${b}`;
+}
+
+function renderActiveReport(report) {
+    const dateEl = document.getElementById('activeReportDate');
+    const actsEl = document.getElementById('activeReportActs');
+    if (!dateEl || !actsEl) return;
+
+    if (!report) {
+        dateEl.textContent = 'No report selected';
+        actsEl.textContent = 'Pick one below';
+        return;
+    }
+    const shift = fmtShift(report);
+    dateEl.textContent = fmtPickerDate(report.report_date) + (shift ? `  ·  ${shift}` : '');
+    actsEl.textContent = report.activities && report.activities.length
+        ? report.activities.join(' • ')
+        : 'No activities on this report';
+}
+
+async function selectReport(reportId) {
+    const report = pickerReports.find(r => r.id === reportId);
+    try {
+        await fetch(`${API_BASE}/api/extension/context`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ report_id: reportId }),
+        });
+        chrome.storage.local.set({ selectedReportId: reportId });
+        renderActiveReport(report);
+        renderReportList();
+        console.log('[picker] Selected report', reportId);
+    } catch (e) {
+        console.error('[picker] Could not select report', e);
+    }
+}
+
+function renderReportList() {
+    const list = document.getElementById('reportList');
+    if (!list) return;
+
+    if (!pickerReports.length) {
+        list.innerHTML = '<div style="padding:12px; text-align:center; font-size:12px; color:rgba(255,255,255,0.5);">No reports found</div>';
+        return;
+    }
+
+    chrome.storage.local.get(['selectedReportId'], (stored) => {
+        const selectedId = stored.selectedReportId;
+        list.innerHTML = '';
+
+        pickerReports.forEach((r) => {
+            const isSel = r.id === selectedId;
+            const row = document.createElement('div');
+            row.style.cssText = `
+                padding: 8px 10px;
+                border-bottom: 1px solid rgba(255,255,255,0.07);
+                cursor: pointer;
+                background: ${isSel ? 'rgba(167,139,250,0.22)' : 'transparent'};
+                border-left: 3px solid ${isSel ? '#a78bfa' : 'transparent'};
+            `;
+            row.addEventListener('mouseenter', () => {
+                if (!isSel) row.style.background = 'rgba(255,255,255,0.06)';
+            });
+            row.addEventListener('mouseleave', () => {
+                if (!isSel) row.style.background = 'transparent';
+            });
+            row.addEventListener('click', () => selectReport(r.id));
+
+            const shift = fmtShift(r);
+            const acts = (r.activities || []).join(' • ') || 'No activities';
+            const draft = r.status === 'draft'
+                ? ' <span style="font-size:9px; text-transform:uppercase; letter-spacing:0.06em; color:#ffc107;">draft</span>'
+                : '';
+
+            row.innerHTML = `
+                <div style="display:flex; align-items:baseline; gap:6px;">
+                    <span style="font-size:12px; font-weight:700; color:#fff;">${fmtPickerDate(r.report_date)}</span>
+                    ${shift ? `<span style="font-size:10px; color:rgba(255,255,255,0.55);">${shift}</span>` : ''}
+                    ${draft}
+                </div>
+                <div style="font-size:10.5px; color:rgba(255,255,255,0.6); margin-top:2px; line-height:1.35;">${acts}</div>
+            `;
+            list.appendChild(row);
+        });
+    });
+}
+
+async function loadReportPicker() {
+    const list = document.getElementById('reportList');
+    if (!API_BASE) {
+        if (list) list.innerHTML = '<div style="padding:12px; text-align:center; font-size:12px; color:rgba(255,255,255,0.5);">Not connected to the app</div>';
+        return;
+    }
+    try {
+        const resp = await fetch(`${API_BASE}/api/extension/reports?limit=30`);
+        const data = await resp.json();
+        pickerReports = data.reports || [];
+
+        // Show whichever report is currently active, so the popup opens
+        // reflecting reality rather than a guess.
+        let activeId = null;
+        try {
+            const ctx = await fetch(`${API_BASE}/api/extension/context`);
+            activeId = (await ctx.json()).report_id || null;
+        } catch (e) { /* non-fatal */ }
+
+        if (activeId) chrome.storage.local.set({ selectedReportId: activeId });
+        renderActiveReport(pickerReports.find(r => r.id === activeId) || null);
+        renderReportList();
+    } catch (e) {
+        console.error('[picker] Load failed', e);
+        if (list) list.innerHTML = '<div style="padding:12px; text-align:center; font-size:12px; color:#ff6b6b;">Could not load reports</div>';
+    }
+}
+
+// ============================================
+// COPY REPORT FOR PASTING
+// ============================================
+// Copies the report body — everything the Word export contains EXCEPT the
+// consolidated resource table at the end. That is exactly what
+// /api/export/{id}/notes-html already produces ("Same content as Word doc
+// Page 1 — NO tables, NO consolidated resources"), so there is no second
+// formatter to keep in step with the Word one.
+//
+// Written to the clipboard as BOTH text/html and text/plain: pasting into a
+// rich editor (PMWeb Notes, Word, Outlook) keeps the bold labels and bullets,
+// and pasting into a plain text field still gives readable text rather than
+// raw markup.
+
+function htmlToPlainText(html) {
+    const el = document.createElement('div');
+    el.innerHTML = html
+        .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+        .replace(/<br\s*\/?>/gi, '\n');
+    const text = el.textContent || '';
+    return text
+        .split('\n')
+        .map(line => line.trim())
+        .filter((line, i, arr) => line || (arr[i - 1] || '').trim())  // collapse blank runs
+        .join('\n')
+        .trim();
+}
+
+function showCopyMsg(text, isError) {
+    const el = document.getElementById('copyReportMsg');
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.color = isError ? '#ff8f8f' : '#7ee2a8';
+    el.textContent = text;
+    setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+async function copyReportForPasting() {
+    const btn = document.getElementById('copyReportBtn');
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Copying…'; }
+
+    try {
+        const reportId = await getActiveReportId();
+        if (!reportId) return;   // getActiveReportId already told the user
+
+        const resp = await fetch(`${API_BASE}/api/export/${reportId}/notes-html`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const { html } = await resp.json();
+        if (!html) throw new Error('The report came back empty');
+
+        const plain = htmlToPlainText(html);
+
+        // Rich + plain flavours. Falls back to plain text where ClipboardItem
+        // is unavailable, so the button still does something useful.
+        if (window.ClipboardItem && navigator.clipboard?.write) {
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': new Blob([html], { type: 'text/html' }),
+                    'text/plain': new Blob([plain], { type: 'text/plain' }),
+                }),
+            ]);
+        } else {
+            await navigator.clipboard.writeText(plain);
+        }
+
+        const lines = plain.split('\n').filter(Boolean).length;
+        showCopyMsg(`Copied — ${lines} lines. Paste anywhere.`, false);
+        console.log('[copy] Report copied,', plain.length, 'chars');
+    } catch (e) {
+        console.error('[copy] Failed', e);
+        showCopyMsg(`Copy failed: ${e.message}`, true);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = original || '📋 Copy Report for Pasting'; }
+    }
+}
+
+/** The selected report, or null after telling the user why not. */
+async function getActiveReportId() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/extension/context`);
+        const { report_id } = await resp.json();
+        if (report_id) return report_id;
+    } catch (e) {
+        console.warn('[copy] Context lookup failed', e);
+    }
+    showCopyMsg('No report selected — pick one from the list above.', true);
+    return null;
+}
+
 // Initialize on popup open
 document.addEventListener('DOMContentLoaded', () => {
     checkConnection().then(connected => {
@@ -649,7 +880,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const autoBtn = document.getElementById('autoFillBtn');
             if (autoBtn) autoBtn.disabled = false;
         }
+        // Needs API_BASE, which checkConnection resolves.
+        loadReportPicker();
     });
+    const refreshBtn = document.getElementById('refreshReportsBtn');
+    if (refreshBtn) refreshBtn.addEventListener('click', loadReportPicker);
+    const copyBtn = document.getElementById('copyReportBtn');
+    if (copyBtn) copyBtn.addEventListener('click', copyReportForPasting);
     initRecordNumber();
     checkMonday();
     const autoFillBtn = document.getElementById('autoFillBtn');

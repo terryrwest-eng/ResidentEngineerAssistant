@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dispatches", tags=["dispatches"])
 
 # ── Storage path ──────────────────────────────────────────────────────────────
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DISPATCHES_DIR = os.path.join(_BASE_DIR, "data", "dispatches")
+from app.core.paths import DISPATCHES_DIR, SETTINGS_FILE  # noqa: E402
+
 os.makedirs(DISPATCHES_DIR, exist_ok=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -45,7 +45,7 @@ FILENAME_DATE_PATTERN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{2})')
 DATE_FORMAT = "%Y-%m-%d"
 TWO_DIGIT_YEAR_BASE = 2000
 # Settings file path — read dispatch_folder_path from here
-_SETTINGS_PATH = os.path.join(_BASE_DIR, "data", "settings.json")
+_SETTINGS_PATH = SETTINGS_FILE
 
 
 def _get_dispatch_folder_path() -> str | None:

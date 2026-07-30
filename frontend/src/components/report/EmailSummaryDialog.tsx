@@ -5,9 +5,9 @@
  * The output is paragraph-form text ready to paste into an email.
  *
  * Features:
- *   - One-click generation from all activities
- *   - Copy to clipboard
- *   - Regenerate if not satisfied
+ * - One-click generation from all activities
+ * - Copy to clipboard
+ * - Regenerate if not satisfied
  */
 
 import { useState } from 'react';

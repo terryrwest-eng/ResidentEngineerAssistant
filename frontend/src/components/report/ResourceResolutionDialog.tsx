@@ -12,7 +12,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT } from '@/lib/constants';
 import { settingsApi } from '@/lib/settingsApi';
 import { saveResourceAliases } from '@/lib/resourceMatcher';
-import { Search, Check, X, AlertCircle, ChevronDown } from 'lucide-react';
+import { Search, Check, X, AlertCircle, ChevronDown, Truck, HardHat } from 'lucide-react';
 
 // ============================================
 // Types
@@ -291,7 +291,7 @@ function ResolutionItem({
     return pool.filter(r => r.toLowerCase().includes(lower));
   }, [pool, searchFilter]);
 
-  const confidenceColor = item.confidence >= 0.7 ? 'var(--color-warning)' : 'var(--color-danger, #dc2626)';
+  const confidenceColor = item.confidence >= 0.7 ? 'var(--color-warning)' : 'var(--color-danger)';
   const confidenceLabel = item.confidence >= 0.7
     ? `${Math.round(item.confidence * 100)}% match`
     : 'No match found';
@@ -323,13 +323,18 @@ function ResolutionItem({
 
       {/* Type badge */}
       <span style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '5px',
         fontSize: '0.625rem',
         textTransform: 'uppercase',
         letterSpacing: '0.5px',
         color: 'var(--color-text-tertiary)',
         fontWeight: 600,
       }}>
-        {item.type === 'equipment' ? '🚜 Equipment' : '👷 Manpower'}
+        {item.type === 'equipment'
+          ? <><Truck size={12} /> Equipment</>
+          : <><HardHat size={12} /> Manpower</>}
       </span>
 
       {/* Dropdown selector */}

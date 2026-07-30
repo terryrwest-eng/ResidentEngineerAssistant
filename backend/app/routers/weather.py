@@ -63,6 +63,95 @@ def _degrees_to_compass(deg: float) -> str:
     return directions[idx]
 
 
+def _first(seq, default=None):
+    """Safely read element 0 of a possibly-missing/empty list."""
+    if isinstance(seq, list) and seq:
+        return seq[0]
+    return default
+
+
+def _at(seq, idx, default=None):
+    """Safely read element `idx` of a possibly-missing/short list."""
+    if isinstance(seq, list) and -len(seq) <= idx < len(seq):
+        return seq[idx]
+    return default
+
+
+async def _fetch_past_via_forecast(
+    client: httpx.AsyncClient,
+    lat: float, lon: float, date: str,
+    location_label: str = "",
+) -> Optional[dict]:
+    """
+    Fallback for recent past dates.
+
+    The Open-Meteo Archive API lags several days behind real time, so for a
+    date in that gap it returns empty daily arrays. The forecast API can serve
+    those days via `past_days`, so we re-query it and pick the matching date.
+
+    Returns None if the date is outside the forecast API's past window or the
+    response has no usable row.
+    """
+    try:
+        requested = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+    days_back = (date_type.today() - requested).days
+    if days_back < 0 or days_back > 92:  # forecast API caps past_days at 92
+        return None
+
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": (
+            "temperature_2m_max,temperature_2m_min,"
+            "weather_code,wind_speed_10m_max,"
+            "wind_direction_10m_dominant"
+        ),
+        "temperature_unit": "fahrenheit",
+        "wind_speed_unit": "mph",
+        "timezone": "auto",
+        "past_days": min(days_back + 1, 92),
+        "forecast_days": 1,
+    }
+    response = await client.get(OPEN_METEO_URL, params=params)
+    response.raise_for_status()
+    daily = response.json().get("daily", {})
+
+    times = daily.get("time")
+    if not isinstance(times, list) or date not in times:
+        return None
+    idx = times.index(date)
+
+    weather_code = _at(daily.get("weather_code"), idx, 0) or 0
+    weather_info = _interpret_weather_code(weather_code)
+    temp_max = _at(daily.get("temperature_2m_max"), idx)
+    temp_min = _at(daily.get("temperature_2m_min"), idx)
+    wind_speed = round(_at(daily.get("wind_speed_10m_max"), idx, 0) or 0)
+    wind_dir = _degrees_to_compass(
+        _at(daily.get("wind_direction_10m_dominant"), idx, 0) or 0
+    )
+
+    logger.info(f"[weather] Archive gap for {date} — served from forecast past_days")
+    return {
+        "status": "success",
+        "temperature_high": str(round(temp_max)) if temp_max is not None else "",
+        "temperature_low": str(round(temp_min)) if temp_min is not None else "",
+        "humidity": None,
+        "wind_speed": wind_speed,
+        "wind_direction": wind_dir,
+        "wind_info": f"{wind_speed} mph {wind_dir}" if wind_speed else "",
+        "condition": weather_info["condition"],
+        "emoji": weather_info["emoji"],
+        "sky_condition_id": weather_info["id"],
+        "weather_code": weather_code,
+        "location": location_label or f"{lat:.4f}, {lon:.4f}",
+        "date": date,
+        "source": "forecast_past",
+    }
+
+
 async def _fetch_weather(
     lat: float, lon: float,
     location_label: str = "",
@@ -117,14 +206,32 @@ async def _fetch_weather(
             data = response.json()
             daily = data.get("daily", {})
 
-            weather_code = daily.get("weather_code", [0])[0]
+            temp_max = _first(daily.get("temperature_2m_max"))
+            temp_min = _first(daily.get("temperature_2m_min"))
+
+            # The archive lags several days behind real time. When the requested
+            # date falls in that gap the arrays come back empty — serve it from
+            # the forecast API's past_days window instead of returning zeros.
+            if temp_max is None and temp_min is None:
+                logger.warning(
+                    f"[weather] Archive returned no data for {date} — trying forecast fallback"
+                )
+                fallback = await _fetch_past_via_forecast(
+                    client, lat, lon, date, location_label
+                )
+                if fallback:
+                    return fallback
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No weather data available for {date}.",
+                )
+
+            weather_code = _first(daily.get("weather_code"), 0) or 0
             weather_info = _interpret_weather_code(weather_code)
 
-            temp_max = daily.get("temperature_2m_max", [0])[0]
-            temp_min = daily.get("temperature_2m_min", [0])[0]
-            wind_speed = round(daily.get("wind_speed_10m_max", [0])[0] or 0)
+            wind_speed = round(_first(daily.get("wind_speed_10m_max"), 0) or 0)
             wind_dir = _degrees_to_compass(
-                daily.get("wind_direction_10m_dominant", [0])[0] or 0
+                _first(daily.get("wind_direction_10m_dominant"), 0) or 0
             )
 
             return {
@@ -164,13 +271,13 @@ async def _fetch_weather(
             daily = data.get("daily", {})
 
             weather_code = current.get(
-                "weather_code", daily.get("weather_code", [0])[0])
+                "weather_code", _first(daily.get("weather_code"), 0)) or 0
             weather_info = _interpret_weather_code(weather_code)
 
-            temp_max = daily.get("temperature_2m_max", [0])[0]
-            temp_min = daily.get("temperature_2m_min", [0])[0]
-            wind_speed = round(current.get("wind_speed_10m", 0))
-            wind_dir = _degrees_to_compass(current.get("wind_direction_10m", 0))
+            temp_max = _first(daily.get("temperature_2m_max"))
+            temp_min = _first(daily.get("temperature_2m_min"))
+            wind_speed = round(current.get("wind_speed_10m", 0) or 0)
+            wind_dir = _degrees_to_compass(current.get("wind_direction_10m", 0) or 0)
 
             return {
                 "status": "success",

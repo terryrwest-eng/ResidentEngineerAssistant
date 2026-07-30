@@ -23,11 +23,13 @@ DATA SAFETY:
 """
 
 import os
+import re
 import sys
 import json
 import logging
 import webview
 import httpx
+from urllib.parse import unquote
 
 # --- Logging ---
 LOG_DIR = os.path.join(
@@ -83,6 +85,26 @@ class Api:
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
         logger.info(f"Config saved: {config}")
+
+    @staticmethod
+    def _filename_from_response(response, report_date: str) -> str:
+        """
+        Pull the filename out of Content-Disposition, falling back to the old
+        pattern if the header is missing or unreadable.
+
+        Keeping one source of truth for the name means the work-folder copy, the
+        browser download and the backfill export always agree.
+        """
+        disposition = response.headers.get("content-disposition", "")
+        match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', disposition, re.IGNORECASE)
+        if match:
+            name = unquote(match.group(1).strip())
+            # Never let a server value escape the work folder.
+            name = os.path.basename(name)
+            if name.lower().endswith(".docx"):
+                return name
+        logger.warning("No usable filename in Content-Disposition — using fallback")
+        return f"DailyReport_{report_date}.docx"
 
     def auto_save_word(self, report_id: str, report_date: str) -> dict:
         """
@@ -145,7 +167,14 @@ class Api:
             response.raise_for_status()
 
             # --- SAVE TO DISK ---
-            filename = f"DailyReport_{report_date}.docx"
+            # Take the filename from the server's Content-Disposition rather
+            # than building one here. The backend owns the naming convention
+            # ("Morena Conveyance North - Daily-TW-MM-DD-YYYY.docx", matching the
+            # existing reports in Daily Reports/), and it is configurable in
+            # Settings. Building it independently here is exactly how the
+            # work-folder copy ended up named differently from the browser
+            # download and the backfill export.
+            filename = self._filename_from_response(response, report_date)
             filepath = os.path.join(work_folder, filename)
 
             # Safety: if file already exists, add a counter suffix

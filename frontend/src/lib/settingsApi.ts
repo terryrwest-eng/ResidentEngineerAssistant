@@ -45,11 +45,15 @@ export interface AppSettings {
   default_project_location: string;
   default_inspector_name: string;
   default_company: string;
-  /** Fallback ZIP for weather when device location is unavailable */
+  /** Used for weather lookup when GPS is unavailable, and by the Backfill wizard. */
   default_zip_code: string;
   master_lists: MasterLists;
   custom_resource_codes: CustomResourceCodes;
   user_templates: UserTemplate[];
+  /** Backfill's own copies of the header defaults — see SettingsPage. */
+  project_number: string;
+  project_location: string;
+  word_filename_prefix: string;
   updated_at?: string;
 }
 

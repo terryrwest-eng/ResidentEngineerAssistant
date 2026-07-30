@@ -3,12 +3,12 @@
  *
  * Portal-based filterable dropdown for PMWeb resources.
  * Ported from V1 ResourceDropdown.jsx — same UX:
- *   - Button trigger showing selected value
- *   - Portal menu positioned via getBoundingClientRect (never clipped by overflow)
- *   - Type-to-filter search input
- *   - Custom value entry option
- *   - Clear (X) button
- *   - Repositions on scroll/resize
+ * - Button trigger showing selected value
+ * - Portal menu positioned via getBoundingClientRect (never clipped by overflow)
+ * - Type-to-filter search input
+ * - Custom value entry option
+ * - Clear (X) button
+ * - Repositions on scroll/resize
  *
  * WHY portal: The dropdown lives inside table cells with overflowX: auto.
  * Without portaling, the menu gets clipped and users can't see it.
@@ -221,7 +221,7 @@ export function ResourceDropdown({
                   border: 'none',
                   borderBottom: '1px solid var(--color-border)',
                   background: 'var(--color-accent-light)',
-                  color: 'var(--color-success, #22c55e)',
+                  color: 'var(--color-success)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
@@ -236,7 +236,7 @@ export function ResourceDropdown({
                     padding: '1px 5px',
                     borderRadius: '3px',
                     background: 'rgba(34,197,94,0.15)',
-                    color: 'var(--color-success, #22c55e)',
+                    color: 'var(--color-success)',
                   }}
                 >
                   +

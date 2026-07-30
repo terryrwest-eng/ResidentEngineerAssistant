@@ -346,13 +346,13 @@ export function ActivityUpdatePanel({ activity, onApply, onClose }: ActivityUpda
         <div style={{
           margin: '0 var(--space-md) var(--space-md)',
           padding: 'var(--space-sm) var(--space-md)',
-          background: '#FEF2F2',
-          border: '1px solid #FECACA',
+          background: 'var(--color-danger-light)',
+          border: '1px solid var(--color-danger-border)',
           borderRadius: 'var(--radius-sm)',
           display: 'flex',
           alignItems: 'center',
           gap: 'var(--space-sm)',
-          color: '#DC2626',
+          color: 'var(--color-danger)',
           fontSize: '0.8125rem',
         }}>
           <AlertCircle size={14} />

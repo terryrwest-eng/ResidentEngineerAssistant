@@ -47,7 +47,32 @@ interface BulkDictateResult {
   generalNotes: string;
 }
 
-type DictatePhase = 'idle' | 'recording' | 'review' | 'processing' | 'results';
+type DictatePhase = 'idle' | 'recording' | 'review' | 'transcribing' | 'transcript' | 'processing' | 'results';
+
+/**
+ * Preferred recording formats, best first.
+ * WHY: hardcoding 'audio/webm' threw on iOS Safari (which only does mp4/aac),
+ * and the bare catch reported it as "Microphone access denied" — sending the
+ * user to fix a permission that was never the problem.
+ */
+const MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+  'audio/ogg',
+];
+
+function pickMimeType(): string {
+  if (typeof MediaRecorder === 'undefined') return '';
+  return MIME_CANDIDATES.find((t) => {
+    try {
+      return MediaRecorder.isTypeSupported(t);
+    } catch {
+      return false;
+    }
+  }) ?? '';
+}
 
 export function BulkDictateButton() {
   const { report, addActivity, updateGeneral } = useReportStore();
@@ -60,6 +85,14 @@ export function BulkDictateButton() {
   const [added, setAdded] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
+  // Transcript confirmation step (between recording and building activities)
+  const [transcript, setTranscript] = useState('');
+  const [transcriptWarning, setTranscriptWarning] = useState<string | null>(null);
+  /** Live mic level 0..1 — proves the mic is actually picking up sound. */
+  const [micLevel, setMicLevel] = useState(0);
+  /** Peak level seen during the take; near-zero means a dead mic. */
+  const [peakLevel, setPeakLevel] = useState(0);
+
   // The recorded audio blob — persists until explicitly discarded
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -67,23 +100,100 @@ export function BulkDictateButton() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mimeTypeRef = useRef<string>('audio/webm');
+  const durationRef = useRef(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const peakRef = useRef(0);
+
+  /** Tear down the level meter's audio graph. */
+  const stopMeter = useCallback(() => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    setMicLevel(0);
+  }, []);
+
+  /** Drive the live level meter from the recording stream. */
+  const startMeter = useCallback((stream: MediaStream) => {
+    try {
+      const Ctx = window.AudioContext
+        ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      audioCtxRef.current = ctx;
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteTimeDomainData(buf);
+        // RMS around the 128 midpoint → rough loudness
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const v = (buf[i] - 128) / 128;
+          sum += v * v;
+        }
+        const level = Math.min(1, Math.sqrt(sum / buf.length) * 4);
+        setMicLevel(level);
+        if (level > peakRef.current) {
+          peakRef.current = level;
+          setPeakLevel(level);
+        }
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (e) {
+      console.warn('[BulkDictate] Level meter unavailable:', e);
+    }
+  }, []);
 
   // --- Recording ---
   const startRecording = useCallback(async () => {
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      chunksRef.current = [];
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setError('Microphone access denied. Please allow microphone access.');
+      return;
+    }
 
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    try {
+      chunksRef.current = [];
+      peakRef.current = 0;
+      setPeakLevel(0);
+
+      const mimeType = pickMimeType();
+      mimeTypeRef.current = mimeType || 'audio/webm';
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      console.debug('[BulkDictate] Recording with:', recorder.mimeType || '(browser default)');
+
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      // WHY: without this a mid-recording failure just produced a short blob
+      // that later transcribed to garbage, with no clue anything went wrong.
+      recorder.onerror = (e: Event) => {
+        console.error('[BulkDictate] MediaRecorder error:', e);
+        setError('Recording failed mid-take. The audio up to this point was kept — you can process or re-record.');
       };
 
       recorder.onstop = () => {
         if (timerRef.current) clearInterval(timerRef.current);
         stream.getTracks().forEach((t) => t.stop());
+        stopMeter();
 
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const type = recorder.mimeType || mimeTypeRef.current;
+        mimeTypeRef.current = type.split(';')[0];
+        const blob = new Blob(chunksRef.current, { type });
 
         if (blob.size < 1000) {
           setError('Recording too short. Please speak for at least a few seconds.');
@@ -96,37 +206,107 @@ export function BulkDictateButton() {
         const url = URL.createObjectURL(blob);
         setAudioUrl(url);
         setPhase('review');
+
+        const secs = durationRef.current;
+        const bytesPerSec = secs > 0 ? blob.size / secs : 0;
         console.debug('[BulkDictate] Recording saved:', {
           size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`,
-          duration: `${recordingDuration}s`,
+          duration: `${secs}s`,
+          bytesPerSec: Math.round(bytesPerSec),
+          peakLevel: peakRef.current.toFixed(3),
+          mimeType: type,
         });
+
+        // Warn about a silent take up front rather than after a wasted AI call.
+        if (peakRef.current < 0.02) {
+          setError(
+            'Almost no sound was detected during that recording — the mic may be muted or blocked. ' +
+            'You can still process it, but check the transcript carefully.',
+          );
+        }
       };
 
       mediaRecorderRef.current = recorder;
-      recorder.start(250);
+      recorder.start(250); // timeslice: accumulate chunks so a crash loses little
       setPhase('recording');
       setRecordingDuration(0);
+      durationRef.current = 0;
       setError(null);
       setResult(null);
+      setTranscript('');
+      setTranscriptWarning(null);
       setAdded(false);
+      startMeter(stream);
 
       timerRef.current = setInterval(() => {
-        setRecordingDuration((d) => d + 1);
+        durationRef.current += 1;
+        setRecordingDuration(durationRef.current);
       }, 1000);
-    } catch {
-      setError('Microphone access denied. Please allow microphone access.');
+    } catch (e) {
+      stream.getTracks().forEach((t) => t.stop());
+      stopMeter();
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Could not start recording on this device (${msg}).`);
+      console.error('[BulkDictate] start failed:', e);
     }
-  }, [recordingDuration]);
+  }, [startMeter, stopMeter]);
 
   const stopRecording = useCallback(() => {
     if (!mediaRecorderRef.current) return;
     mediaRecorderRef.current.stop();
   }, []);
 
-  // --- Process the saved recording ---
+  /**
+   * STEP 1 — transcribe only, then STOP and show the user what was heard.
+   *
+   * WHY THIS IS SPLIT: previously one call transcribed and built activities.
+   * When the audio was bad the parse step filled the JSON schema with
+   * plausible-sounding work that was never said, and the first sign of trouble
+   * was a finished report full of invented content. Now the transcript is the
+   * checkpoint — wrong audio looks obviously wrong before anything is built.
+   */
   const processRecording = useCallback(async () => {
     if (!audioBlob) {
       setError('No recording found. Please record again.');
+      return;
+    }
+
+    setPhase('transcribing');
+    setError(null);
+    setTranscriptWarning(null);
+
+    try {
+      const base64 = await blobToBase64(audioBlob);
+      const data = await scanApi.bulkTranscribe(
+        base64,
+        mimeTypeRef.current || 'audio/webm',
+        durationRef.current,
+      );
+
+      console.debug('[BulkDictate] Transcription:', data.status, `${data.transcription?.length || 0} chars`);
+
+      if (data.status === 'failed') {
+        setError(data.reason || "Couldn't transcribe that recording. Please try again.");
+        setPhase('review'); // recording is still in memory for a retry
+        return;
+      }
+
+      setTranscript(data.transcription || '');
+      setTranscriptWarning(data.status === 'suspect' ? (data.reason || null) : null);
+      setPhase('transcript');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Transcription failed';
+      setError(msg);
+      setPhase('review');
+      console.error('[BulkDictate] Transcribe error:', err);
+    }
+  }, [audioBlob]);
+
+  /** STEP 2 — build activities from the transcript the user confirmed/edited. */
+  const buildActivities = useCallback(async () => {
+    const text = transcript.trim();
+    if (!text) {
+      setError('The transcript is empty — nothing to build from.');
       return;
     }
 
@@ -134,40 +314,38 @@ export function BulkDictateButton() {
     setError(null);
 
     try {
-      const base64 = await blobToBase64(audioBlob);
-      const data = await scanApi.bulkDictate(base64, 'audio/webm');
-
-      console.debug('[BulkDictate] Raw API response:', JSON.stringify(data, null, 2));
-      console.debug('[BulkDictate] Activities array length:', (data.activities || []).length);
-
+      const data = await scanApi.bulkParse(text);
       const activities = mapActivities(data.activities || []);
 
       activities.forEach((act, i) => {
         console.debug(`[BulkDictate] Mapped Activity ${i}:`, {
           work_area: act.work_area,
           summary_length: act.summary?.length || 0,
-          summary_preview: act.summary?.substring(0, 100) || '(BLANK)',
           manpower_count: act.manpower?.length || 0,
           equipment_count: act.equipment?.length || 0,
         });
       });
 
+      if (activities.length === 0) {
+        setError('No activities could be built from that transcript. Edit the text above and try again.');
+        setPhase('transcript');
+        return;
+      }
+
       setResult({
         activities,
-        rawTranscription: data.raw_transcription || '',
+        rawTranscription: text,
         locations: data.locations || '',
         generalNotes: data.general_notes || '',
       });
       setPhase('results');
-      console.debug('[BulkDictate] Parsed', activities.length, 'activities');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Processing failed';
       setError(msg);
-      // Stay in review phase — recording is still available for retry
-      setPhase('review');
-      console.error('[BulkDictate] Error:', err);
+      setPhase('transcript'); // keep the transcript so nothing is lost
+      console.error('[BulkDictate] Parse error:', err);
     }
-  }, [audioBlob]);
+  }, [transcript]);
 
   function blobToBase64(blob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -374,8 +552,8 @@ export function BulkDictateButton() {
                 width: '88px',
                 height: '88px',
                 borderRadius: '50%',
-                border: `4px solid ${phase === 'recording' ? '#DC2626' : 'var(--color-accent)'}`,
-                background: phase === 'recording' ? '#FEF2F2' : 'var(--color-accent-light)',
+                border: `4px solid ${phase === 'recording' ? 'var(--color-danger)' : 'var(--color-accent)'}`,
+                background: phase === 'recording' ? 'var(--color-danger-light)' : 'var(--color-accent-light)',
                 cursor: 'pointer',
                 display: 'flex',
                 flexDirection: 'column',
@@ -388,20 +566,167 @@ export function BulkDictateButton() {
               }}
             >
               {phase === 'recording' ? (
-                <MicOff size={28} style={{ color: '#DC2626' }} />
+                <MicOff size={28} style={{ color: 'var(--color-danger)' }} />
               ) : (
                 <Mic size={28} style={{ color: 'var(--color-accent)' }} />
               )}
               {phase === 'recording' && (
-                <span style={{ fontSize: '0.6875rem', color: '#DC2626', fontWeight: 600 }}>
+                <span style={{ fontSize: '0.6875rem', color: 'var(--color-danger)', fontWeight: 600 }}>
                   {formatDuration(recordingDuration)}
                 </span>
               )}
             </button>
 
+            {/* Live mic level — a flat bar means the mic isn't picking you up,
+                which is visible NOW instead of after a wasted 5-minute take. */}
+            {phase === 'recording' && (
+              <div style={{ marginTop: 'var(--space-md)', maxWidth: '260px', marginInline: 'auto' }}>
+                <div style={{
+                  height: '8px',
+                  background: 'var(--color-surface-active)',
+                  borderRadius: 'var(--radius-full)',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.round(micLevel * 100)}%`,
+                    background: micLevel > 0.02 ? 'var(--color-success)' : 'var(--color-danger)',
+                    borderRadius: 'var(--radius-full)',
+                    transition: 'width 80ms linear',
+                  }} />
+                </div>
+                <p style={{
+                  marginTop: '6px',
+                  fontSize: '0.6875rem',
+                  color: peakLevel < 0.02 ? 'var(--color-danger)' : 'var(--color-text-tertiary)',
+                  fontWeight: peakLevel < 0.02 ? 600 : 400,
+                }}>
+                  {peakLevel < 0.02
+                    ? 'No sound detected — check your mic'
+                    : 'Mic is picking up sound'}
+                </p>
+              </div>
+            )}
+
             <p style={{ marginTop: 'var(--space-md)', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
               {phase === 'recording' ? 'Tap to stop' : 'Tap to start'}
             </p>
+          </div>
+        )}
+
+        {/* ── TRANSCRIBING PHASE ── */}
+        {phase === 'transcribing' && (
+          <div style={{ textAlign: 'center', padding: 'var(--space-xl) 0' }}>
+            <Loader2 size={32} className="animate-spin" style={{ color: 'var(--color-accent)', margin: '0 auto' }} />
+            <p style={{ marginTop: 'var(--space-md)', fontSize: '0.875rem', color: 'var(--color-text-secondary)' }}>
+              Transcribing your recording…
+            </p>
+            <p style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
+              You'll review the text before any activities are created.
+            </p>
+          </div>
+        )}
+
+        {/* ── TRANSCRIPT CONFIRMATION — the anti-fabrication checkpoint ──
+            Nothing is built until the user confirms this text is what they
+            actually said. Editable, so a misheard name is fixed once here
+            instead of in five table rows afterwards. */}
+        {phase === 'transcript' && (
+          <div style={{ padding: 'var(--space-md) 0' }}>
+            {transcriptWarning ? (
+              <div style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 'var(--space-sm)',
+                padding: 'var(--space-sm) var(--space-md)',
+                background: 'var(--color-warning-light)',
+                border: '1px solid var(--color-warning-border)',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: 'var(--space-md)',
+                color: 'var(--color-warning)',
+                fontSize: '0.8125rem',
+              }}>
+                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span>{transcriptWarning}</span>
+              </div>
+            ) : (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-sm)',
+                padding: 'var(--space-sm) var(--space-md)',
+                background: 'var(--color-success-light)',
+                border: '1px solid var(--color-success-border)',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: 'var(--space-md)',
+                color: 'var(--color-success)',
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+              }}>
+                <CheckCircle2 size={16} />
+                Here's what I heard — check it before I build the activities.
+              </div>
+            )}
+
+            <label style={{
+              display: 'block',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              color: 'var(--color-text-secondary)',
+              marginBottom: '6px',
+            }}>
+              Transcript ({transcript.length.toLocaleString()} characters) — edit anything that was misheard
+            </label>
+            <textarea
+              value={transcript}
+              onChange={(e) => setTranscript(e.target.value)}
+              rows={14}
+              style={{
+                width: '100%',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '0.8125rem',
+                lineHeight: 1.5,
+                padding: 'var(--space-sm)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--color-surface)',
+                color: 'var(--color-text-primary)',
+                resize: 'vertical',
+              }}
+            />
+
+            {audioUrl && (
+              <div style={{ marginTop: 'var(--space-sm)' }}>
+                <audio controls src={audioUrl} style={{ width: '100%', height: '36px' }} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginTop: 'var(--space-md)' }}>
+              <button
+                className="btn btn-primary"
+                onClick={buildActivities}
+                disabled={!transcript.trim()}
+                style={{ flex: '1 1 auto' }}
+              >
+                <CheckCircle2 size={16} />
+                Looks right — build activities
+              </button>
+              <button
+                className="btn btn-outline"
+                onClick={processRecording}
+                title="Run the transcription again on the same recording"
+              >
+                <RotateCcw size={16} />
+                Re-transcribe
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => { setTranscript(''); setTranscriptWarning(null); setPhase('review'); }}
+              >
+                <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+                Back
+              </button>
+            </div>
           </div>
         )}
 
@@ -413,11 +738,11 @@ export function BulkDictateButton() {
               alignItems: 'center',
               gap: 'var(--space-sm)',
               padding: 'var(--space-sm) var(--space-md)',
-              background: '#F0FDF4',
-              border: '1px solid #BBF7D0',
+              background: 'var(--color-success-light)',
+              border: '1px solid var(--color-success-border)',
               borderRadius: 'var(--radius-md)',
               marginBottom: 'var(--space-md)',
-              color: '#16A34A',
+              color: 'var(--color-success)',
               fontSize: '0.8125rem',
               fontWeight: 500,
             }}>
@@ -473,13 +798,13 @@ export function BulkDictateButton() {
           <div style={{ textAlign: 'center', padding: 'var(--space-xl) 0' }}>
             <Loader2 size={32} style={{ animation: 'spin 0.6s linear infinite', color: 'var(--color-accent)', marginBottom: 'var(--space-md)' }} />
             <p style={{ fontSize: '0.875rem', color: 'var(--color-text-secondary)', fontWeight: 500 }}>
-              Processing with AI...
+              Building activities...
             </p>
             <p style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: 'var(--space-xs)' }}>
-              Transcribing audio, then splitting into activities by location.
+              Splitting your confirmed transcript into activities by location.
             </p>
             <p style={{ fontSize: '0.6875rem', color: 'var(--color-text-tertiary)', marginTop: 'var(--space-sm)' }}>
-              Your recording is saved — if this times out, you can retry without re-recording.
+              Your recording and transcript are saved — if this times out, you can retry without re-recording.
             </p>
           </div>
         )}
@@ -489,16 +814,16 @@ export function BulkDictateButton() {
           <div style={{
             marginTop: 'var(--space-md)',
             padding: 'var(--space-sm) var(--space-md)',
-            background: '#FEF2F2',
-            border: '1px solid #FECACA',
+            background: 'var(--color-danger-light)',
+            border: '1px solid var(--color-danger-border)',
             borderRadius: 'var(--radius-md)',
             fontSize: '0.875rem',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: '#DC2626', marginBottom: 'var(--space-xs)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: 'var(--color-danger)', marginBottom: 'var(--space-xs)' }}>
               <AlertCircle size={16} />
-              <strong>Upload failed</strong>
+              <strong>{phase === 'recording' ? 'Recording problem' : "Couldn't process that recording"}</strong>
             </div>
-            <p style={{ color: '#991B1B', fontSize: '0.8125rem', margin: '0 0 var(--space-sm) 0' }}>
+            <p style={{ color: 'var(--color-danger)', fontSize: '0.8125rem', margin: '0 0 var(--space-sm) 0' }}>
               {error}
             </p>
             {audioBlob && phase === 'review' && (

@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.services.database import init_database
-from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches
+from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches, backfill
 
 # --- Logging ---
 logging.basicConfig(
@@ -22,18 +22,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("daily-reporter")
 
-# --- Data directories ---
-DATA_DIR = os.environ.get("DAILY_REPORTER_DATA_DIR")
-if not DATA_DIR:
-    DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-REPORTS_DIR = os.path.join(DATA_DIR, "reports")
-PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
-SPECS_DIR = os.path.join(DATA_DIR, "specs")
-SCHEDULES_DIR = os.path.join(DATA_DIR, "schedules")
-DISPATCHES_DIR = os.path.join(DATA_DIR, "dispatches")
+# --- Data directories (single source of truth: app.core.paths) ---
+from app.core.paths import (  # noqa: E402
+    DATA_DIR, REPORTS_DIR, PHOTOS_DIR, SPECS_DIR,
+    SCHEDULES_DIR, DISPATCHES_DIR, ensure_dirs,
+)
 
-for directory in [DATA_DIR, REPORTS_DIR, PHOTOS_DIR, SPECS_DIR, SCHEDULES_DIR, DISPATCHES_DIR]:
-    os.makedirs(directory, exist_ok=True)
+ensure_dirs()
 
 
 @asynccontextmanager
@@ -80,6 +75,7 @@ app.include_router(weather.router)
 app.include_router(pdf_search.router)
 app.include_router(schedule.router)
 app.include_router(dispatches.router)
+app.include_router(backfill.router)
 
 
 @app.get("/api/health")

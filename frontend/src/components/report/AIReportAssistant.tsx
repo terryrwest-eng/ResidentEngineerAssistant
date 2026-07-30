@@ -6,11 +6,11 @@
  * but scoped to just this one activity.
  *
  * CAN DO:
- *   - Add/modify/remove manpower and equipment
- *   - Change hours, start/stop times, quantities
- *   - Edit work area, stations, summary
- *   - AI Rewrite — polishes rough notes into RE-quality bullets
- *   - WWWW badges (Who/Where/When/What) — shows what's filled/missing
+ * - Add/modify/remove manpower and equipment
+ * - Change hours, start/stop times, quantities
+ * - Edit work area, stations, summary
+ * - AI Rewrite — polishes rough notes into RE-quality bullets
+ * - WWWW badges (Who/Where/When/What) — shows what's filled/missing
  *
  * Opens as an overlay from the ActivityEditor toolbar.
  */
@@ -233,7 +233,7 @@ export function AIReportAssistant({
     setMessages((prev) => [...prev, {
       id: generateId(),
       role: 'user',
-      content: '🎤 Voice message',
+      content: ' Voice message',
       isVoice: true,
     }]);
 
@@ -348,12 +348,12 @@ export function AIReportAssistant({
         setMessages((prev) => [...prev, {
           id: generateId(),
           role: 'assistant',
-          content: '✨ Summary polished and applied!',
+          content: ' Summary polished and applied!',
         }]);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Rewrite failed';
-      setMessages((prev) => [...prev, { id: generateId(), role: 'system', content: `❌ ${msg}` }]);
+      setMessages((prev) => [...prev, { id: generateId(), role: 'system', content: ` ${msg}` }]);
     } finally {
       setIsRewriting(false);
     }
@@ -368,7 +368,7 @@ export function AIReportAssistant({
     setMessages((prev) => [...prev, {
       id: generateId(),
       role: 'assistant',
-      content: '✅ Changes applied!',
+      content: ' Changes applied!',
     }]);
     console.debug('[AIReportAssistant] Applied changes');
   }
@@ -404,8 +404,8 @@ export function AIReportAssistant({
         display: 'flex', alignItems: 'center', gap: '4px',
         padding: '3px 8px', borderRadius: 'var(--radius-sm)',
         fontSize: '0.6875rem', fontWeight: 600,
-        background: filled ? '#DCFCE7' : '#FEF3C7',
-        color: filled ? '#15803D' : '#92400E',
+        background: filled ? 'var(--color-success-light)' : 'var(--color-warning-light)',
+        color: filled ? 'var(--color-success)' : 'var(--color-warning)',
       }}>
         {icon}
         {label}
@@ -436,7 +436,7 @@ export function AIReportAssistant({
             <span className="font-semibold" style={{ fontSize: '0.9375rem' }}>AI Assistant</span>
             <span style={{
               fontSize: '0.6875rem', marginLeft: '6px',
-              color: filledCount === 4 ? '#15803D' : 'var(--color-text-tertiary)',
+              color: filledCount === 4 ? 'var(--color-success)' : 'var(--color-text-tertiary)',
               fontWeight: 500,
             }}>
               {filledCount}/4
@@ -537,10 +537,10 @@ export function AIReportAssistant({
               background: msg.role === 'user'
                 ? (msg.isVoice ? 'var(--color-info)' : 'var(--color-accent)')
                 : msg.role === 'system'
-                  ? '#FEF2F2'
-                  : (msg.transcription ? 'var(--color-info-light, #e8f4fd)' : 'var(--color-bg)'),
+                  ? 'var(--color-danger-light)'
+                  : (msg.transcription ? 'var(--color-info-light)' : 'var(--color-bg)'),
               color: msg.role === 'user' ? '#fff'
-                : msg.role === 'system' ? '#DC2626'
+                : msg.role === 'system' ? 'var(--color-danger)'
                   : 'var(--color-text-primary)',
               border: msg.role !== 'user' ? '1px solid var(--color-border)' : 'none',
               whiteSpace: 'pre-wrap',
@@ -579,7 +579,7 @@ export function AIReportAssistant({
             marginTop: 'var(--space-xs)',
           }}>
             <h4 style={{ margin: '0 0 var(--space-xs) 0', color: 'var(--color-accent)', fontSize: '0.85rem' }}>
-              📋 Proposed Changes
+               Proposed Changes
             </h4>
             <p style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-sm)' }}>
               {pendingChanges.description}
@@ -616,10 +616,10 @@ export function AIReportAssistant({
           }}>
             <div style={{
               width: '8px', height: '8px', borderRadius: '50%',
-              backgroundColor: '#ef4444',
+              backgroundColor: 'var(--color-danger)',
               animation: 'pulse-dot 1.2s ease-in-out infinite',
             }} />
-            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#ef4444' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-danger)' }}>
               Recording {formatDuration(recordingDuration)}
             </span>
           </div>
@@ -635,9 +635,9 @@ export function AIReportAssistant({
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               width: '36px', height: '36px', borderRadius: '50%',
-              border: isRecording ? '2px solid #ef4444' : '1px solid var(--color-border)',
+              border: isRecording ? '2px solid var(--color-danger)' : '1px solid var(--color-border)',
               backgroundColor: isRecording ? 'rgba(239, 68, 68, 0.1)' : 'var(--color-bg)',
-              color: isRecording ? '#ef4444' : 'var(--color-text-tertiary)',
+              color: isRecording ? 'var(--color-danger)' : 'var(--color-text-tertiary)',
               cursor: (isLoading || !!pendingChanges) ? 'not-allowed' : 'pointer',
               opacity: (isLoading || !!pendingChanges) ? 0.5 : 1,
               transition: 'all 0.2s ease',

@@ -31,9 +31,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 # ── Storage path ──────────────────────────────────────────────────────────────
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-DATA_DIR = os.path.join(_BASE_DIR, "data")
-SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+from app.core.paths import DATA_DIR, SETTINGS_FILE  # noqa: E402
 
 # ── Built-in activity templates (not editable, always available) ───────────────
 BUILTIN_TEMPLATES: list[dict[str, str]] = [
@@ -82,11 +80,32 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "custom_resource_codes": {"labor": [], "equipment": []},
     "default_company": "",
     "default_zip_code": "",
+    # Quick Create / AutoCreateDialog reads these when seeding a new report.
     "default_project_number": "",
     "default_project_location": "",
     "default_inspector_name": "",
+    # Backfill reads these when generating makeup reports. Deliberately kept
+    # separate from the default_* keys above: the two features were built apart
+    # and each reads its own key, so collapsing them would break one of them.
+    "project_number": "",
+    "project_location": "",
+    # Saved Word files are named "<project name> - Daily-TW-MM-DD-YYYY.docx",
+    # matching the filing convention in Daily Reports/. The name comes from the
+    # report's own project name; this is only the fallback for a report that has
+    # none, so there is one place to change it — the project name itself.
+    "word_filename_prefix": "Morena Conveyance North",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
+    # Backfill scope rule — see routers/backfill.py.
+    # "All timesheets for a date, MINUS the 805 tunnel crew, = one report."
+    # The foreman list is configuration rather than a constant because that
+    # association ended: Rey Villa ran the tunnel crew through the makeup window
+    # (Oct 2025 – Jan 2026) and came off it before Jul 2026. Going forward the
+    # job-name keywords are what carry the rule.
+    "backfill": {
+        "tunnel_foremen": ["Rey Villa"],
+        "tunnel_job_keywords": ["805", "tunnel"],
+    },
     "updated_at": "",
 }
 
@@ -125,6 +144,15 @@ class SettingsPayload(BaseModel):
     master_lists: MasterLists = Field(default_factory=MasterLists)
     custom_resource_codes: CustomResourceCodes = Field(default_factory=CustomResourceCodes)
     user_templates: list[dict[str, Any]] = []
+    # Project defaults. These were stored in settings.json but missing from this
+    # payload, so the Settings page could never actually set them — which is why
+    # weather fell back to a browser prompt on every report, and why backfill
+    # skipped weather entirely.
+    default_zip_code: str = ""
+    default_company: str = ""
+    project_number: str = ""
+    project_location: str = ""
+    word_filename_prefix: str = "Morena Conveyance North"
 
 
 class SyncResourcesPayload(BaseModel):
@@ -229,6 +257,25 @@ def update_resource_aliases(payload: ResourceAliasesPayload) -> dict[str, Any]:
         f"manpower: {len(merged_manpower)}"
     )
     return {"status": "success", "resource_aliases": data["resource_aliases"]}
+
+
+class BackfillConfigPayload(BaseModel):
+    tunnel_foremen: list[str] = []
+    tunnel_job_keywords: list[str] = ["805", "tunnel"]
+
+
+@router.put("/backfill")
+def update_backfill_config(payload: BackfillConfigPayload) -> dict[str, Any]:
+    """
+    Update the backfill scope rule (which sheets count as 805 tunnel work).
+
+    Kept out of the main SettingsPayload so a normal settings save from the
+    Settings page can never blank it out.
+    """
+    data = _load()
+    data["backfill"] = payload.model_dump()
+    _save(data)
+    return {"status": "success", "backfill": data["backfill"]}
 
 
 @router.post("/templates")

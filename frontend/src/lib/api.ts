@@ -7,6 +7,14 @@
 
 import axios, { type AxiosInstance } from 'axios';
 import type { Report } from '@/types';
+import { Capacitor } from '@capacitor/core';
+
+/**
+ * How a Word export ended up with the user. The caller needs this to say the
+ * right thing — "downloaded" is wrong when the file went to a folder they
+ * chose, and wronger still when it opened in the phone's browser.
+ */
+export type WordSaveResult = 'external' | 'saved-to-chosen-folder' | 'downloaded' | 'cancelled';
 
 // In development, Vite's proxy handles /api → localhost:8000
 // In production, the backend serves the frontend (same origin)
@@ -79,17 +87,108 @@ export const reportApi = {
   },
 
   /** Download the Word .docx for a report */
-  downloadWord: async (id: string, filename: string) => {
+  /**
+   * Download a report as Word.
+   *
+   * `filename` is only a fallback — the backend owns the naming convention
+   * ("Morena Conveyance North - Daily-TW-MM-DD-YYYY.docx") and sends it in
+   * Content-Disposition, so the browser download, the desktop auto-save and the
+   * batch export cannot drift apart.
+   */
+  downloadWord: async (id: string, filename: string): Promise<WordSaveResult> => {
+    // ── ANDROID ─────────────────────────────────────────────────────────────
+    // The blob-download path below cannot work inside the Capacitor WebView:
+    // Android ignores `blob:` downloads unless the native app registers a
+    // DownloadListener, and none is registered. Export would fire, report
+    // success, and produce no file.
+    //
+    // The APK bundles its assets locally while the API lives on Railway, so the
+    // export URL is a different origin — Capacitor hands those to the system
+    // browser, which downloads the .docx properly. No plugin required.
+    if (Capacitor.isNativePlatform()) {
+      const url = `${BASE_URL}/api/export/${id}/word`;
+      window.open(url, '_blank');
+      console.debug('[Export] Opened externally for native download:', url);
+      return 'external';
+    }
+
     const response = await api.get(`/export/${id}/word`, {
       responseType: 'blob',
     });
-    // Trigger browser download
-    const url = URL.createObjectURL(new Blob([response.data]));
+
+    const disposition = response.headers?.['content-disposition'] as string | undefined;
+    const named = disposition?.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1];
+    if (named) filename = decodeURIComponent(named.trim());
+
+    // The backend returns a correctly-typed Blob already. The previous version
+    // did `new Blob([response.data])`, which re-wraps it and throws away the
+    // MIME type, so the file arrived as application/octet-stream.
+    const blob = response.data instanceof Blob
+      ? response.data
+      : new Blob([response.data], {
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        });
+
+    // Let the user choose where it goes, when the browser allows it.
+    // An `a[download]` always dumps to the Downloads folder with no prompt,
+    // which is wrong for a document that belongs in a project work folder.
+    // Chrome and Edge on desktop support the File System Access API; Firefox,
+    // Safari and Android WebView do not, so the anchor remains the fallback.
+    const picker = (window as unknown as {
+      showSaveFilePicker?: (opts: unknown) => Promise<{
+        createWritable: () => Promise<{ write: (d: Blob) => Promise<void>; close: () => Promise<void> }>;
+      }>;
+    }).showSaveFilePicker;
+
+    if (typeof picker === 'function') {
+      try {
+        const handle = await picker({
+          suggestedName: filename,
+          types: [{
+            description: 'Word document',
+            accept: {
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+            },
+          }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        console.debug('[Export] Saved via file picker:', filename, `${blob.size} bytes`);
+        return 'saved-to-chosen-folder';
+      } catch (err) {
+        // Cancelling the dialog is a normal outcome, not a failure — swallow it
+        // so the caller does not report an error for a deliberate cancel.
+        if ((err as { name?: string })?.name === 'AbortError') {
+          console.debug('[Export] Save cancelled by user');
+          return 'cancelled';
+        }
+        // Anything else (permission, sandboxed iframe): fall through to the anchor.
+        console.warn('[Export] File picker unavailable, falling back to download:', err);
+      }
+    }
+
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    a.rel = 'noopener';
+
+    // BOTH of these matter and neither was here:
+    //  - the anchor must be IN the document or the click is a no-op in Firefox
+    //  - revoking the object URL synchronously after click() cancels the
+    //    download in Chrome before it has started, which leaves a stalled .tmp
+    //    in the Downloads folder. Hence the timeout.
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 30_000);
+
+    console.debug('[Export] Word download triggered:', filename, `${blob.size} bytes`);
+    return 'downloaded';
   },
 
   /** Get PMWeb Combined rows (11 cols) for the preview panel */
@@ -298,6 +397,38 @@ export const scanApi = {
     const response = await api.post('/ai/bulk-dictate-activities', {
       audio_data: audioData,
       mime_type: mimeType,
+    }, { timeout: 180000 });
+    return response.data;
+  },
+
+  /**
+   * STEP 1 of dictation — transcribe only.
+   * The transcript is shown to the user for confirmation before any activities
+   * are built, so a bad recording surfaces as visibly wrong text instead of a
+   * confidently fabricated report.
+   */
+  bulkTranscribe: async (
+    audioData: string,
+    mimeType: string = 'audio/webm',
+    durationSeconds: number = 0,
+  ): Promise<{
+    status: 'ok' | 'suspect' | 'failed';
+    transcription: string;
+    reason: string;
+    duration_seconds: number;
+  }> => {
+    const response = await api.post('/ai/bulk-transcribe', {
+      audio_data: audioData,
+      mime_type: mimeType,
+      duration_seconds: durationSeconds,
+    }, { timeout: 180000 });
+    return response.data;
+  },
+
+  /** STEP 2 of dictation — build activities from a CONFIRMED transcript. */
+  bulkParse: async (transcription: string) => {
+    const response = await api.post('/ai/bulk-parse', {
+      transcription,
     }, { timeout: 180000 });
     return response.data;
   },
@@ -563,6 +694,91 @@ export const tcApi = {
     console.debug('[API] tcApi.generate result:', res.data);
     return res.data;
   },
+};
+
+// ============================================
+// BACKFILL (makeup reports from scanned timesheets)
+// ============================================
+
+export interface BackfillFile {
+  file_id: string;
+  filename: string;
+  doc_type: string;
+  work_date: string;
+  confidence: number;
+  date_source: string;
+  weekday_check: string;
+  page_count: number;
+  size_bytes: number;
+  note: string;
+}
+
+export interface BackfillDate {
+  date: string;
+  state: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  file_ids: string[];
+  report_id: string;
+  flag_count: number;
+  flags: string[];
+  excluded_sheets: { sheet: string; reason: string }[];
+  activity_count: number;
+  message: string;
+}
+
+export interface BackfillStatus {
+  batch_id: string;
+  created_at: string;
+  updated_at: string;
+  state: string;
+  files: (BackfillFile & { stored_name: string })[];
+  dates: BackfillDate[];
+}
+
+export const backfillApi = {
+  /** Upload source documents — returns per-file doc type and work date */
+  upload: async (files: File[]): Promise<{ batch_id: string; files: BackfillFile[] }> => {
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+    const res = await api.post('/backfill/upload', form, {
+      headers: { 'Content-Type': null as unknown as string },
+      timeout: 600_000, // classification of undated files costs an AI call each
+    });
+    return res.data;
+  },
+
+  /** Kick off generation. Returns immediately — poll status() for progress. */
+  generate: async (params: {
+    batch_id: string;
+    groups: { date: string; file_ids: string[] }[];
+    detail_level?: 'factual' | 'narrative';
+    use_continuity?: boolean;
+    fetch_weather?: boolean;
+  }): Promise<{ batch_id: string; queued_dates: string[]; message: string }> => {
+    const res = await api.post('/backfill/generate', params);
+    return res.data;
+  },
+
+  status: async (batchId: string): Promise<BackfillStatus> => {
+    const res = await api.get(`/backfill/${batchId}/status`);
+    return res.data;
+  },
+
+  list: async (): Promise<{
+    batches: {
+      batch_id: string; created_at: string; updated_at: string;
+      state: string; file_count: number; date_count: number; done_count: number;
+    }[];
+  }> => {
+    const res = await api.get('/backfill');
+    return res.data;
+  },
+
+  /** URL of a stored source file — used directly as an <iframe>/<img> src */
+  fileUrl: (batchId: string, fileId: string): string =>
+    `${BASE_URL}/api/backfill/${batchId}/file/${fileId}`,
+
+  exportUrl: (batchId: string): string =>
+    `${BASE_URL}/api/backfill/${batchId}/export.zip`,
 };
 
 export default api;

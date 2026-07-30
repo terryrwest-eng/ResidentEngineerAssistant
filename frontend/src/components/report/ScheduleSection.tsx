@@ -15,6 +15,7 @@ import {
   CalendarDays, Upload, Loader2, Trash2,
   ChevronDown, ChevronRight, AlertCircle,
 } from 'lucide-react';
+import { useConfirm } from '@/components/ui/ConfirmProvider';
 
 // ============================================
 // Types
@@ -33,6 +34,7 @@ interface ScheduleListItem {
 // ============================================
 
 export function ScheduleSection() {
+  const confirm = useConfirm();
   const [isExpanded, setIsExpanded] = useState(false);
   const [schedules, setSchedules] = useState<ScheduleListItem[]>([]);
   const [activeSchedule, setActiveSchedule] = useState<Schedule | null>(null);
@@ -104,7 +106,13 @@ export function ScheduleSection() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this schedule?')) return;
+    const ok = await confirm({
+      title: 'Delete this schedule?',
+      message: 'The uploaded schedule and its parsed shifts are removed. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await scheduleApi.delete(id);
       console.debug('[ScheduleSection] Deleted:', id);
@@ -225,9 +233,9 @@ export function ScheduleSection() {
             <div style={{
               marginBottom: 'var(--space-md)',
               padding: 'var(--space-sm) var(--space-md)',
-              background: '#FEF2F2', border: '1px solid #FECACA',
+              background: 'var(--color-danger-light)', border: '1px solid var(--color-danger-border)',
               borderRadius: 'var(--radius-md)',
-              color: '#DC2626', fontSize: '0.875rem',
+              color: 'var(--color-danger)', fontSize: '0.875rem',
               display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
             }}>
               <AlertCircle size={14} />
@@ -335,7 +343,7 @@ export function ScheduleSection() {
                         <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
                           Shift {shiftKey}
                           {activeSchedule?.schedule_type === 'grind_overlay' && (
-                            <span style={{ marginLeft: 8, fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, background: '#E0F2FE', color: '#0369A1', fontWeight: 500 }}>G&O</span>
+                            <span style={{ marginLeft: 8, fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, background: 'var(--color-info-light)', color: 'var(--color-info)', fontWeight: 500 }}>G&O</span>
                           )}
                         </span>
                         <span style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>

@@ -14,18 +14,24 @@
 
 import { create } from 'zustand';
 import { reportApi } from '@/lib/api';
-import { cleanSummaryBullets } from '@/lib/formatters';
+import { cleanSummaryBullets, localDateString } from '@/lib/formatters';
 import type { Report, Activity, GeneralInfo } from '@/types';
 
 // --- Constants ---
 const AUTO_SAVE_DELAY_MS = 2000;
-const EMPTY_GENERAL: GeneralInfo = {
+
+/**
+ * Built fresh on each call — NOT a module constant.
+ * A module-level object would capture the date at import time, so an app left
+ * open overnight would keep stamping yesterday onto new reports.
+ */
+const emptyGeneral = (): GeneralInfo => ({
   project_name: '',
   project_number: '',
   project_location: '',
   inspector_name: '',
   resident_engineer: '',
-  report_date: new Date().toISOString().split('T')[0], // Today's date
+  report_date: localDateString(), // today, local timezone
   start_time: '07:00',
   end_time: '15:30',
   sky_conditions: [],
@@ -33,7 +39,7 @@ const EMPTY_GENERAL: GeneralInfo = {
   temperature_low: '',
   wind_info: '',
   notes: '',
-};
+});
 
 interface ReportStoreState {
   // --- Report Data ---
@@ -139,7 +145,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     if (timer) clearTimeout(timer);
 
     const now = new Date().toISOString();
-    const general: GeneralInfo = { ...EMPTY_GENERAL, ...defaults };
+    const general: GeneralInfo = { ...emptyGeneral(), ...defaults };
 
     set({
       report: {
@@ -172,7 +178,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       const data = await reportApi.get(id);
       const cleanedData: Report = {
         ...data,
-        activities: (data.activities || []).map((act) => ({
+        activities: (data.activities || []).map((act: Activity) => ({
           ...act,
           summary: cleanSummaryBullets(act.summary || (act as unknown as { summary_html?: string }).summary_html),
         })),
@@ -323,6 +329,10 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       return null;
     }
 
+    // What we are about to send. Kept so we can tell afterwards whether the
+    // user changed anything while the request was in flight.
+    const sent = report;
+
     set({ isSaving: true, saveError: null, _pendingSave: false });
 
     try {
@@ -360,18 +370,41 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
 
       const now = new Date().toISOString();
       const stillPending = get()._pendingSave;
+
+      // ── DATA LOSS FIX ────────────────────────────────────────────────────
+      // Two independent ways an in-flight edit can be lost, so we check both.
+      //
+      // `stillPending` catches another saveReport() call folded into this one
+      // by the single-flight guard above.
+      //
+      // `changedDuringSave` catches the quieter case: the user typed while the
+      // request was in flight but the auto-save timer had not fired yet, so no
+      // second save was ever attempted. Marking the report clean there means
+      // closing the app before the next timer drops the edit. Every update
+      // action replaces the report object immutably, so an identity check
+      // reliably detects it.
+      const changedDuringSave = current !== sent;
+
       set({
-        report: { ...current, id: savedId },
+        report: { ...current, id: savedId, updated_at: current.updated_at || now },
         isSaved: true,
-        isDirty: stillPending,
+        // Keep it dirty if newer edits exist, so they are not silently dropped.
+        isDirty: stillPending || changedDuringSave,
         isSaving: false,
         lastSavedAt: now,
       });
 
-      // Edits arrived while we were saving — flush them now
+      // Another save was folded into this one — flush it now.
       if (stillPending) {
         set({ _pendingSave: false });
         return await get().saveReport(options);
+      }
+
+      // Edits landed mid-flight but no second save was ever attempted, so
+      // nothing is queued to carry them to disk. Re-arm the timer.
+      if (changedDuringSave) {
+        console.debug('[ReportStore] Edits arrived during save — rescheduling');
+        get()._scheduleAutoSave();
       }
 
       return savedId;
@@ -465,10 +498,11 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       const pywebview = (window as unknown as Record<string, unknown>).pywebview as
         | { api: { auto_save_word: (id: string, date: string) => Promise<{ success: boolean; path?: string; error?: string; skipped?: boolean }> } }
         | undefined;
+      const currentReport = get().report;
+      const reportDate = currentReport?.general?.report_date || 'unknown';
+
       if (pywebview?.api?.auto_save_word) {
-        const currentReport = get().report;
         if (currentReport?.id) {
-          const reportDate = currentReport.general?.report_date || 'unknown';
           const result = await pywebview.api.auto_save_word(currentReport.id, reportDate);
           if (result?.skipped) {
             console.info('[Desktop] Word already saved for this report — no duplicate created');
@@ -478,11 +512,23 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
             console.warn('[Desktop] Word auto-save failed:', result?.error);
           }
         }
+      } else if (currentReport?.id) {
+        // WEB AND MOBILE — the copy step used to live ONLY inside the
+        // pywebview branch above, so on the web app (which is how this is
+        // actually used most of the time) submitting produced no copy at all.
+        // A browser cannot write to a work folder, so the equivalent is to
+        // hand the file to the user's downloads.
+        await reportApi.downloadWord(
+          currentReport.id,
+          `DailyReport_${reportDate}.docx`,
+        );
+        console.info('[Submit] Word copy downloaded for', reportDate);
       }
     } catch (err) {
-      // Silent catch — must NEVER break the submit flow
-      // The report is already saved to the cloud at this point
-      console.warn('[Desktop] Auto-save Word error (non-fatal):', err);
+      // Silent catch — must NEVER break the submit flow.
+      // The report is already saved at this point, so a failed copy is an
+      // inconvenience, not data loss.
+      console.warn('[Submit] Word copy failed (non-fatal):', err);
     }
   },
 

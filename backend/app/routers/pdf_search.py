@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["pdf-search"])
 
 # Data directory for specs/PDFs
-SPECS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "specs")
+from app.core.paths import SPECS_DIR  # noqa: E402
+
 os.makedirs(SPECS_DIR, exist_ok=True)
 
 

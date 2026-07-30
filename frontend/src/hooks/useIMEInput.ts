@@ -14,8 +14,8 @@
  * final composed value to the store.
  *
  * USAGE:
- *   const { inputProps } = useIMEInput(currentValue, (newVal) => updateStore(newVal));
- *   <input {...inputProps} className="input" placeholder="..." />
+ * const { inputProps } = useIMEInput(currentValue, (newVal) => updateStore(newVal));
+ * <input {...inputProps} className="input" placeholder="..." />
  */
 
 import { useRef, useCallback, useEffect } from 'react';
@@ -109,8 +109,8 @@ export function useIMEInput({ value, onChange }: UseIMEInputOptions): { inputPro
  * to route changes to the correct store update.
  *
  * USAGE:
- *   const imeHandlers = useIMEFieldHandlers(updateGeneral);
- *   <input {...imeHandlers.getProps('project_name', gen.project_name)} className="input" />
+ * const imeHandlers = useIMEFieldHandlers(updateGeneral);
+ * <input {...imeHandlers.getProps('project_name', gen.project_name)} className="input" />
  */
 export function useIMEFieldHandlers(
   updateFn: (update: Record<string, string>) => void,

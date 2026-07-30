@@ -26,10 +26,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # --- Paths ---
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
-DB_PATH = os.path.join(DATA_DIR, "reporter.db")
-REPORTS_DIR = os.path.join(DATA_DIR, "reports")
-PHOTOS_DIR = os.path.join(DATA_DIR, "photos")
+from app.core.paths import DATA_DIR, DB_PATH, REPORTS_DIR, PHOTOS_DIR  # noqa: E402,F401
 SPECS_DIR = os.path.join(DATA_DIR, "specs")
 
 

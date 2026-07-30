@@ -15,12 +15,15 @@ import { ScanPage } from '@/pages/ScanPage';
 import { TrackersPage } from '@/pages/TrackersPage';
 import { ReportHistoryPage } from '@/pages/ReportHistoryPage';
 import { ToolsPage } from '@/pages/ToolsPage';
+import { BackfillPage } from '@/pages/BackfillPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { UIProvider } from '@/components/ui/ConfirmProvider';
 import './index.css';
 
 function App() {
   return (
     <BrowserRouter>
+      <UIProvider>
       <div className="app-shell">
         <TopHeader />
         <main className="app-content">
@@ -32,12 +35,14 @@ function App() {
             <Route path="/trackers" element={<TrackersPage />} />
             <Route path="/history" element={<ReportHistoryPage />} />
             <Route path="/tools" element={<ToolsPage />} />
+            <Route path="/backfill" element={<BackfillPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
         <BottomNav />
       </div>
+      </UIProvider>
     </BrowserRouter>
   );
 }

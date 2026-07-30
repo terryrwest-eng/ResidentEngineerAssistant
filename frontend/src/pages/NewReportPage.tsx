@@ -20,6 +20,16 @@ import { ActivityList } from '@/components/report/ActivityList';
 import { PMWebPreview } from '@/components/report/PMWebPreview';
 import { ReportChat } from '@/components/report/ReportChat';
 import { ScheduleSection } from '@/components/report/ScheduleSection';
+import { SectionNav, type NavSection } from '@/components/report/SectionNav';
+import { Doc, DocHeader, DocStatus } from '@/components/ui/Doc';
+import { useToast } from '@/components/ui/ConfirmProvider';
+import { formatReportDate, formatQty } from '@/lib/formatters';
+
+const REPORT_SECTIONS: NavSection[] = [
+  { id: 'section-details', label: 'Details' },
+  { id: 'section-schedule', label: 'Schedule' },
+  { id: 'section-activities', label: 'Activities' },
+];
 import { reportApi } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
 
@@ -62,6 +72,7 @@ import {
 export function NewReportPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const {
     report,
@@ -145,20 +156,36 @@ export function NewReportPage() {
 
   const handleSubmit = useCallback(async () => {
     await submitReport();
-  }, [submitReport]);
+    toast('Report submitted — a Word copy has been saved');
+  }, [submitReport, toast]);
 
   const handleDownloadWord = useCallback(async () => {
     if (!report?.id) return;
     setIsDownloading(true);
     try {
       const date = report.general?.report_date || 'unknown';
-      await reportApi.downloadWord(report.id, `DailyReport_${date}.docx`);
+      const outcome = await reportApi.downloadWord(report.id, `DailyReport_${date}.docx`);
+      // Say what actually happened. On the phone the file goes to the browser's
+      // downloads, not the app, and "downloaded" would leave you looking in the
+      // wrong place.
+      if (outcome === 'cancelled') {
+        // Deliberate cancel — nothing to report.
+      } else if (outcome === 'external') {
+        toast('Opened in your browser — check Downloads');
+      } else if (outcome === 'saved-to-chosen-folder') {
+        toast('Word document saved');
+      } else {
+        toast('Word document downloaded');
+      }
     } catch (err) {
+      // This used to log to the console and nothing else, so a failed export
+      // was indistinguishable from a successful one.
       console.error('[Export] Word download failed:', err);
+      toast('Word export failed — check your connection and try again', 'err');
     } finally {
       setIsDownloading(false);
     }
-  }, [report]);
+  }, [report, toast]);
 
   // Loading state
   if (isLoading) {
@@ -187,8 +214,23 @@ export function NewReportPage() {
   // No report loaded
   if (!report) return null;
 
+  // The figures that define the day. These already existed as rows buried in
+  // five collapsed tables; the page never said them out loud.
+  const acts = report.activities || [];
+  const allManpower = acts.flatMap((a) => [
+    ...(a.manpower || []), ...(a.extra_work_manpower || []), ...(a.consultant_manpower || []),
+  ]);
+  const allEquipment = acts.flatMap((a) => [
+    ...(a.equipment || []), ...(a.extra_work_equipment || []),
+  ]);
+  const crewCount = allManpower.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+  const totalHours = allManpower.reduce(
+    (sum, r) => sum + (Number(r.hours) || 0) * (Number(r.qty) || 1), 0,
+  );
+  const equipCount = allEquipment.reduce((sum, r) => sum + (Number(r.qty) || 0), 0);
+
   return (
-    <div>
+    <Doc>
       <NavigationGuard />
 
       {/* Shown only when a report already exists for this date — nothing has
@@ -204,103 +246,82 @@ export function NewReportPage() {
         />
       )}
 
-      {/* --- Top Bar: Save status + action buttons --- */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 'var(--space-lg)',
-        flexWrap: 'wrap',
-        gap: 'var(--space-sm)',
-      }}>
-        {/* Left: Save status indicator */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-sm)',
-          fontSize: '0.8125rem',
-        }}>
-          {isSaving ? (
-            <>
-              <Loader2 size={14} className="spinner" style={{ border: 'none', animation: 'spin 0.6s linear infinite' }} />
-              <span style={{ color: 'var(--color-text-tertiary)' }}>Saving...</span>
-            </>
+      {/* --- Document header: what this report IS, then how to act on it --- */}
+      <DocHeader
+        title={report?.general?.project_name || 'Untitled Report'}
+        meta={[
+          report?.general?.project_number ? `No. ${report.general.project_number}` : null,
+          report?.general?.report_date ? formatReportDate(report.general.report_date) : 'No date set',
+          report?.general?.project_location || null,
+        ].filter(Boolean) as React.ReactNode[]}
+        status={
+          isSaving ? (
+            <DocStatus tone="muted"><Loader2 size={11} style={{ animation: 'spin 0.6s linear infinite' }} /> Saving</DocStatus>
           ) : saveError ? (
-            <>
-              <AlertCircle size={14} style={{ color: 'var(--color-danger)' }} />
-              <span style={{ color: 'var(--color-danger)' }}>Save failed</span>
-            </>
+            <DocStatus tone="err"><AlertCircle size={11} /> Save failed</DocStatus>
           ) : isSaved && !isDirty ? (
-            <>
-              <CheckCircle2 size={14} style={{ color: 'var(--color-success)' }} />
-              <span style={{ color: 'var(--color-text-tertiary)' }}>
-                Saved {lastSavedAt ? formatTimeAgo(lastSavedAt) : ''}
-              </span>
-            </>
+            <DocStatus tone="ok"><CheckCircle2 size={11} /> Saved {lastSavedAt ? formatTimeAgo(lastSavedAt) : ''}</DocStatus>
           ) : isSaved && isDirty ? (
-            <>
-              <Clock size={14} style={{ color: 'var(--color-warning)' }} />
-              <span style={{ color: 'var(--color-text-tertiary)' }}>Unsaved changes</span>
-            </>
+            <DocStatus tone="warn"><Clock size={11} /> Unsaved changes</DocStatus>
           ) : (
-            <>
-              <AlertCircle size={14} style={{ color: 'var(--color-text-tertiary)' }} />
-              <span style={{ color: 'var(--color-text-tertiary)' }}>New report — not saved yet</span>
-            </>
-          )}
-        </div>
-
-        {/* Right: Action buttons */}
-        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={isSaving || (!isDirty && isSaved)}
-          >
-            <Save size={16} />
-            {isSaved ? 'Save' : 'Save Report'}
-          </button>
-
-          {isSaved && (
-            <>
-              <button className="btn btn-secondary" onClick={handleSaveAs}>
-                <SaveAll size={16} />
-                Save As
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={handleDownloadWord}
-                disabled={isDownloading}
-              >
-                <FileDown size={16} />
-                {isDownloading ? 'Generating...' : 'Export Word'}
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowPMWeb(true)}
-              >
-                <ClipboardList size={16} />
-                PMWeb
-              </button>
+            <DocStatus tone="muted">Draft</DocStatus>
+          )
+        }
+        figures={[
+          { value: acts.length, label: 'Activities' },
+          { value: crewCount, label: 'Crew on site', accent: true },
+          { value: formatQty(totalHours), label: 'Labor hours', accent: true },
+          { value: equipCount, label: 'Equipment' },
+        ]}
+        actions={
+          <>
+            {/* Secondary actions are demoted to icon buttons — the old bar had
+                five buttons of near-equal weight and no clear next step. */}
+            {isSaved && (
+              <>
+                <button className="btn btn-ghost btn-icon" onClick={handleSaveAs} title="Save as a copy" aria-label="Save as a copy">
+                  <SaveAll size={17} />
+                </button>
+                <button className="btn btn-ghost btn-icon" onClick={handleDownloadWord} disabled={isDownloading} title="Export to Word" aria-label="Export to Word">
+                  <FileDown size={17} />
+                </button>
+                <button className="btn btn-ghost btn-icon" onClick={() => setShowPMWeb(true)} title="PMWeb resource table" aria-label="PMWeb resource table">
+                  <ClipboardList size={17} />
+                </button>
+                <span style={{ width: 1, height: 22, background: 'var(--color-border)' }} aria-hidden />
+              </>
+            )}
+            <button
+              className="btn btn-secondary"
+              onClick={handleSave}
+              disabled={isSaving || (!isDirty && isSaved)}
+            >
+              <Save size={16} /> Save
+            </button>
+            {isSaved && (
               <button className="btn btn-primary" onClick={handleSubmit} disabled={isSaving}>
-                <Send size={16} />
-                Submit
+                <Send size={16} /> Submit
               </button>
-            </>
-          )}
-        </div>
-      </div>
+            )}
+          </>
+        }
+      />
+
+      {/* --- Jump nav: this page is a long scroll --- */}
+      <SectionNav sections={REPORT_SECTIONS} />
 
       {/* --- General Info Form --- */}
-      <GeneralInfoForm key={`gen-${revision}`} />
+      <div id="section-details">
+        <GeneralInfoForm key={`gen-${revision}`} />
+      </div>
 
       {/* --- Schedule (collapsible, above activities) --- */}
-      <div style={{ marginTop: 'var(--space-lg)' }}>
+      <div id="section-schedule" style={{ marginTop: 'var(--space-lg)' }}>
         <ScheduleSection />
       </div>
 
       {/* --- Activities --- */}
-      <div style={{ marginTop: 'var(--space-lg)' }}>
+      <div id="section-activities" style={{ marginTop: 'var(--space-lg)' }}>
         <ActivityList key={`act-${revision}`} />
       </div>
 
@@ -340,7 +361,7 @@ export function NewReportPage() {
 
       {/* --- AI Report Chat Overlay --- */}
       {showChat && <ReportChat onClose={() => setShowChat(false)} />}
-    </div>
+    </Doc>
   );
 }
 

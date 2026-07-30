@@ -3,13 +3,13 @@
  *
  * Full history browser backed by GET /api/reports.
  * Features:
- *   - Live search by project name
- *   - Date range (from / to) filters
- *   - Status filter (all / draft / submitted)
- *   - Sortable columns (date, project, activities, status)
- *   - Click row → open report editor
- *   - Delete row with confirmation
- *   - Pagination (20 per page)
+ * - Live search by project name
+ * - Date range (from / to) filters
+ * - Status filter (all / draft / submitted)
+ * - Sortable columns (date, project, activities, status)
+ * - Click row → open report editor
+ * - Delete row with confirmation
+ * - Pagination (20 per page)
  *
  * WHY no backend changes: GET /api/reports already supports all
  * of these query params (status, project, date_from, date_to, limit, offset).
@@ -288,8 +288,8 @@ export function ReportHistoryPage() {
         <div style={{
           display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
           padding: 'var(--space-md)', marginBottom: 'var(--space-md)',
-          background: '#FEF2F2', borderRadius: 'var(--radius-sm)',
-          color: '#DC2626', fontSize: '0.875rem',
+          background: 'var(--color-danger-light)', borderRadius: 'var(--radius-sm)',
+          color: 'var(--color-danger)', fontSize: '0.875rem',
         }}>
           <AlertCircle size={16} />
           {error}
@@ -487,10 +487,10 @@ function SortHeader({
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
-    submitted: { bg: '#DCFCE7', color: '#15803D', label: 'Submitted' },
-    draft:     { bg: '#EFF6FF', color: '#1D4ED8', label: 'Draft' },
+    submitted: { bg: 'var(--color-success-light)', color: 'var(--color-success)', label: 'Submitted' },
+    draft: { bg: 'var(--color-info-light)', color: 'var(--color-info)', label: 'Draft' },
   };
-  const s = map[status] || { bg: '#F3F4F6', color: '#6B7280', label: status || 'Unknown' };
+  const s = map[status] || { bg: 'var(--color-surface-hover)', color: 'var(--color-text-tertiary)', label: status || 'Unknown' };
   return (
     <span style={{
       display: 'inline-block',

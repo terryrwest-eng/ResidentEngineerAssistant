@@ -650,60 +650,39 @@ async def transcribe(request: TranscribeRequest):
     client, model_name = _get_gemini_client()
 
     try:
-        import base64
         from google.genai import types as genai_types
 
-        audio_bytes = base64.b64decode(request.audio_data)
+        audio_bytes = _decode_audio(request.audio_data)
         logger.info(f'[transcribe] Audio: {len(audio_bytes)} bytes, mime: {request.mime_type}')
-
-        # Guard: reject tiny audio that can't contain speech
-        if len(audio_bytes) < 2000:
-            logger.warning(f'[transcribe] Audio too small ({len(audio_bytes)} bytes), likely empty')
-            return TranscribeResponse(
-                activities=[],
-                raw_transcription='Recording too short — please try again.'
-            )
 
         context = request.context or {}
         project_name = context.get('project_name', 'this project')
         report_date = context.get('report_date', 'today')
 
-        # ─── PASS 1: Faithful transcription (TEXT mode, NOT JSON) ───
-        # Uses DICTATION_SYSTEM_PROMPT which was battle-tested over field sessions.
-        # Text mode means the model focuses on hearing the audio correctly,
-        # not on filling a JSON schema.
-        pass1_prompt = f"""{DICTATION_SYSTEM_PROMPT}
-
-PROJECT CONTEXT:
-- Project: {project_name}
-- Date: {report_date}
-
-Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPOWER, and EQUIPMENT sections as instructed above.
-"""
-
-        logger.info('[transcribe] Pass 1: Faithful transcription (text mode)...')
-        pass1_response = client.models.generate_content(
-            model=model_name,
-            contents=[
-                pass1_prompt,
-                genai_types.Part.from_bytes(data=audio_bytes, mime_type=request.mime_type),
-            ],
-            config=genai_types.GenerateContentConfig(
-                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                max_output_tokens=16384,
+        # ─── PASS 1: Faithful transcription (shared hardened helper) ───
+        # Text mode, retry, finish-reason checks and the short-transcript
+        # sanity gate all live in _transcribe_audio, so every audio flow in
+        # this file fails the same way instead of fabricating.
+        pass1 = _transcribe_audio(
+            client, model_name, audio_bytes, request.mime_type,
+            duration_seconds=float(context.get('duration_seconds') or 0),
+            extra_instructions=(
+                f'PROJECT CONTEXT:\n- Project: {project_name}\n- Date: {report_date}'
             ),
         )
 
-        raw_transcription = pass1_response.text.strip()
-        logger.info(f'[transcribe] Pass 1 result ({len(raw_transcription)} chars): {raw_transcription[:500]}')
+        raw_transcription = pass1.transcription
+        logger.info(f'[transcribe] Pass 1 ({pass1.status}, {len(raw_transcription)} chars)')
 
-        # Guard: if model couldn't hear anything
-        if not raw_transcription or raw_transcription.startswith('| Please try again'):
-            logger.warning('[transcribe] Pass 1 returned empty or "couldn\'t hear" — no activities')
+        if pass1.status == 'failed':
             return TranscribeResponse(
                 activities=[],
-                raw_transcription=raw_transcription or 'Could not understand the recording. Please try again.'
+                raw_transcription=raw_transcription or pass1.reason
+                or 'Could not understand the recording. Please try again.',
             )
+        if pass1.status == 'suspect':
+            logger.warning(f'[transcribe] Suspect transcription: {pass1.reason}')
+            return TranscribeResponse(activities=[], raw_transcription=raw_transcription)
 
         # ─── PASS 2: Parse transcription into structured activities (JSON mode) ───
         # Now we have verified text. Parse it into the activity schema.
@@ -892,6 +871,9 @@ class SmartDictationResponse(BaseModel):
     work_area: str = ''
     manpower: list[dict[str, Any]] = []
     equipment: list[dict[str, Any]] = []
+    # What the model actually heard. Surfaced so a bad recording shows up as
+    # visibly wrong text instead of silently becoming invented activity data.
+    raw_transcription: str = ''
 
 
 @router.post('/transcribe-smart', response_model=SmartDictationResponse)
@@ -915,65 +897,39 @@ async def transcribe_smart(request: SmartDictationRequest):
     client, model_name = _get_gemini_client()
 
     try:
-        import base64
         from google.genai import types as genai_types
 
-        audio_bytes = base64.b64decode(request.audio_data)
+        audio_bytes = _decode_audio(request.audio_data)
         logger.info(f'[transcribe-smart] Audio: {len(audio_bytes)} bytes, mime: {request.mime_type}')
-
-        # Guard: reject tiny audio
-        if len(audio_bytes) < 2000:
-            logger.warning(f'[transcribe-smart] Audio too small ({len(audio_bytes)} bytes), likely empty')
-            return SmartDictationResponse(
-                summary_html='',
-                work_area='',
-                manpower=[],
-                equipment=[],
-            )
 
         ctx = request.context or {}
         work_area = ctx.get('work_area', '')
         project_name = ctx.get('project_name', 'this project')
         report_date = ctx.get('report_date', 'today')
 
-        # ─── PASS 1: Faithful transcription (TEXT mode, NOT JSON) ───
-        pass1_prompt = f"""{DICTATION_SYSTEM_PROMPT}
-
-PROJECT CONTEXT:
-- Project: {project_name}
-- Date: {report_date}
-- Current work area: {work_area or 'Not specified'}
-
-VERBOSITY RULE: Capture EVERY detail the speaker mentions. Do NOT summarize or compress.
-If they speak 10 sentences of detail, output 10 sentences of detail. More is better than less.
-
-Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPOWER, and EQUIPMENT sections as instructed above.
-"""
-
-        logger.info('[transcribe-smart] Pass 1: Faithful transcription (text mode)...')
-        pass1_response = client.models.generate_content(
-            model=model_name,
-            contents=[
-                pass1_prompt,
-                genai_types.Part.from_bytes(data=audio_bytes, mime_type=request.mime_type),
-            ],
-            config=genai_types.GenerateContentConfig(
-                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                max_output_tokens=16384,
+        # ─── PASS 1: Faithful transcription (shared hardened helper) ───
+        pass1 = _transcribe_audio(
+            client, model_name, audio_bytes, request.mime_type,
+            duration_seconds=float(ctx.get('duration_seconds') or 0),
+            extra_instructions=(
+                f'PROJECT CONTEXT:\n- Project: {project_name}\n- Date: {report_date}\n'
+                f"- Current work area: {work_area or 'Not specified'}\n\n"
+                'VERBOSITY RULE: Capture EVERY detail the speaker mentions. Do NOT '
+                'summarize or compress. If they speak 10 sentences of detail, output '
+                '10 sentences of detail. More is better than less.'
             ),
         )
 
-        raw_transcription = pass1_response.text.strip()
-        logger.info(f'[transcribe-smart] Pass 1 result ({len(raw_transcription)} chars): {raw_transcription[:500]}')
+        raw_transcription = pass1.transcription
+        logger.info(f'[transcribe-smart] Pass 1 ({pass1.status}, {len(raw_transcription)} chars)')
 
-        # Guard: if model couldn't hear anything
-        if not raw_transcription or raw_transcription.startswith('| Please try again'):
-            logger.warning('[transcribe-smart] Pass 1 returned empty — no data')
+        # Never parse audio we could not read — that is where fabrication starts.
+        if pass1.status in ('failed', 'suspect'):
+            if pass1.status == 'suspect':
+                logger.warning(f'[transcribe-smart] Suspect transcription: {pass1.reason}')
             return SmartDictationResponse(
-                summary_html='',
-                work_area='',
-                manpower=[],
-                equipment=[],
+                summary_html='', work_area='', manpower=[], equipment=[],
+                raw_transcription=raw_transcription or pass1.reason,
             )
 
         # ─── PASS 2: Parse transcription into SINGLE activity JSON ───
@@ -1370,6 +1326,7 @@ class ReportChatRequest(BaseModel):
     message: str = ''             # Text message (optional if audio_data is provided)
     audio_data: str = ''          # Base64-encoded audio (optional if message is provided)
     mime_type: str = 'audio/webm'
+    duration_seconds: float = 0.0  # Enables the short-transcript sanity check
     report: dict[str, Any] = {}   # Full report: { general: {...}, activities: [...] }
     chat_history: list[dict[str, str]] = []
 
@@ -1410,50 +1367,45 @@ async def report_chat(request: ReportChatRequest):
         user_message = request.message
         transcription = ''
 
-        # ─── AUDIO PROCESSING (two-pass) ───
+        # ─── AUDIO PROCESSING (two-pass, shared hardened helper) ───
         if request.audio_data:
-            audio_bytes = base64.b64decode(request.audio_data)
+            audio_bytes = _decode_audio(request.audio_data)
             logger.info(f'[report-chat] Audio received: {len(audio_bytes)} bytes, mime: {request.mime_type}')
 
-            # Guard: reject tiny audio
-            if len(audio_bytes) < 2000:
-                logger.warning(f'[report-chat] Audio too small ({len(audio_bytes)} bytes)')
-                return ReportChatResponse(
-                    reply="I couldn't hear anything — the recording was too short. Please try again and speak for at least a few seconds.",
-                    transcription=''
-                )
-
-            # Pass 1: Faithful transcription (TEXT mode)
-            pass1_prompt = f"""{DICTATION_SYSTEM_PROMPT}
-
-PROJECT CONTEXT:
-- Project: {request.report.get('general', {}).get('project_name', 'this project')}
-- Date: {request.report.get('general', {}).get('report_date', 'today')}
-
-Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPOWER, and EQUIPMENT sections as instructed above.
-"""
-
-            logger.info('[report-chat] Pass 1: Transcribing audio (text mode)...')
-            pass1_response = client.models.generate_content(
-                model=model_name,
-                contents=[
-                    pass1_prompt,
-                    genai_types.Part.from_bytes(data=audio_bytes, mime_type=request.mime_type),
-                ],
-                config=genai_types.GenerateContentConfig(
-                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                    max_output_tokens=16384,
+            # The short-audio guard lives in _transcribe_audio (MIN_AUDIO_BYTES),
+            # so every audio flow rejects an empty recording the same way.
+            general = request.report.get('general', {}) if request.report else {}
+            pass1 = _transcribe_audio(
+                client, model_name, audio_bytes, request.mime_type,
+                duration_seconds=float(request.duration_seconds or 0),
+                extra_instructions=(
+                    f"PROJECT CONTEXT:\n"
+                    f"- Project: {general.get('project_name', 'this project')}\n"
+                    f"- Date: {general.get('report_date', 'today')}"
                 ),
             )
+            transcription = pass1.transcription
+            logger.info(f'[report-chat] Transcription ({pass1.status}, {len(transcription)} chars)')
 
-            transcription = pass1_response.text.strip()
-            logger.info(f'[report-chat] Transcription ({len(transcription)} chars): {transcription[:300]}')
-
-            # Guard: unintelligible audio
-            if not transcription or transcription.startswith('| Please try again'):
+            if pass1.status == 'failed':
                 return ReportChatResponse(
-                    reply="I couldn't understand what you said. Could you try again? Speak clearly and close to the mic.",
-                    transcription=transcription or ''
+                    reply=(
+                        "I couldn't understand that recording. "
+                        + (pass1.reason or 'Please try again and speak close to the mic.')
+                    ),
+                    transcription=transcription or '',
+                )
+
+            if pass1.status == 'suspect':
+                # Report the problem instead of acting on a transcript we do
+                # not trust — acting on it could silently rewrite the report.
+                return ReportChatResponse(
+                    reply=(
+                        "I'm not confident I heard that correctly, so I haven't changed anything. "
+                        + (pass1.reason or '')
+                        + "\n\nHere's what I picked up — if it's right, paste or retype it and I'll apply it."
+                    ),
+                    transcription=transcription or '',
                 )
 
             # Use the transcription as the user message for Pass 2
@@ -1886,171 +1838,418 @@ class BulkDictationResponse(BaseModel):
 class BulkDictateRequest(BaseModel):
     audio_data: str
     mime_type: str = 'audio/webm'
+    duration_seconds: float = 0.0
+
+
+# ============================================
+# TWO-STEP DICTATION (transcribe → confirm → parse)
+#
+# WHY SPLIT: the single-call flow could silently fabricate an entire report.
+# If the recording was truncated or the mic was dead, pass 1 returned a short
+# or empty transcript, and pass 2 — running in JSON mode at default
+# temperature — happily filled the schema with plausible-sounding construction
+# work that was never spoken. Splitting lets the user SEE the transcript
+# before any activities are built, which turns a silent fabrication into an
+# obvious, recoverable error.
+# ============================================
+
+# A slow speaker still produces well over this. Used only to flag a
+# transcript as suspicious — never to block, since a long recording with a
+# lot of silence is legitimately short on text.
+MIN_CHARS_PER_SECOND = 3.0
+MIN_DURATION_FOR_SANITY_CHECK = 30.0
+MIN_AUDIO_BYTES = 2000
+
+
+class TranscribeAudioResponse(BaseModel):
+    status: str = 'ok'            # 'ok' | 'suspect' | 'failed'
+    transcription: str = ''
+    reason: str = ''              # populated when status != 'ok'
+    duration_seconds: float = 0.0
+
+
+class BulkParseRequest(BaseModel):
+    transcription: str
+    current_activities: list[dict[str, Any]] = []
+
+
+# --- Structured output schema for the parse pass ---
+# Enforced by Gemini rather than described in prose, which removes the
+# summary/summary_html drift and the string-vs-number coercion on qty/hours.
+
+class DictatedManpower(BaseModel):
+    trade: str = ''
+    name: str = ''
+    company: str = ''
+    qty: float = 1
+    hours: float = 0
+    start_time: str = ''
+    stop_time: str = ''
+    is_extra_work: bool = False
+    is_3rd_party: bool = False
+    is_consultant: bool = False
+
+
+class DictatedEquipment(BaseModel):
+    name: str = ''
+    description: str = ''
+    company: str = ''
+    qty: float = 1
+    hours: float = 0
+    start_time: str = ''
+    stop_time: str = ''
+    is_extra_work: bool = False
+    is_3rd_party: bool = False
+    is_rental: bool = False
+
+
+class DictatedActivity(BaseModel):
+    work_area: str = ''
+    stations: str = ''
+    summary_html: str = ''
+    manpower: list[DictatedManpower] = []
+    equipment: list[DictatedEquipment] = []
+
+
+class BulkParseResult(BaseModel):
+    activities: list[DictatedActivity] = []
+    locations: str = ''
+    general_notes: str = ''
+
+
+def _finish_reason_problem(response: Any) -> str:
+    """
+    Return a human-readable reason if the model stopped for a bad reason.
+
+    WHY: every endpoint dereferenced response.text unconditionally. On a safety
+    block or a MAX_TOKENS truncation .text is None or partial, which surfaced
+    as an opaque 500 (or worse, a half-parsed result treated as real).
+    """
+    try:
+        candidates = getattr(response, 'candidates', None) or []
+        if not candidates:
+            return 'The model returned no candidates (possibly blocked).'
+        reason = getattr(candidates[0], 'finish_reason', None)
+        if reason is None:
+            return ''
+        name = getattr(reason, 'name', str(reason)).upper()
+        if 'MAX_TOKEN' in name:
+            return 'The response hit the output token limit and was truncated.'
+        if 'SAFETY' in name or 'BLOCK' in name or 'RECITATION' in name:
+            return f'The model stopped early ({name}).'
+        return ''
+    except Exception:  # never let the guard itself break the request
+        return ''
+
+
+def _decode_audio(audio_data: str) -> bytes:
+    """Strip an optional data-URL prefix and base64-decode."""
+    import base64
+    if 'base64,' in audio_data:
+        audio_data = audio_data.split('base64,')[1]
+    return base64.b64decode(audio_data)
+
+
+def _transcribe_audio(
+    client: Any,
+    model_name: str,
+    audio_bytes: bytes,
+    mime_type: str,
+    duration_seconds: float = 0.0,
+    extra_instructions: str = '',
+) -> TranscribeAudioResponse:
+    """
+    Pass 1 for every audio flow: faithful transcription, no JSON forcing.
+
+    Returns a status rather than raising so callers can surface the transcript
+    (and the reason it looks wrong) instead of fabricating on top of it.
+    """
+    import os
+    import tempfile
+    from google.genai import types as genai_types
+
+    if len(audio_bytes) < MIN_AUDIO_BYTES:
+        return TranscribeAudioResponse(
+            status='failed',
+            reason=f'Recording is too short or empty ({len(audio_bytes)} bytes).',
+            duration_seconds=duration_seconds,
+        )
+
+    suffix_map = {
+        'audio/webm': '.webm', 'audio/mp3': '.mp3', 'audio/mpeg': '.mp3',
+        'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/mp4': '.mp4',
+        'audio/x-m4a': '.m4a', 'audio/aac': '.aac',
+    }
+    base_mime = (mime_type or '').split(';')[0].strip() or 'audio/webm'
+    suffix = suffix_map.get(base_mime, '.webm')
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        uploaded = client.files.upload(file=tmp_path, config={'mime_type': base_mime})
+        logger.info(f'[transcribe] Uploaded {len(audio_bytes)} bytes as {base_mime}')
+
+        prompt = DICTATION_SYSTEM_PROMPT
+        if extra_instructions:
+            prompt = f'{prompt}\n\n{extra_instructions}'
+        prompt += (
+            '\n\nListen to the audio and transcribe it now. Organize into '
+            'WORK DESCRIPTION, MANPOWER, and EQUIPMENT sections as instructed above.'
+        )
+
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
+            contents=[
+                genai_types.Content(role='user', parts=[
+                    genai_types.Part.from_text(text=prompt),
+                    genai_types.Part.from_uri(file_uri=uploaded.uri, mime_type=base_mime),
+                ]),
+            ],
+            config=genai_types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=32768,
+            ),
+        )
+
+        problem = _finish_reason_problem(response)
+        text = (getattr(response, 'text', None) or '').strip()
+
+        if not text:
+            return TranscribeAudioResponse(
+                status='failed',
+                reason=problem or 'The model returned no transcription.',
+                duration_seconds=duration_seconds,
+            )
+
+        # The dictation prompt emits this exact marker when it hears nothing.
+        if text.startswith('| Please try again'):
+            return TranscribeAudioResponse(
+                status='failed',
+                transcription=text,
+                reason="Couldn't make out any speech in the recording.",
+                duration_seconds=duration_seconds,
+            )
+
+        if problem:
+            # Truncated but non-empty — usable, but the user should know.
+            return TranscribeAudioResponse(
+                status='suspect', transcription=text, reason=problem,
+                duration_seconds=duration_seconds,
+            )
+
+        # Sanity gate: a multi-minute recording that yields a couple of lines
+        # means the audio was bad, and parsing it invites fabrication.
+        if duration_seconds >= MIN_DURATION_FOR_SANITY_CHECK:
+            expected = duration_seconds * MIN_CHARS_PER_SECOND
+            if len(text) < expected:
+                logger.warning(
+                    f'[transcribe] Short transcript: {len(text)} chars for '
+                    f'{duration_seconds:.0f}s of audio (expected ~{expected:.0f}+)'
+                )
+                return TranscribeAudioResponse(
+                    status='suspect',
+                    transcription=text,
+                    reason=(
+                        f'Only {len(text)} characters were transcribed from '
+                        f'{int(duration_seconds // 60)}m {int(duration_seconds % 60)}s of audio. '
+                        'The recording may have been cut short or the mic may not have '
+                        'picked everything up — please check the text below before continuing.'
+                    ),
+                    duration_seconds=duration_seconds,
+                )
+
+        return TranscribeAudioResponse(
+            status='ok', transcription=text, duration_seconds=duration_seconds,
+        )
+
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+@router.post('/bulk-transcribe', response_model=TranscribeAudioResponse)
+async def bulk_transcribe(request: BulkDictateRequest):
+    """
+    STEP 1 of dictation: transcribe the recording and hand the text back.
+
+    Deliberately does NOT build activities — the user confirms (and can edit)
+    the transcript first, then calls /bulk-parse.
+    """
+    client, model_name = _get_gemini_client()
+    try:
+        audio_bytes = _decode_audio(request.audio_data)
+        logger.info(
+            f'[bulk-transcribe] {len(audio_bytes)} bytes, '
+            f'{request.duration_seconds:.0f}s, {request.mime_type}'
+        )
+        return _transcribe_audio(
+            client, model_name, audio_bytes, request.mime_type,
+            request.duration_seconds,
+            extra_instructions=(
+                'VERBOSITY RULE: Capture EVERY detail the speaker mentions. Do NOT '
+                'summarize or compress. If they speak 10 sentences of detail, output '
+                '10 sentences of detail. More is better than less. Include ALL station '
+                'numbers, measurements, quantities, pipe sizes, crew counts, and specifics.'
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f'[bulk-transcribe] Error: {exc}')
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post('/bulk-parse', response_model=BulkDictationResponse)
+async def bulk_parse(request: BulkParseRequest):
+    """
+    STEP 2 of dictation: turn a CONFIRMED transcript into activities.
+
+    Text-only and schema-enforced at temperature 0 — no audio in this call, so
+    there is nothing for the model to mishear, and the output shape is
+    guaranteed rather than described in prose and repaired with regex.
+    """
+    from google.genai import types as genai_types
+
+    transcription = (request.transcription or '').strip()
+    if not transcription:
+        raise HTTPException(status_code=400, detail='No transcription text provided.')
+
+    client, model_name = _get_gemini_client()
+
+    try:
+        # String concat, not an f-string: the transcript may contain { }.
+        prompt = (
+            'You are a construction field data parser. Parse the transcription below '
+            'into MULTIPLE activities, split by location.\n\n'
+            'CRITICAL RULES:\n'
+            '1. Each distinct LOCATION or work area becomes a SEPARATE activity.\n'
+            '2. Listen for location changes: "At Station...", "Moving to...", "Over at...", '
+            '"Next we have...", "Also at...". Also treat explicit markers like "new task", '
+            '"next activity", or "new activity" as a hard split.\n'
+            '3. DO NOT add any information that is not in the transcription. '
+            'DO NOT fabricate details. If the transcription is too vague to build an '
+            'activity from, return an empty activities array rather than inventing one.\n'
+            '4. summary_html MUST contain EVERY detail mentioned for that location. '
+            'Do NOT summarize or compress. Keep ALL station numbers, measurements, '
+            'quantities, and specifics.\n'
+            '5. EXTRACT manpower and equipment into their arrays. Remove resource counts '
+            'from summary_html.\n'
+            '6. Use the • (bullet) character for bullets in summary_html, one detail '
+            'per line separated by newlines. PLAIN TEXT only — no HTML tags.\n'
+            '7. If all work is at one location, return a SINGLE activity with ALL the detail.\n'
+            '8. COMPANY NAMES ARE CRITICAL: when a company, contractor or subcontractor is '
+            'named, put it in the "company" field of EVERY manpower and equipment row it '
+            'applies to. Never leave company blank if it was spoken.\n'
+            '9. TIME FORMAT: 12-hour AM/PM (e.g. "7:00 AM", "3:30 PM"). '
+            'NEVER military/24-hour time.\n'
+            '10. general_notes: 1-2 sentence HIGH-LEVEL overview of the day '
+            '(superintendent elevator pitch). Do NOT repeat station numbers, crew counts, '
+            'or equipment details — those belong in the activity summaries.\n\n'
+            'TRANSCRIPTION TO PARSE:\n---\n' + transcription + '\n---\n'
+        )
+
+        logger.info(f'[bulk-parse] Parsing {len(transcription)} chars of transcript')
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
+            contents=[prompt],
+            config=genai_types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type='application/json',
+                response_schema=BulkParseResult,
+                max_output_tokens=32768,
+            ),
+        )
+
+        problem = _finish_reason_problem(response)
+        raw_text = getattr(response, 'text', None) or ''
+        if problem and not raw_text:
+            raise HTTPException(status_code=502, detail=f'Parsing failed: {problem}')
+        if problem:
+            logger.warning(f'[bulk-parse] {problem}')
+
+        data = _clean_json(raw_text)
+        activities = data.get('activities', []) or []
+        logger.info(f'[bulk-parse] Parsed {len(activities)} activities')
+        for i, act in enumerate(activities):
+            logger.info(
+                f'[bulk-parse] Activity {i}: work_area="{act.get("work_area", "")}", '
+                f'manpower={len(act.get("manpower", []))}, '
+                f'equipment={len(act.get("equipment", []))}'
+            )
+
+        return BulkDictationResponse(
+            activities=activities,
+            raw_transcription=transcription,
+            locations=data.get('locations', ''),
+            general_notes=data.get('general_notes', ''),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f'[bulk-parse] Error: {exc}')
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post('/bulk-dictate-activities', response_model=BulkDictationResponse)
 async def bulk_dictate_activities_v2(request: BulkDictateRequest):
     """
-    Transcribe audio and split into multiple activities by location.
+    LEGACY one-shot dictation: transcribe and parse in a single call.
 
-    TWO-PASS APPROACH (prevents hallucination):
-      Pass 1 — TEXT MODE: Upload audio to Gemini Files API, transcribe faithfully.
-               No JSON forcing = model focuses on hearing the audio correctly.
-      Pass 2 — JSON MODE: Take the verified transcription text and parse it into
-               separate activities split by location.
+    Kept for the shipped Android APK, which has not been rebuilt against the
+    two-step flow. New clients should call /bulk-transcribe, show the text to
+    the user, then call /bulk-parse — that is what stops a bad recording from
+    turning into a fabricated report.
 
-    WHY NOT ONE PASS: Forcing JSON output while transcribing audio causes the model
-    to prioritize filling the JSON schema over faithful transcription. It fabricates
-    plausible-sounding construction content instead of transcribing what was said.
+    This wrapper reuses the same hardened helpers, so it inherits the retry,
+    finish-reason checks and schema enforcement. It still cannot show the user
+    the transcript before building activities, so on a failed or suspicious
+    transcription it returns NO activities rather than guessing.
     """
-    import base64
-    import os
-    import tempfile
-
     client, model_name = _get_gemini_client()
 
     try:
-        from google.genai import types as genai_types
+        audio_bytes = _decode_audio(request.audio_data)
+        logger.info(
+            f'[bulk-dictate] {len(audio_bytes)} bytes, '
+            f'{request.duration_seconds:.0f}s, {request.mime_type}'
+        )
 
-        audio_data = request.audio_data
-        if 'base64,' in audio_data:
-            audio_data = audio_data.split('base64,')[1]
-        audio_bytes = base64.b64decode(audio_data)
-        logger.info(f'[bulk-dictate] Audio decoded. Size: {len(audio_bytes)} bytes')
+        result = _transcribe_audio(
+            client, model_name, audio_bytes, request.mime_type,
+            request.duration_seconds,
+            extra_instructions=(
+                'VERBOSITY RULE: Capture EVERY detail the speaker mentions. Do NOT '
+                'summarize or compress. Include ALL station numbers, measurements, '
+                'quantities, pipe sizes, crew counts, and specifics.'
+            ),
+        )
 
-        # Guard: reject tiny audio
-        if len(audio_bytes) < 2000:
-            logger.warning(f'[bulk-dictate] Audio too small ({len(audio_bytes)} bytes), likely empty')
-            return BulkDictationResponse(activities=[], raw_transcription='Recording too short.')
-
-        suffix_map = {'audio/webm': '.webm', 'audio/mp3': '.mp3', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav'}
-        suffix = suffix_map.get(request.mime_type, '.webm')
-
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(audio_bytes)
-                tmp_path = tmp.name
-
-            uploaded = client.files.upload(file=tmp_path, config={'mime_type': request.mime_type})
-            logger.info(f'[bulk-dictate] File uploaded: {uploaded.name}')
-
-            # ─── PASS 1: Faithful transcription (TEXT mode, NOT JSON) ───
-            pass1_prompt = f"""{DICTATION_SYSTEM_PROMPT}
-
-VERBOSITY RULE: Capture EVERY detail the speaker mentions. Do NOT summarize or compress.
-If they speak 10 sentences of detail, output 10 sentences of detail. More is better than less.
-Include ALL station numbers, measurements, quantities, pipe sizes, crew counts, and specific details.
-
-Listen to the audio and transcribe it now. Organize into WORK DESCRIPTION, MANPOWER, and EQUIPMENT sections as instructed above.
-"""
-
-            logger.info('[bulk-dictate] Pass 1: Faithful transcription (text mode)...')
-            pass1_response = client.models.generate_content(
-                model=model_name,
-                contents=[
-                    genai_types.Content(role='user', parts=[
-                        genai_types.Part.from_text(text=pass1_prompt),
-                        genai_types.Part.from_uri(file_uri=uploaded.uri, mime_type=request.mime_type),
-                    ]),
-                ],
-                config=genai_types.GenerateContentConfig(
-                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                    max_output_tokens=16384,
-                ),
+        if result.status == 'failed':
+            logger.warning(f'[bulk-dictate] Transcription failed: {result.reason}')
+            return BulkDictationResponse(
+                activities=[],
+                raw_transcription=result.transcription or result.reason,
             )
 
-            raw_transcription = pass1_response.text.strip()
-            logger.info(f'[bulk-dictate] Pass 1 result ({len(raw_transcription)} chars): {raw_transcription[:1000]}')
-
-            # Guard: if model couldn't hear anything
-            if not raw_transcription or raw_transcription.startswith('| Please try again'):
-                logger.warning('[bulk-dictate] Pass 1 returned empty — no data')
-                return BulkDictationResponse(
-                    activities=[],
-                    raw_transcription=raw_transcription or 'Could not understand the recording. Please try again.',
-                )
-
-            # ─── PASS 2: Parse transcription into MULTIPLE activities by location ───
-            # NOTE: Using string concat (not f-string) because raw_transcription
-            # may contain literal { } that break f-string parsing.
-            pass2_prompt = (
-                'You are a construction field data parser. Parse the transcription below into MULTIPLE activities, split by location.\n\n'
-                'CRITICAL RULES:\n'
-                '1. Each distinct LOCATION or work area becomes a SEPARATE activity.\n'
-                '2. Listen for location changes: "At Station...", "Moving to...", "Over at...", "Next we have...", "Also at..."\n'
-                '3. DO NOT add any information that is not in the transcription. DO NOT fabricate details.\n'
-                '4. The summary_html for each activity MUST contain EVERY detail mentioned for that location.\n'
-                '   Do NOT summarize or compress. Keep ALL station numbers, measurements, quantities, and specifics.\n'
-                '5. EXTRACT manpower and equipment into their JSON arrays for each activity. Remove resource counts from summary_html.\n'
-                '6. Use the \u2022 (bullet) character for all bullets in summary_html. Never asterisks or dashes.\n'
-                '7. If all work is at one location, return a SINGLE activity in the array with ALL the detail.\n'
-                '8. Do NOT use HTML tags (<p>, <ul>, <li>, etc.). Use PLAIN TEXT with \u2022 bullet characters separated by newlines.\n'
-                '9. COMPANY NAMES ARE CRITICAL: When the speaker mentions a company, contractor, or subcontractor name, ALWAYS include it in the "company" field of EVERY manpower and equipment row for that company. Never leave company blank if it was spoken.\n'
-                '10. TIME FORMAT: Use standard 12-hour AM/PM format (e.g., "7:00 AM", "3:30 PM"). NEVER use military/24-hour time (e.g., NOT "15:00" or "0700").\n\n'
-                'TRANSCRIPTION TO PARSE:\n'
-                '---\n'
-                + raw_transcription + '\n'
-                '---\n\n'
-                'Return a JSON object with exactly these fields:\n'
-                '- "activities": array of activity objects, each containing:\n'
-                '    - "work_area": string (Location - Company - Work Type)\n'
-                '    - "stations": string (station range if mentioned, e.g. "Sta 100+00 to 101+50", or empty string if not mentioned)\n'
-                '    - "summary_html": string (PLAIN TEXT, not HTML. Each detail on its own line starting with \u2022 character)\n'
-                '    - "manpower": array of objects with: trade, name, company (MUST include if spoken), qty, hours, start_time (AM/PM), stop_time (AM/PM), is_extra_work, is_3rd_party, is_consultant\n'
-                '    - "equipment": array of objects with: name (specific unit), description (equipment type), company (MUST include if spoken), qty, hours, start_time (AM/PM), stop_time (AM/PM), is_extra_work, is_3rd_party, is_rental\n'
-                '- "locations": string (comma-separated list of all locations)\n'
-                '- "general_notes": string (1-2 sentence HIGH-LEVEL executive overview of the day. Example: "Continued pipeline installation along Morena Blvd with 4 active work areas. Weather clear, no delays." Do NOT repeat station numbers, crew counts, pipe sizes, or equipment details — those belong in the individual activity summaries. Think superintendent elevator pitch, not activity recap.)\n'
+        if result.status == 'suspect':
+            # Do not build activities from a transcript we do not trust.
+            logger.warning(f'[bulk-dictate] Suspect transcription: {result.reason}')
+            return BulkDictationResponse(
+                activities=[],
+                raw_transcription=result.transcription,
+                general_notes=result.reason,
             )
 
-            logger.info('[bulk-dictate] Pass 2: Parsing into activities by location (JSON mode)...')
-            pass2_response = client.models.generate_content(
-                model=model_name,
-                contents=[pass2_prompt],
-                config=genai_types.GenerateContentConfig(
-                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                    response_mime_type='application/json',
-                    max_output_tokens=32768,
-                ),
-            )
-
-            raw_text = pass2_response.text
-            logger.info(f'[bulk-dictate] Pass 2 raw response (first 2000 chars): {raw_text[:2000]}')
-            data = _clean_json(raw_text)
-
-            # Inject the full raw transcription from Pass 1
-            data['raw_transcription'] = raw_transcription
-
-            activities = data.get('activities', [])
-            logger.info(f'[bulk-dictate] Parsed {len(activities)} activities')
-
-            # Debug: Log each activity's structure so we can catch silent drops
-            for i, act in enumerate(activities):
-                has_summary = bool(act.get('summary_html') or act.get('summary'))
-                mp_count = len(act.get('manpower', []))
-                eq_count = len(act.get('equipment', []))
-                work_area = act.get('work_area', 'NO WORK AREA')
-                logger.info(
-                    f'[bulk-dictate] Activity {i}: work_area="{work_area}", '
-                    f'has_summary={has_summary}, manpower={mp_count}, equipment={eq_count}'
-                )
-                # If AI used 'summary' instead of 'summary_html', remap it
-                if not act.get('summary_html') and act.get('summary'):
-                    logger.warning(f'[bulk-dictate] Activity {i}: AI used "summary" instead of "summary_html" — remapping')
-                    act['summary_html'] = act['summary']
-                if mp_count == 0:
-                    logger.warning(f'[bulk-dictate] Activity {i}: ZERO manpower returned by AI')
-                if eq_count == 0:
-                    logger.warning(f'[bulk-dictate] Activity {i}: ZERO equipment returned by AI')
-
-            return BulkDictationResponse(**{k: data.get(k, v) for k, v in BulkDictationResponse().model_dump().items()})
-
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+        return await bulk_parse(BulkParseRequest(transcription=result.transcription))
 
     except HTTPException:
         raise
@@ -2299,9 +2498,27 @@ Extract EVERYTHING — do not summarize or skip any activities."""
             logger.info(f'[parse-report] Extracted {len(activities)} activities')
 
             # Create the report in storage
-            from app.services.reports import create_report
+            from app.services.reports import save_report
             import uuid
             from datetime import datetime
+
+            # Assign IDs and normalize the summary field name.
+            # The AI returns "summary_html"; the model, Word exporter and
+            # report-chat's surgical merge all key on "summary" and on row IDs.
+            _RESOURCE_KEYS = (
+                'manpower', 'equipment', 'extra_work_manpower',
+                'extra_work_equipment', 'consultant_manpower',
+            )
+            for act in activities:
+                act['id'] = act.get('id') or str(uuid.uuid4())
+                if not act.get('summary') and act.get('summary_html'):
+                    act['summary'] = act.pop('summary_html')
+                for key in _RESOURCE_KEYS:
+                    rows = act.get(key)
+                    if isinstance(rows, list):
+                        for row in rows:
+                            if isinstance(row, dict):
+                                row['id'] = row.get('id') or str(uuid.uuid4())
 
             report_data = {
                 'id': str(uuid.uuid4()),
@@ -2327,8 +2544,9 @@ Extract EVERYTHING — do not summarize or skip any activities."""
                 'updated_at': datetime.utcnow().isoformat(),
             }
 
-            saved = await create_report(report_data)
-            report_id = saved.get('id', report_data['id'])
+            # save_report returns the JSON file path, not the report dict.
+            await save_report(report_data)
+            report_id = report_data['id']
 
             return ParseReportResponse(
                 report_id=report_id,
@@ -2807,10 +3025,10 @@ def _find_tc_plan_pdf() -> str | None:
     1. Check tc_plan_path from settings (direct file path on disk)
     2. Search data/specs/ for any PDF whose name contains TCP or traffic control
     """
-    _base = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    from app.core.paths import SETTINGS_FILE, SPECS_DIR
 
     # ── Step 1: Check settings for explicit tc_plan_path ──
-    settings_path = os.path.join(_base, "data", "settings.json")
+    settings_path = SETTINGS_FILE
     if os.path.exists(settings_path):
         try:
             with open(settings_path, "r", encoding="utf-8") as f:
@@ -2825,7 +3043,7 @@ def _find_tc_plan_pdf() -> str | None:
             logger.warning(f'[generate-tc] Failed to read settings for tc_plan_path: {exc}')
 
     # ── Step 2: Scan data/specs/ ──
-    specs_dir = os.path.join(_base, "data", "specs")
+    specs_dir = SPECS_DIR
     if not os.path.exists(specs_dir):
         logger.debug('[generate-tc] specs directory does not exist')
         return None

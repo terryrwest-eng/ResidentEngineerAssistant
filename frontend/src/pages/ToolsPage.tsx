@@ -4,18 +4,20 @@
  * Field calculator tools — all computed client-side, no backend call needed.
  *
  * Tools:
- *   1. Pipe Water Volume Calculator (linear feet → gallons)
- *   2. Excavation Volume Calculator (L×W×D → CY)
- *   3. Unit Converter (feet↔inches, LF↔CY, °F↔°C)
- *   4. Concrete Calculator (volume → bags or yards)
+ * 1. Pipe Water Volume Calculator (linear feet → gallons)
+ * 2. Excavation Volume Calculator (L×W×D → CY)
+ * 3. Unit Converter (feet↔inches, LF↔CY, °F↔°C)
+ * 4. Concrete Calculator (volume → bags or yards)
  *
  * UX: Tab-based. All results appear inline immediately.
  * No forms that disappear when you tap outside.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { pdfApi } from '@/lib/api';
 import type { PdfDocument } from '@/lib/api';
+import { useConfirm } from '@/components/ui/ConfirmProvider';
 
 import {
   Droplets,
@@ -24,6 +26,8 @@ import {
   Box,
 
   Calculator,
+  CalendarClock,
+  ChevronRight,
   Search,
   Upload,
   Trash2,
@@ -36,6 +40,7 @@ type ToolTab = 'pipe' | 'excavation' | 'converter' | 'concrete' | 'pdf';
 
 export function ToolsPage() {
   const [activeTab, setActiveTab] = useState<ToolTab>('pipe');
+  const navigate = useNavigate();
 
   const tabs: { id: ToolTab; label: string; icon: React.ReactNode }[] = [
     { id: 'pipe', label: 'Pipe Volume', icon: <Droplets size={18} /> },
@@ -56,6 +61,33 @@ export function ToolsPage() {
           Construction calculators — results update instantly
         </p>
       </div>
+
+      {/* Backfill lives on its own page — it is a workflow, not a calculator */}
+      <button
+        onClick={() => navigate('/backfill')}
+        className="card"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--space-md)',
+          width: '100%',
+          padding: 'var(--space-md)',
+          marginBottom: 'var(--space-lg)',
+          textAlign: 'left',
+          cursor: 'pointer',
+          border: '1px solid var(--color-border)',
+          fontFamily: 'var(--font-sans)',
+        }}
+      >
+        <CalendarClock size={22} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>Backfill Reports</div>
+          <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-tertiary)' }}>
+            Rebuild missed days from scanned contractor timesheets
+          </div>
+        </div>
+        <ChevronRight size={18} style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }} />
+      </button>
 
       {/* Tool tabs */}
       <div style={{
@@ -612,6 +644,7 @@ interface ChatMessage {
 }
 
 function PDFSearchTool() {
+  const confirm = useConfirm();
   const [documents, setDocuments] = useState<PdfDocument[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
@@ -669,7 +702,13 @@ function PDFSearchTool() {
   };
 
   const handleDelete = async (docId: string) => {
-    if (!confirm('Delete this document?')) return;
+    const ok = await confirm({
+      title: 'Delete this document?',
+      message: 'It is removed from the searchable library. You can upload it again later.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await pdfApi.delete(docId);
       setDocuments(prev => prev.filter(d => d.id !== docId));
@@ -897,7 +936,7 @@ function PDFSearchTool() {
                 maxWidth: '90%',
                 padding: 'var(--space-sm) var(--space-md)',
                 borderRadius: 'var(--radius)',
-                backgroundColor: msg.role === 'user' ? 'var(--primary, var(--color-accent))' : 'var(--color-surface)',
+                backgroundColor: msg.role === 'user' ? 'var(--color-accent)' : 'var(--color-surface)',
                 color: msg.role === 'user' ? 'white' : 'var(--color-text-primary)',
                 border: msg.role === 'assistant' ? '1px solid var(--color-border)' : 'none',
                 fontSize: '0.85rem',

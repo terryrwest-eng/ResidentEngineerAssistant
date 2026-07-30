@@ -6,15 +6,16 @@
  * Supports extra work and consultant sections.
  *
  * AI Features:
- *   - ✨ AI Rewrite button in summary toolbar
- *   - 🤖 AI Assistant side panel (WWWW + generate)
- *   - 📷 Update with Media (Smart Merge) panel
+ * -  AI Rewrite button in summary toolbar
+ * -  AI Assistant side panel (WWWW + generate)
+ * -  Update with Media (Smart Merge) panel
  *
  * This is an ON-PAGE section, NOT a modal.
  * Clicking outside does nothing. You close it by collapsing it.
  */
 
 import { useState, useRef, useCallback, useMemo } from 'react';
+import { DocTally } from '@/components/ui/Doc';
 import { useReportStore } from '@/stores/reportStore';
 import { ResourceTable } from '@/components/report/ResourceTable';
 import { AIReportAssistant } from '@/components/report/AIReportAssistant';
@@ -42,6 +43,7 @@ import {
   Clock,
   AlertCircle,
   X,
+  CheckCircle2,
 } from 'lucide-react';
 
 // ============================================
@@ -445,44 +447,66 @@ export function ActivityEditor({
   const eqCount = (activity.equipment?.length || 0) +
     (activity.extra_work_equipment?.length || 0);
 
+  // What this activity still needs, shown on the collapsed header so you can
+  // see what wants attention without opening all five resource tables.
+  // "Hours" counts only rows that have a resource picked — an empty placeholder
+  // row is not a missing-hours problem.
+  const gaps: string[] = [];
+  if (!activity.work_area?.trim()) gaps.push('location');
+  if (!activity.summary?.trim()) gaps.push('summary');
+  if (mpCount === 0) gaps.push('crew');
+  else {
+    const filled = [
+      ...(activity.manpower || []),
+      ...(activity.extra_work_manpower || []),
+      ...(activity.consultant_manpower || []),
+    ].filter((r) => r.trade?.trim());
+    if (filled.length > 0 && filled.some((r) => !r.hours)) gaps.push('hours');
+  }
+
   return (
     <>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        {/* Collapsible Header */}
+      <div className="doc-activity" data-open={isExpanded}>
+        {/* Collapsible Header — the activity is the content of the report, so
+            it gets a number, a real heading, and its location as a subtitle.
+            Previously this was a thin strip with the same weight as everything
+            else on the page. */}
         <button
           type="button"
           onClick={onToggle}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            width: '100%',
-            padding: 'var(--space-md) var(--space-lg)',
-            border: 'none',
-            background: isExpanded ? 'var(--color-accent-light)' : 'var(--color-surface)',
-            cursor: 'pointer',
-            fontFamily: 'var(--font-sans)',
-            transition: 'background 0.12s ease',
-            textAlign: 'left',
-          }}
+          className="doc-activity-head"
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-            {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-            <span className="font-semibold" style={{ fontSize: '0.9375rem' }}>
-              Activity {index + 1}
-              {activity.work_area ? ` — ${activity.work_area}` : ''}
+          <span className="doc-activity-index">{index + 1}</span>
+
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span className="doc-activity-title">
+              {activity.work_area || `Activity ${index + 1}`}
             </span>
-          </div>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-md)',
-            fontSize: '0.75rem',
-            color: 'var(--color-text-tertiary)',
+            {(activity.stations || !activity.work_area) && (
+              <span className="doc-activity-sub">
+                {activity.stations || 'No location set'}
+              </span>
+            )}
+          </span>
+
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 'var(--space-md)',
+            flexShrink: 0,
           }}>
-            {mpCount > 0 && <span>{mpCount} personnel</span>}
-            {eqCount > 0 && <span>{eqCount} equipment</span>}
-          </div>
+            {mpCount > 0 && <DocTally value={mpCount} label="crew" />}
+            {eqCount > 0 && <DocTally value={eqCount} label="equip" />}
+            {gaps.length > 0 ? (
+              <span
+                className="doc-status doc-status-warn"
+                title={`Still needed: ${gaps.join(', ')}`}
+              >
+                {gaps.length === 1 ? gaps[0] : `${gaps.length} missing`}
+              </span>
+            ) : (
+              <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
+            )}
+            {isExpanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+          </span>
         </button>
 
         {/* Expanded Content */}
@@ -525,13 +549,13 @@ export function ActivityEditor({
               }}>
                 <label className="label" style={{ margin: 0 }}>Work Summary</label>
                 <div style={{ display: 'flex', gap: 'var(--space-xs)', flexWrap: 'wrap' }}>
-                  {/* 🎤 Smart Dictate — record voice → AI parses summary + resources */}
+                  {/* Smart Dictate — record voice → AI parses summary + resources */}
                   <button
                     className={`btn btn-ghost btn-sm ${isRecording ? 'btn-recording' : ''}`}
                     onClick={handleVoiceRecord}
                     disabled={isProcessingAudio}
                     title={isRecording ? 'Stop recording' : isProcessingAudio ? 'Processing...' : 'Smart Dictate — speak to fill summary + resources'}
-                    style={{ fontSize: '0.6875rem', padding: '2px 8px', gap: '3px', color: isRecording ? 'var(--color-danger, #dc2626)' : undefined }}
+                    style={{ fontSize: '0.6875rem', padding: '2px 8px', gap: '3px', color: isRecording ? 'var(--color-danger)' : undefined }}
                   >
                     {isProcessingAudio ? (
                       <><Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} /> Processing...</>
@@ -541,7 +565,7 @@ export function ActivityEditor({
                       <><Mic size={12} /> Dictate</>
                     )}
                   </button>
-                  {/* 📸 Camera — opens device camera for document capture */}
+                  {/* Camera — opens device camera for document capture */}
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => setShowPhoneScanner(true)}
@@ -552,10 +576,10 @@ export function ActivityEditor({
                     {scanningFromCamera ? (
                       <><Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} /> Scanning...</>
                     ) : (
-                      <><Camera size={12} /> 📸 Camera</>
+                      <><Camera size={12} /> Camera</>
                     )}
                   </button>
-                  {/* 📄 Scan Timesheet — file upload */}
+                  {/* Scan Timesheet — file upload */}
                   <input
                     ref={timesheetInputRef}
                     type="file"
@@ -574,7 +598,7 @@ export function ActivityEditor({
                     {isScanning ? (
                       <><Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} /> Scanning...</>
                     ) : (
-                      <><FileText size={12} /> 📄 Scan Timesheet</>
+                      <><FileText size={12} /> Scan Timesheet</>
                     )}
                   </button>
                   {/* AI Rewrite button */}
@@ -807,7 +831,7 @@ export function ActivityEditor({
             <CollapsibleResourceSection
               icon={<Users size={16} />}
               label="Consultants"
-              color="#8B5CF6"
+              color="var(--color-ai)"
               count={activity.consultant_manpower?.length || 0}
               isExpanded={expandedSections.has('consultants')}
               onToggle={() => setExpandedSections(prev => {

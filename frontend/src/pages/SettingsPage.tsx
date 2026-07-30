@@ -2,12 +2,12 @@
  * Daily Reporter V3 — Settings Page
  *
  * Tabs:
- *   Preferences     → Project defaults, default RE, default times, projects list, companies list, API key
- *   Resource Codes  → Custom labor (LL-) and equipment (LE-) codes for resource table dropdowns
- *   Templates       → Built-in activity templates (read-only) + user custom templates (add/delete)
+ * Preferences → Project defaults, default RE, default times, projects list, companies list, API key
+ * Resource Codes → Custom labor (LL-) and equipment (LE-) codes for resource table dropdowns
+ * Templates → Built-in activity templates (read-only) + user custom templates (add/delete)
  *
  * WHY: All lists from the legacy app are migrated here. They feed dropdowns in the report
- *      editor (trade selector, equipment selector, company field, project field).
+ * editor (trade selector, equipment selector, company field, project field).
  */
 
 import { useEffect, useState } from 'react';
@@ -23,6 +23,7 @@ import {
   Building2,
   Clock,
   Loader2,
+  MapPin,
   X,
 } from 'lucide-react';
 import { settingsApi, type AppSettings } from '../lib/settingsApi';
@@ -37,18 +38,18 @@ interface UserTemplate {
 }
 
 const BUILTIN_TEMPLATES: UserTemplate[] = [
-  { id: 'excavation',      name: 'Excavation',             body: 'Excavated Sta ___ to ___. Maintained trench width and limits per plans.' },
-  { id: 'pipe-install',    name: 'Pipe Installation',      body: 'Installed pipe Sta ___ to ___. Checked bedding, alignment, and joint spacing.' },
-  { id: 'backfill',        name: 'Backfill / Compaction',  body: 'Backfilled Sta ___ to ___ in lifts. Compacted per spec.' },
-  { id: 'concrete',        name: 'Concrete Placement',     body: 'Placed concrete at ___. Verified forms, rebar, and embeds prior to pour.' },
-  { id: 'shoring',         name: 'Shoring / Trench Safety',body: 'Installed/adjusted shoring at ___ per manufacturer data.' },
-  { id: 'dewatering',      name: 'Dewatering',             body: 'Dewatered trench at ___. Pumps set, discharge directed to approved location.' },
-  { id: 'traffic-control', name: 'Traffic Control',        body: 'Traffic control set per approved plan. Flaggers and signs in place.' },
-  { id: 'hydrotest',       name: 'Hydrostatic Test',       body: 'Hydrostatic test on segment Sta ___ to ___ at ___ psi for ___ hours.' },
-  { id: 'grading',         name: 'Grading / Subgrade',     body: 'Graded subgrade at ___. Checked elevations and slopes.' },
-  { id: 'cctv',            name: 'CCTV Inspection',        body: 'CCTV inspection performed Sta ___ to ___. Video recorded and submitted.' },
-  { id: 'manhole',         name: 'Manhole Installation',   body: 'Manhole installed at Sta ___. Grade rings set. Frame and cover set to grade.' },
-  { id: 'paving',          name: 'AC Paving',              body: 'AC paving placed at ___. Thickness ___". Compacted and checked for smoothness.' },
+  { id: 'excavation', name: 'Excavation', body: 'Excavated Sta ___ to ___. Maintained trench width and limits per plans.' },
+  { id: 'pipe-install', name: 'Pipe Installation', body: 'Installed pipe Sta ___ to ___. Checked bedding, alignment, and joint spacing.' },
+  { id: 'backfill', name: 'Backfill / Compaction', body: 'Backfilled Sta ___ to ___ in lifts. Compacted per spec.' },
+  { id: 'concrete', name: 'Concrete Placement', body: 'Placed concrete at ___. Verified forms, rebar, and embeds prior to pour.' },
+  { id: 'shoring', name: 'Shoring / Trench Safety',body: 'Installed/adjusted shoring at ___ per manufacturer data.' },
+  { id: 'dewatering', name: 'Dewatering', body: 'Dewatered trench at ___. Pumps set, discharge directed to approved location.' },
+  { id: 'traffic-control', name: 'Traffic Control', body: 'Traffic control set per approved plan. Flaggers and signs in place.' },
+  { id: 'hydrotest', name: 'Hydrostatic Test', body: 'Hydrostatic test on segment Sta ___ to ___ at ___ psi for ___ hours.' },
+  { id: 'grading', name: 'Grading / Subgrade', body: 'Graded subgrade at ___. Checked elevations and slopes.' },
+  { id: 'cctv', name: 'CCTV Inspection', body: 'CCTV inspection performed Sta ___ to ___. Video recorded and submitted.' },
+  { id: 'manhole', name: 'Manhole Installation', body: 'Manhole installed at Sta ___. Grade rings set. Frame and cover set to grade.' },
+  { id: 'paving', name: 'AC Paving', body: 'AC paving placed at ___. Thickness ___". Compacted and checked for smoothness.' },
 ];
 
 type Tab = 'preferences' | 'resourcecodes' | 'templates';
@@ -76,22 +77,28 @@ export function SettingsPage() {
   const [newProject, setNewProject]            = useState('');
   const [companies, setCompanies]              = useState<string[]>([]);
   const [newCompany, setNewCompany]            = useState('');
+  // Backfill reads its own settings keys (project_number / project_location).
+  // These mirror the default_* values above so one visible field keeps both in
+  // sync — see the Project Number / Project Location inputs below.
+  const [projectNumber, setProjectNumber] = useState('');
+  const [projectLocation, setProjectLocation] = useState('');
+  const [filenamePrefix, setFilenamePrefix] = useState('');
 
   // Gemini key state
-  const [geminiKey, setGeminiKey]     = useState('');
-  const [hasKey, setHasKey]           = useState(false);
-  const [savingKey, setSavingKey]     = useState(false);
+  const [geminiKey, setGeminiKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
 
   // Custom resource codes state
-  const [customLabor, setCustomLabor]       = useState<string[]>([]);
+  const [customLabor, setCustomLabor] = useState<string[]>([]);
   const [customEquipment, setCustomEquipment] = useState<string[]>([]);
-  const [newLaborDesc, setNewLaborDesc]     = useState('');
-  const [newEquipDesc, setNewEquipDesc]     = useState('');
+  const [newLaborDesc, setNewLaborDesc] = useState('');
+  const [newEquipDesc, setNewEquipDesc] = useState('');
 
   // Templates state
-  const [userTemplates, setUserTemplates]   = useState<UserTemplate[]>([]);
-  const [newTplName, setNewTplName]         = useState('');
-  const [newTplBody, setNewTplBody]         = useState('');
+  const [userTemplates, setUserTemplates] = useState<UserTemplate[]>([]);
+  const [newTplName, setNewTplName] = useState('');
+  const [newTplBody, setNewTplBody] = useState('');
 
   // ── Load ────────────────────────────────────────────────────────────────────
 
@@ -105,8 +112,11 @@ export function SettingsPage() {
         setSettings(s);
         setDefaultProject(s.default_project || '');
         setDefaultRE(s.default_resident_engineer || '');
-        setDefaultProjectNumber(s.default_project_number || '');
-        setDefaultProjectLocation(s.default_project_location || '');
+        // The default_* and bare keys mirror each other (one visible field
+        // writes both), so fall back across them — settings saved before the
+        // merge only populated one of the pair.
+        setDefaultProjectNumber(s.default_project_number || s.project_number || '');
+        setDefaultProjectLocation(s.default_project_location || s.project_location || '');
         setDefaultInspector(s.default_inspector_name || '');
         setDefaultCompany(s.default_company || '');
         setDefaultZip(s.default_zip_code || '');
@@ -114,6 +124,9 @@ export function SettingsPage() {
         setDefaultStop(s.default_stop_time || '3:30 PM');
         setProjects(s.projects || []);
         setCompanies(s.companies || []);
+        setProjectNumber(s.project_number || s.default_project_number || '');
+        setProjectLocation(s.project_location || s.default_project_location || '');
+        setFilenamePrefix(s.word_filename_prefix || '');
         setCustomLabor(s.custom_resource_codes?.labor || []);
         setCustomEquipment(s.custom_resource_codes?.equipment || []);
         setUserTemplates(s.user_templates || []);
@@ -152,6 +165,9 @@ export function SettingsPage() {
         default_zip_code: defaultZip.trim(),
         default_start_time: defaultStart.trim(),
         default_stop_time: defaultStop.trim(),
+        project_number: projectNumber.trim(),
+        project_location: projectLocation.trim(),
+        word_filename_prefix: filenamePrefix.trim(),
         projects,
         companies,
         user_templates: userTemplates,
@@ -300,9 +316,9 @@ export function SettingsPage() {
   }
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: 'preferences',   label: 'Preferences',    icon: <Settings size={16} /> },
-    { id: 'resourcecodes', label: 'Resource Codes',  icon: <ListChecks size={16} /> },
-    { id: 'templates',     label: 'Templates',       icon: <FileText size={16} /> },
+    { id: 'preferences', label: 'Preferences', icon: <Settings size={16} /> },
+    { id: 'resourcecodes', label: 'Resource Codes', icon: <ListChecks size={16} /> },
+    { id: 'templates', label: 'Templates', icon: <FileText size={16} /> },
   ];
 
   return (
@@ -366,12 +382,24 @@ export function SettingsPage() {
                 <input className="input" value={defaultRE} onChange={e => setDefaultRE(e.target.value)} placeholder="e.g., John Smith" />
               </div>
               <div>
-                <label className="label">Default Project Number</label>
-                <input className="input" value={defaultProjectNumber} onChange={e => setDefaultProjectNumber(e.target.value)} placeholder="e.g., C-346" />
+                <label className="label">Project Number</label>
+                {/* Writes both settings keys: Quick Create reads
+                    default_project_number, Backfill reads project_number. */}
+                <input
+                  className="input"
+                  value={defaultProjectNumber}
+                  onChange={e => { setDefaultProjectNumber(e.target.value); setProjectNumber(e.target.value); }}
+                  placeholder="e.g., C-346"
+                />
               </div>
               <div>
-                <label className="label">Default Project Location</label>
-                <input className="input" value={defaultProjectLocation} onChange={e => setDefaultProjectLocation(e.target.value)} placeholder="e.g., San Diego, CA" />
+                <label className="label">Project Location</label>
+                <input
+                  className="input"
+                  value={defaultProjectLocation}
+                  onChange={e => { setDefaultProjectLocation(e.target.value); setProjectLocation(e.target.value); }}
+                  placeholder="e.g., San Diego, CA"
+                />
               </div>
               <div>
                 <label className="label">Default Inspector</label>
@@ -384,11 +412,39 @@ export function SettingsPage() {
                   {companies.map((c, i) => <option key={i} value={c} />)}
                 </datalist>
               </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label className="label">File name fallback</label>
+                <input
+                  className="input"
+                  value={filenamePrefix}
+                  onChange={e => setFilenamePrefix(e.target.value)}
+                  placeholder="Morena Conveyance North"
+                />
+                <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                  Word files are named from the report's <strong>project name</strong>:{' '}
+                  <code style={{ fontFamily: 'var(--font-mono)' }}>
+                    {(defaultProject || filenamePrefix || 'Morena Conveyance North')} - Daily-TW-MM-DD-YYYY.docx
+                  </code>
+                  <br />
+                  This box is only used for a report with no project name set.
+                </p>
+              </div>
               <div>
-                <label className="label">Default ZIP Code</label>
-                <input className="input" value={defaultZip} onChange={e => setDefaultZip(e.target.value)} placeholder="e.g., 92101" inputMode="numeric" />
-                <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Used for weather when device location isn't available, or when you leave the ZIP blank on Quick Create.
+                <label className="label">
+                  <MapPin size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+                  Project ZIP Code
+                </label>
+                <input
+                  className="input"
+                  value={defaultZip}
+                  onChange={e => setDefaultZip(e.target.value)}
+                  placeholder="e.g., 92122"
+                  inputMode="numeric"
+                  maxLength={10}
+                />
+                <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+                  Used for weather when GPS isn't available, and by the Backfill wizard to
+                  look up historical weather for past dates.
                 </p>
               </div>
             </div>
@@ -487,7 +543,7 @@ export function SettingsPage() {
       {/* ── RESOURCE CODES TAB ── */}
       {activeTab === 'resourcecodes' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
-          <div style={{ background: 'var(--info-bg, #eff6ff)', border: '1px solid var(--info-border, #bfdbfe)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', fontSize: 13, color: 'var(--info-text, #1e40af)' }}>
+          <div style={{ background: 'var(--color-info-light)', border: '1px solid var(--color-info-border)', borderRadius: 'var(--radius-md)', padding: 'var(--space-md)', fontSize: 13, color: 'var(--color-info)' }}>
             <strong>Custom Resource Codes</strong> are added to the resource table dropdowns alongside the built-in PMWeb codes. Enter a description and the next available code number will be auto-assigned.
           </div>
 
