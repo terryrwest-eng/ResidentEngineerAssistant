@@ -295,24 +295,22 @@ def find_report_by_date(report_date: str, project_name: str = "") -> Optional[di
 
     Returns the oldest match, so repeated accidents keep collapsing onto the
     original rather than hopping between duplicates.
+
+    The project is matched exactly, including when it is empty. Treating an
+    empty project as "match any project on this date" would let a blank new
+    report adopt — and therefore overwrite — a finished report belonging to a
+    real project, since a report starts with no project name until one is typed.
     """
     if not report_date:
         return None
 
     conn = get_connection()
     try:
-        if project_name:
-            row = conn.execute(
-                "SELECT * FROM reports WHERE report_date = ? AND project_name = ? "
-                "ORDER BY created_at ASC LIMIT 1",
-                (report_date, project_name),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM reports WHERE report_date = ? "
-                "ORDER BY created_at ASC LIMIT 1",
-                (report_date,),
-            ).fetchone()
+        row = conn.execute(
+            "SELECT * FROM reports WHERE report_date = ? AND project_name = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (report_date, project_name or ""),
+        ).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()

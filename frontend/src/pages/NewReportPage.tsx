@@ -14,6 +14,7 @@ import { useEffect, useCallback, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useReportStore } from '@/stores/reportStore';
 import { NavigationGuard } from '@/components/ui/NavigationGuard';
+import { DuplicateDateWarning } from '@/components/report/DuplicateDateWarning';
 import { GeneralInfoForm } from '@/components/report/GeneralInfoForm';
 import { ActivityList } from '@/components/report/ActivityList';
 import { PMWebPreview } from '@/components/report/PMWebPreview';
@@ -189,6 +190,10 @@ export function NewReportPage() {
   return (
     <div>
       <NavigationGuard />
+
+      {/* Shown only when a report already exists for this date — nothing has
+          been saved or overwritten; the user chooses what happens. */}
+      <DuplicateDateWarning />
 
       {/* PMWeb Combined Preview panel */}
       {report?.id && (
