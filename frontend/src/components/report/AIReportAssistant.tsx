@@ -19,6 +19,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { scanApi } from '@/lib/api';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
+import { useMicLevel } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import {
   X,
   Sparkles,
@@ -89,6 +91,8 @@ export function AIReportAssistant({
 
   // Voice recording state
   const [isRecording, setIsRecording] = useState(false);
+  /** Live mic level — a flat bar means the mic isn't picking you up. */
+  const mic = useMicLevel('ai-assistant');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -271,6 +275,7 @@ export function AIReportAssistant({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       audioChunksRef.current = [];
+      mic.start(stream);
 
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -289,6 +294,7 @@ export function AIReportAssistant({
           streamRef.current.getTracks().forEach(t => t.stop());
           streamRef.current = null;
         }
+        mic.stop();
         if (blob.size > 2000) {
           handleSendAudio(blob);
         } else {
@@ -607,21 +613,27 @@ export function AIReportAssistant({
         {/* Recording indicator */}
         {isRecording && (
           <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            gap: 'var(--space-xs)', marginBottom: 'var(--space-sm)',
             padding: 'var(--space-xs) var(--space-sm)',
             backgroundColor: 'rgba(239, 68, 68, 0.08)',
             borderRadius: 'var(--radius-sm)',
             border: '1px solid rgba(239, 68, 68, 0.2)',
           }}>
             <div style={{
-              width: '8px', height: '8px', borderRadius: '50%',
-              backgroundColor: 'var(--color-danger)',
-              animation: 'pulse-dot 1.2s ease-in-out infinite',
-            }} />
-            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-danger)' }}>
-              Recording {formatDuration(recordingDuration)}
-            </span>
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 'var(--space-sm)',
+            }}>
+              <div style={{
+                width: '8px', height: '8px', borderRadius: '50%',
+                backgroundColor: 'var(--color-danger)',
+                animation: 'pulse-dot 1.2s ease-in-out infinite',
+              }} />
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-danger)' }}>
+                Recording {formatDuration(recordingDuration)}
+              </span>
+            </div>
+            <MicLevelMeter {...mic} />
           </div>
         )}
 

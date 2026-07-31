@@ -10,6 +10,8 @@
 import { useState, useRef, useCallback } from 'react';
 import { scanApi } from '@/lib/api';
 import type { Activity } from '@/types';
+import { useMicLevel } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import {
   Camera,
   Mic,
@@ -47,6 +49,8 @@ export function ActivityUpdatePanel({ activity, onApply, onClose }: ActivityUpda
 
   // Audio recording
   const [isRecording, setIsRecording] = useState(false);
+  /** Live mic level — a flat bar means the mic isn't picking you up. */
+  const mic = useMicLevel('activity-update');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -66,6 +70,7 @@ export function ActivityUpdatePanel({ activity, onApply, onClose }: ActivityUpda
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
+      mic.start(stream);
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -95,6 +100,7 @@ export function ActivityUpdatePanel({ activity, onApply, onClose }: ActivityUpda
 
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         mediaRecorderRef.current?.stream.getTracks().forEach((t) => t.stop());
+        mic.stop();
 
         if (blob.size < 1000) {
           setError('Recording too short.');
@@ -302,6 +308,9 @@ export function ActivityUpdatePanel({ activity, onApply, onClose }: ActivityUpda
             <><Mic size={14} /> Record</>
           )}
         </button>
+
+        {/* Live mic level — a flat bar means the mic isn't picking you up. */}
+        {isRecording && <MicLevelMeter {...mic} compact style={{ maxWidth: '140px' }} />}
 
         {/* Process file button */}
         {file && !applied && (

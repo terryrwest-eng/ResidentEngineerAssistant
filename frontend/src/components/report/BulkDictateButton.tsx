@@ -19,6 +19,8 @@ import { useReportStore } from '@/stores/reportStore';
 import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
+import { useMicLevel, MIC_SILENCE_THRESHOLD } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import {
   Mic,
   MicOff,
@@ -88,10 +90,8 @@ export function BulkDictateButton() {
   // Transcript confirmation step (between recording and building activities)
   const [transcript, setTranscript] = useState('');
   const [transcriptWarning, setTranscriptWarning] = useState<string | null>(null);
-  /** Live mic level 0..1 — proves the mic is actually picking up sound. */
-  const [micLevel, setMicLevel] = useState(0);
-  /** Peak level seen during the take; near-zero means a dead mic. */
-  const [peakLevel, setPeakLevel] = useState(0);
+  /** Live mic level — proves the mic is actually picking up sound. */
+  const mic = useMicLevel('bulk-dictate');
 
   // The recorded audio blob — persists until explicitly discarded
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -102,57 +102,6 @@ export function BulkDictateButton() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mimeTypeRef = useRef<string>('audio/webm');
   const durationRef = useRef(0);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const peakRef = useRef(0);
-
-  /** Tear down the level meter's audio graph. */
-  const stopMeter = useCallback(() => {
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
-    setMicLevel(0);
-  }, []);
-
-  /** Drive the live level meter from the recording stream. */
-  const startMeter = useCallback((stream: MediaStream) => {
-    try {
-      const Ctx = window.AudioContext
-        ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
-      audioCtxRef.current = ctx;
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      source.connect(analyser);
-
-      const buf = new Uint8Array(analyser.frequencyBinCount);
-      const tick = () => {
-        analyser.getByteTimeDomainData(buf);
-        // RMS around the 128 midpoint → rough loudness
-        let sum = 0;
-        for (let i = 0; i < buf.length; i++) {
-          const v = (buf[i] - 128) / 128;
-          sum += v * v;
-        }
-        const level = Math.min(1, Math.sqrt(sum / buf.length) * 4);
-        setMicLevel(level);
-        if (level > peakRef.current) {
-          peakRef.current = level;
-          setPeakLevel(level);
-        }
-        rafRef.current = requestAnimationFrame(tick);
-      };
-      tick();
-    } catch (e) {
-      console.warn('[BulkDictate] Level meter unavailable:', e);
-    }
-  }, []);
-
   // --- Recording ---
   const startRecording = useCallback(async () => {
     let stream: MediaStream;
@@ -165,8 +114,6 @@ export function BulkDictateButton() {
 
     try {
       chunksRef.current = [];
-      peakRef.current = 0;
-      setPeakLevel(0);
 
       const mimeType = pickMimeType();
       mimeTypeRef.current = mimeType || 'audio/webm';
@@ -189,7 +136,7 @@ export function BulkDictateButton() {
       recorder.onstop = () => {
         if (timerRef.current) clearInterval(timerRef.current);
         stream.getTracks().forEach((t) => t.stop());
-        stopMeter();
+        mic.stop();
 
         const type = recorder.mimeType || mimeTypeRef.current;
         mimeTypeRef.current = type.split(';')[0];
@@ -213,12 +160,12 @@ export function BulkDictateButton() {
           size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`,
           duration: `${secs}s`,
           bytesPerSec: Math.round(bytesPerSec),
-          peakLevel: peakRef.current.toFixed(3),
+          peakLevel: mic.getPeak().toFixed(3),
           mimeType: type,
         });
 
         // Warn about a silent take up front rather than after a wasted AI call.
-        if (peakRef.current < 0.02) {
+        if (mic.getPeak() < MIC_SILENCE_THRESHOLD) {
           setError(
             'Almost no sound was detected during that recording — the mic may be muted or blocked. ' +
             'You can still process it, but check the transcript carefully.',
@@ -236,7 +183,7 @@ export function BulkDictateButton() {
       setTranscript('');
       setTranscriptWarning(null);
       setAdded(false);
-      startMeter(stream);
+      mic.start(stream);
 
       timerRef.current = setInterval(() => {
         durationRef.current += 1;
@@ -244,12 +191,12 @@ export function BulkDictateButton() {
       }, 1000);
     } catch (e) {
       stream.getTracks().forEach((t) => t.stop());
-      stopMeter();
+      mic.stop();
       const msg = e instanceof Error ? e.message : String(e);
       setError(`Could not start recording on this device (${msg}).`);
       console.error('[BulkDictate] start failed:', e);
     }
-  }, [startMeter, stopMeter]);
+  }, [mic]);
 
   const stopRecording = useCallback(() => {
     if (!mediaRecorderRef.current) return;
@@ -580,32 +527,10 @@ export function BulkDictateButton() {
             {/* Live mic level — a flat bar means the mic isn't picking you up,
                 which is visible NOW instead of after a wasted 5-minute take. */}
             {phase === 'recording' && (
-              <div style={{ marginTop: 'var(--space-md)', maxWidth: '260px', marginInline: 'auto' }}>
-                <div style={{
-                  height: '8px',
-                  background: 'var(--color-surface-active)',
-                  borderRadius: 'var(--radius-full)',
-                  overflow: 'hidden',
-                }}>
-                  <div style={{
-                    height: '100%',
-                    width: `${Math.round(micLevel * 100)}%`,
-                    background: micLevel > 0.02 ? 'var(--color-success)' : 'var(--color-danger)',
-                    borderRadius: 'var(--radius-full)',
-                    transition: 'width 80ms linear',
-                  }} />
-                </div>
-                <p style={{
-                  marginTop: '6px',
-                  fontSize: '0.6875rem',
-                  color: peakLevel < 0.02 ? 'var(--color-danger)' : 'var(--color-text-tertiary)',
-                  fontWeight: peakLevel < 0.02 ? 600 : 400,
-                }}>
-                  {peakLevel < 0.02
-                    ? 'No sound detected — check your mic'
-                    : 'Mic is picking up sound'}
-                </p>
-              </div>
+              <MicLevelMeter
+                {...mic}
+                style={{ marginTop: 'var(--space-md)', marginInline: 'auto' }}
+              />
             )}
 
             <p style={{ marginTop: 'var(--space-md)', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>

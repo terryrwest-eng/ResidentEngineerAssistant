@@ -25,6 +25,8 @@ import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
 import { applyEndTimeToRows, isEndTimeApplied, formatEndTime } from '@/lib/dispatchHelpers';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
+import { useMicLevel } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import {
   ChevronDown,
   ChevronRight,
@@ -188,6 +190,8 @@ export function ActivityEditor({
   const [showPhoneScanner, setShowPhoneScanner] = useState(false);
   const [scanningFromCamera, setScanningFromCamera] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  /** Live mic level — a flat bar means the mic isn't picking you up. */
+  const mic = useMicLevel('activity-editor');
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
 
@@ -296,11 +300,13 @@ export function ActivityEditor({
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
+      mic.start(stream);
       recorder.ondataavailable = (ev) => audioChunksRef.current.push(ev.data);
       recorder.onstop = async () => {
         setIsRecording(false);
         setIsProcessingAudio(true);
         stream.getTracks().forEach((t) => t.stop());
+        mic.stop();
         try {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           const reader = new FileReader();
@@ -640,6 +646,10 @@ export function ActivityEditor({
                   </button>
                 </div>
               </div>
+              {/* Live mic level — a flat bar means Smart Dictate isn't hearing you. */}
+              {isRecording && (
+                <MicLevelMeter {...mic} style={{ marginBottom: '6px' }} />
+              )}
               {rewriteError && (
                 <div style={{
                   display: 'flex',

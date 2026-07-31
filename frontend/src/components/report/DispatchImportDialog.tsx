@@ -27,6 +27,8 @@ import type {
   ManpowerRow,
   EquipmentRow,
 } from '@/types';
+import { useMicLevel } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import {
   Truck, Upload, Loader2, AlertCircle, CheckCircle2, X,
   ChevronDown, ChevronUp, Clock, Users, Wrench, FileText, CalendarDays, Mic, Square,
@@ -113,6 +115,11 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
   const [additionalContext, setAdditionalContext] = useState('');
   const [isRecordingTC, setIsRecordingTC] = useState(false);
   const [isRecordingCtx, setIsRecordingCtx] = useState(false);
+  /**
+   * Live mic level. One instance serves both recorders — only one can be
+   * running at a time, and start() tears down any previous graph anyway.
+   */
+  const mic = useMicLevel('dispatch-import');
   const [isTranscribingTC, setIsTranscribingTC] = useState(false);
   const [isTranscribingCtx, setIsTranscribingCtx] = useState(false);
   const tcRecorderRef = useRef<MediaRecorder | null>(null);
@@ -291,6 +298,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
+      mic.start(stream);
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -319,6 +327,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
     await new Promise<void>((resolve) => {
       recorder.onstop = () => {
         recorder.stream.getTracks().forEach(t => t.stop());
+        mic.stop();
         resolve();
       };
       recorder.stop();
@@ -1039,6 +1048,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                   <div style={{ fontSize: '0.75rem', color: 'var(--color-danger)', marginBottom: 'var(--space-xs)', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-danger)', animation: 'pulse 1s infinite' }} />
                     Recording... tap stop when done
+                    <MicLevelMeter {...mic} compact style={{ maxWidth: '120px', marginLeft: 'auto' }} />
                   </div>
                 )}
                 <textarea
@@ -1083,6 +1093,7 @@ export function DispatchImportDialog({ onClose }: DispatchImportDialogProps) {
                   <div style={{ fontSize: '0.75rem', color: 'var(--color-danger)', marginBottom: 'var(--space-xs)', display: 'flex', alignItems: 'center', gap: 4 }}>
                     <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-danger)', animation: 'pulse 1s infinite' }} />
                     Recording... tap stop when done
+                    <MicLevelMeter {...mic} compact style={{ maxWidth: '120px', marginLeft: 'auto' }} />
                   </div>
                 )}
                 <textarea

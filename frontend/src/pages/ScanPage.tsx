@@ -16,6 +16,8 @@ import { useNavigate } from 'react-router-dom';
 import { useReportStore } from '@/stores/reportStore';
 import { scanApi } from '@/lib/api';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
+import { useMicLevel } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import {
   Camera,
   Mic,
@@ -55,6 +57,8 @@ export function ScanPage() {
   // Dictation state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
+  /** Live mic level — a flat bar means the mic isn't picking you up. */
+  const mic = useMicLevel('scan-page');
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [dictationError, setDictationError] = useState<string | null>(null);
   const [dictationResult, setDictationResult] = useState<Activity[] | null>(null);
@@ -165,6 +169,7 @@ export function ScanPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       chunksRef.current = [];
+      mic.start(stream);
 
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       recorder.ondataavailable = (e) => {
@@ -200,6 +205,7 @@ export function ScanPage() {
 
         // Stop all tracks
         mediaRecorderRef.current?.stream.getTracks().forEach((t) => t.stop());
+        mic.stop();
 
         if (blob.size < 1000) {
           setDictationError('Recording too short. Please speak for at least a few seconds.');
@@ -551,6 +557,13 @@ export function ScanPage() {
                 </span>
               )}
             </button>
+
+            {/* Live mic level — a flat bar means the mic isn't picking you up,
+                which is visible NOW instead of after a wasted take. */}
+            {isRecording && (
+              <MicLevelMeter {...mic} style={{ marginTop: 'var(--space-md)', marginInline: 'auto' }} />
+            )}
+
             <p style={{ marginTop: 'var(--space-md)', fontSize: '0.8125rem', color: 'var(--color-text-tertiary)' }}>
               {isTranscribing ? 'Processing recording...' : isRecording ? 'Tap to stop' : 'Tap to start'}
             </p>

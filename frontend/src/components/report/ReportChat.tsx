@@ -23,6 +23,8 @@ import { useReportStore } from '@/stores/reportStore';
 import { scanApi, scheduleApi } from '@/lib/api';
 import { Sparkles, Send, X, Check, XCircle, Mic, MicOff, MessageSquare, Trash2 } from 'lucide-react';
 import type { Activity, GeneralInfo, Schedule } from '@/types';
+import { useMicLevel } from '@/hooks/useMicLevel';
+import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 
 // --- Types ---
 
@@ -82,6 +84,8 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
 
   // --- Voice recording state ---
   const [isRecording, setIsRecording] = useState(false);
+  /** Live mic level — a flat bar means the mic isn't picking you up. */
+  const mic = useMicLevel('report-chat');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -233,6 +237,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       audioChunksRef.current = [];
+      mic.start(stream);
 
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -256,6 +261,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
           streamRef.current.getTracks().forEach(t => t.stop());
           streamRef.current = null;
         }
+        mic.stop();
 
         // Only send if we have meaningful audio (>2KB)
         if (blob.size > 2000) {
@@ -599,24 +605,30 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
           {/* Recording indicator */}
           {isRecording && (
             <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              gap: 'var(--space-sm)', marginBottom: 'var(--space-sm)',
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              gap: 'var(--space-xs)', marginBottom: 'var(--space-sm)',
               padding: 'var(--space-xs) var(--space-sm)',
               backgroundColor: 'rgba(239, 68, 68, 0.08)',
               borderRadius: 'var(--radius)',
               border: '1px solid rgba(239, 68, 68, 0.2)',
             }}>
               <div style={{
-                width: '8px', height: '8px', borderRadius: '50%',
-                backgroundColor: 'var(--color-danger)',
-                animation: 'pulse-dot 1.2s ease-in-out infinite',
-              }} />
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-danger)' }}>
-                Recording {formatDuration(recordingDuration)}
-              </span>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
-                Tap mic to stop
-              </span>
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                gap: 'var(--space-sm)',
+              }}>
+                <div style={{
+                  width: '8px', height: '8px', borderRadius: '50%',
+                  backgroundColor: 'var(--color-danger)',
+                  animation: 'pulse-dot 1.2s ease-in-out infinite',
+                }} />
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-danger)' }}>
+                  Recording {formatDuration(recordingDuration)}
+                </span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+                  Tap mic to stop
+                </span>
+              </div>
+              <MicLevelMeter {...mic} />
             </div>
           )}
 
