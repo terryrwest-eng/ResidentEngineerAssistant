@@ -27,6 +27,35 @@ import { applyEndTimeToRows, isEndTimeApplied, formatEndTime } from '@/lib/dispa
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
 import { useMicLevel } from '@/hooks/useMicLevel';
 import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
+
+/** One finding from the proofreader. Quote is verbatim so it can be located. */
+interface ProofIssue {
+  quote: string;
+  issue_type: string;
+  severity: 'high' | 'medium' | 'low';
+  why: string;
+  suggestion: string;
+}
+
+/** Human labels for the proofreader's issue_type values. */
+const PROOF_LABELS: Record<string, string> = {
+  ai_language: 'AI phrasing',
+  judgment: 'Opinion',
+  tense: 'Wrong tense',
+  person: 'First person',
+  corporate_vocab: 'Corporate word',
+  vague: 'Too vague',
+  station_format: 'Station format',
+  spelling_grammar: 'Spelling / grammar',
+  repetition: 'Repeated',
+  contradiction: 'Contradiction',
+};
+
+const PROOF_SEVERITY_COLOR: Record<string, string> = {
+  high: 'var(--color-danger)',
+  medium: 'var(--color-warning)',
+  low: 'var(--color-text-tertiary)',
+};
 import {
   ChevronDown,
   ChevronRight,
@@ -46,6 +75,7 @@ import {
   AlertCircle,
   X,
   CheckCircle2,
+  SearchCheck,
 } from 'lucide-react';
 
 // ============================================
@@ -187,6 +217,12 @@ export function ActivityEditor({
   const [isUpdatePanelOpen, setIsUpdatePanelOpen] = useState(false);
   const [isRewriting, setIsRewriting] = useState(false);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
+  // --- Proofread ---
+  const [isProofreading, setIsProofreading] = useState(false);
+  const [proofIssues, setProofIssues] = useState<ProofIssue[]>([]);
+  const [proofError, setProofError] = useState<string | null>(null);
+  /** Set once a check has run, so "no issues" is distinguishable from "not checked". */
+  const [proofRan, setProofRan] = useState(false);
   const [showPhoneScanner, setShowPhoneScanner] = useState(false);
   const [scanningFromCamera, setScanningFromCamera] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -436,6 +472,49 @@ export function ActivityEditor({
     }
   }
 
+  // --- Proofread ---
+  // Deliberately does NOT change the summary. Rewrite already replaces your
+  // words wholesale; this shows what is wrong with them and lets you take the
+  // fixes one at a time, so field wording you chose on purpose survives.
+  async function handleProofread() {
+    if (!activity.summary?.trim() || isProofreading) return;
+    setIsProofreading(true);
+    setProofError(null);
+    try {
+      const data = await scanApi.proofread(activity.summary);
+      setProofIssues(data.issues || []);
+      setProofRan(true);
+    } catch (err) {
+      console.error('[ActivityEditor] Proofread failed:', err);
+      const httpErr = err as { response?: { data?: { detail?: string } } };
+      setProofError(
+        httpErr?.response?.data?.detail
+        || (err instanceof Error ? err.message : 'Check failed. Try again.')
+      );
+    } finally {
+      setIsProofreading(false);
+    }
+  }
+
+  /** Swap one flagged span for its suggestion, leaving everything else alone. */
+  function applyProofIssue(issue: ProofIssue) {
+    const current = activity.summary || '';
+    const at = current.indexOf(issue.quote);
+    if (at === -1) {
+      // The text moved on since the check ran — drop the stale finding rather
+      // than replace the wrong span.
+      setProofIssues((prev) => prev.filter((i) => i !== issue));
+      return;
+    }
+    const next = current.slice(0, at) + issue.suggestion + current.slice(at + issue.quote.length);
+    updateActivity(activity.id, { summary: next });
+    setProofIssues((prev) => prev.filter((i) => i !== issue));
+  }
+
+  function dismissProofIssue(issue: ProofIssue) {
+    setProofIssues((prev) => prev.filter((i) => i !== issue));
+  }
+
   // --- AI Assistant Apply ---
   function handleAssistantApply(updates: Partial<Activity>) {
     updateActivity(activity.id, updates);
@@ -624,6 +703,23 @@ export function ActivityEditor({
                       Rewrite
                     </button>
                   )}
+                  {/* Proofread — flags what reads wrong without changing it */}
+                  {activity.summary?.trim() && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={handleProofread}
+                      disabled={isProofreading}
+                      title="Check — flag AI phrasing, wrong tense, opinion words and other problems"
+                      style={{ fontSize: '0.6875rem', padding: '2px 8px', gap: '3px' }}
+                    >
+                      {isProofreading ? (
+                        <Loader2 size={12} style={{ animation: 'spin 0.6s linear infinite' }} />
+                      ) : (
+                        <SearchCheck size={12} />
+                      )}
+                      Check
+                    </button>
+                  )}
                   {/* AI Assistant button */}
                   <button
                     className="btn btn-ghost btn-sm"
@@ -649,6 +745,142 @@ export function ActivityEditor({
               {/* Live mic level — a flat bar means Smart Dictate isn't hearing you. */}
               {isRecording && (
                 <MicLevelMeter {...mic} style={{ marginBottom: '6px' }} />
+              )}
+
+              {/* Proofread findings — nothing changes until you apply one */}
+              {proofError && (
+                <div style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '6px',
+                  padding: '8px 10px', marginBottom: '6px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-danger-bg, #FEF2F2)',
+                  color: 'var(--color-danger, #dc2626)',
+                  fontSize: '0.75rem',
+                }}>
+                  <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ flex: 1 }}>{proofError}</span>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    onClick={() => setProofError(null)}
+                    aria-label="Dismiss"
+                    style={{ width: 18, height: 18, padding: 0, flexShrink: 0 }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+              {proofRan && proofIssues.length === 0 && !proofError && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '8px 10px', marginBottom: '6px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--color-success-light, #F0FDF4)',
+                  color: 'var(--color-success, #16a34a)',
+                  fontSize: '0.75rem',
+                }}>
+                  <CheckCircle2 size={13} style={{ flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>Nothing flagged — this reads clean.</span>
+                  <button
+                    className="btn btn-ghost btn-icon"
+                    onClick={() => setProofRan(false)}
+                    aria-label="Dismiss"
+                    style={{ width: 18, height: 18, padding: 0, flexShrink: 0 }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+              {proofIssues.length > 0 && (
+                <div style={{
+                  marginBottom: '6px',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-sm)',
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '6px 10px',
+                    background: 'var(--color-surface-active)',
+                    fontSize: '0.6875rem', fontWeight: 600,
+                  }}>
+                    <SearchCheck size={12} />
+                    <span style={{ flex: 1 }}>
+                      {proofIssues.length} {proofIssues.length === 1 ? 'thing' : 'things'} to look at
+                    </span>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => { setProofIssues([]); setProofRan(false); }}
+                      style={{ fontSize: '0.625rem', padding: '1px 6px' }}
+                    >
+                      Dismiss all
+                    </button>
+                  </div>
+                  {proofIssues.map((issue, i) => (
+                    <div
+                      key={`${issue.quote}-${i}`}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '8px',
+                        padding: '8px 10px',
+                        borderTop: '1px solid var(--color-border)',
+                        fontSize: '0.75rem',
+                      }}
+                    >
+                      <span
+                        title={issue.severity}
+                        style={{
+                          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                          marginTop: 5,
+                          background: PROOF_SEVERITY_COLOR[issue.severity] || 'var(--color-text-tertiary)',
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontSize: '0.625rem', fontWeight: 700, textTransform: 'uppercase',
+                          letterSpacing: '0.03em',
+                          color: PROOF_SEVERITY_COLOR[issue.severity] || 'var(--color-text-tertiary)',
+                        }}>
+                          {PROOF_LABELS[issue.issue_type] || issue.issue_type}
+                        </div>
+                        <div style={{ marginTop: 2 }}>
+                          <s style={{ color: 'var(--color-text-tertiary)' }}>{issue.quote}</s>
+                          {issue.suggestion && (
+                            <>
+                              {' → '}
+                              <strong>{issue.suggestion}</strong>
+                            </>
+                          )}
+                          {!issue.suggestion && (
+                            <em style={{ color: 'var(--color-text-tertiary)' }}> (delete)</em>
+                          )}
+                        </div>
+                        {issue.why && (
+                          <div style={{ marginTop: 2, color: 'var(--color-text-secondary)' }}>
+                            {issue.why}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => applyProofIssue(issue)}
+                          title="Apply this fix"
+                          style={{ fontSize: '0.625rem', padding: '1px 6px' }}
+                        >
+                          Apply
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-icon"
+                          onClick={() => dismissProofIssue(issue)}
+                          aria-label="Ignore"
+                          title="Ignore"
+                          style={{ width: 18, height: 18, padding: 0 }}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
               {rewriteError && (
                 <div style={{

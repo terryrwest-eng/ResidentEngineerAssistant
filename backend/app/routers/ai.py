@@ -1823,6 +1823,153 @@ OUTPUT FORMAT — CRITICAL:
 
 
 # ============================================
+# ENDPOINT: Proofread
+# Button: "Check" in the activity summary toolbar
+# WHY: Everything in a summary may have come from dictation, OCR or the AI
+# itself, and all three produce text that reads wrong in ways the writer stops
+# seeing — machine phrasing, present tense, first person, and evaluative words
+# that do not belong in an inspection record. This flags them and proposes a
+# fix, but changes nothing on its own: Rewrite replaces your words, this shows
+# you what is wrong with them so you decide.
+# ============================================
+
+PROOFREAD_SYSTEM_PROMPT = """You are a senior Resident Engineer reviewing a daily inspection report before it is submitted to the owner. You are looking for text that would embarrass the author or create liability.
+
+Return ONLY issues you can point at in the text. If the text is clean, return an empty list. Do NOT invent problems to seem useful — a false flag costs the writer more time than it saves.
+
+ISSUE TYPES — use exactly these values for "issue_type":
+
+"ai_language" — Phrasing that reads as machine-written rather than as a field inspector: "delve into", "it is worth noting", "showcasing", "seamless", "robust", "leverage", "navigate the challenges", "plays a crucial role", "stands as a testament", "in the realm of", "furthermore", "moreover", "additionally" as a sentence opener, "overall" as a summary opener. Also flag sentences that state the obvious or add no fact.
+
+"judgment" — Evaluative or opinion words. These are a LIABILITY in an inspection report because they assert a conclusion the inspector may not be qualified or authorized to make: "properly", "correctly", "successfully", "satisfactory", "good", "quality", "safely", "adequate", "as required", "in accordance with", "per spec" (unless quoting a specific spec section). State WHAT was done, never how well.
+
+"tense" — Anything not in simple past. A daily report records work already performed. Flag present ("crew is placing"), future ("will pour"), and present perfect ("has been completed") where simple past belongs.
+
+"person" — First person: we, I, our, us, my. Report in third person naming the actual party ("OHL", "the pipe crew").
+
+"corporate_vocab" — Inflated words with a plain equivalent: utilized→used, commenced→started, implemented→installed, facilitated→helped, prior to→before, in order to→to, at this time→now, subsequently→then, in the event that→if.
+
+"vague" — Unquantified where a number, station or time belongs: "some pipe", "several loads", "various locations", "a number of", "in the area", "later in the day". Field reports are evidence; quantities matter.
+
+"station_format" — Station references not written as "Sta XX+XX" (e.g. "station 10+50", "10+50", "STA 10 + 50").
+
+"spelling_grammar" — Actual misspellings, subject/verb disagreement, run-ons, missing punctuation. Do NOT flag technical terms, trade jargon, equipment names, abbreviations or proper nouns you do not recognise.
+
+"repetition" — The same fact or phrasing repeated across bullets, which reads as padding.
+
+"contradiction" — Two statements in the text that cannot both be true (conflicting times, quantities, stations, or a crew both on and off site).
+
+RULES:
+1. "quote" MUST be copied EXACTLY from the input, character for character, so it can be located. Never paraphrase it. Keep it short — the offending phrase, not the whole bullet.
+2. "suggestion" is the corrected version of the quoted span ONLY, in the same style as the surrounding text. It must be a drop-in replacement for the quote. If the right fix is deletion, use an empty string.
+3. "why" is ONE short sentence a busy inspector will accept, in plain language. No lecturing.
+4. "severity": "high" = creates liability or is factually wrong (judgment, contradiction). "medium" = clearly wrong register or tense (ai_language, tense, person, corporate_vocab). "low" = polish (station_format, vague, repetition, minor spelling).
+5. NEVER change or flag: station numbers, quantities, measurements, times, dates, company names, equipment names, or people's names. Preserve all field data exactly.
+6. Do not flag bullet characters, line breaks or formatting.
+
+Return JSON ONLY:
+{
+  "issues": [
+    {
+      "quote": "exact text from the input",
+      "issue_type": "one of the values above",
+      "severity": "high|medium|low",
+      "why": "one short sentence",
+      "suggestion": "drop-in replacement for the quote"
+    }
+  ]
+}"""
+
+
+class ProofreadRequest(BaseModel):
+    text: str
+    field_type: str = 'summary'
+
+
+class ProofreadIssue(BaseModel):
+    quote: str = ''
+    issue_type: str = ''
+    severity: str = 'medium'
+    why: str = ''
+    suggestion: str = ''
+
+
+class ProofreadResponse(BaseModel):
+    issues: list[ProofreadIssue] = []
+    checked_chars: int = 0
+
+
+@router.post('/proofread', response_model=ProofreadResponse)
+async def ai_proofread(request: ProofreadRequest):
+    """Read finished report text and flag anything that reads wrong."""
+    text = (request.text or '').strip()
+    if not text:
+        return ProofreadResponse(issues=[], checked_chars=0)
+
+    client, model_name = _get_gemini_client()
+
+    try:
+        from google.genai import types as genai_types
+
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
+            contents=[
+                PROOFREAD_SYSTEM_PROMPT,
+                f'REPORT TEXT TO REVIEW:\n{text}',
+            ],
+            config=genai_types.GenerateContentConfig(
+                temperature=0.0,
+                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+                response_mime_type='application/json',
+                max_output_tokens=8192,
+            ),
+        )
+
+        raw = (getattr(response, 'text', None) or '').strip()
+        if not raw:
+            problem = _finish_reason_problem(response)
+            logger.warning(f'[proofread] Empty response: {problem}')
+            raise HTTPException(
+                status_code=502,
+                detail=problem or 'The proofreader returned nothing. Try again.',
+            )
+
+        data = _clean_json(raw)
+        issues: list[ProofreadIssue] = []
+
+        for item in data.get('issues', []) or []:
+            if not isinstance(item, dict):
+                continue
+            quote = str(item.get('quote', '') or '').strip()
+            # A quote that is not actually in the text cannot be located or
+            # applied, and usually means the model paraphrased. Drop it rather
+            # than show the user a finding they cannot act on.
+            if not quote or quote not in text:
+                logger.debug(f'[proofread] Dropping unlocatable quote: {quote[:60]!r}')
+                continue
+            issues.append(ProofreadIssue(
+                quote=quote,
+                issue_type=str(item.get('issue_type', '') or 'ai_language'),
+                severity=str(item.get('severity', '') or 'medium').lower(),
+                why=str(item.get('why', '') or '').strip(),
+                suggestion=str(item.get('suggestion', '') or ''),
+            ))
+
+        rank = {'high': 0, 'medium': 1, 'low': 2}
+        issues.sort(key=lambda i: rank.get(i.severity, 1))
+
+        logger.info(f'[proofread] {len(issues)} issue(s) in {len(text)} chars')
+        return ProofreadResponse(issues=issues, checked_chars=len(text))
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f'[proofread] Error: {exc}')
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================
 # ENDPOINT: Bulk Dictate All Activities
 # Button: "🎤 Dictate All Activities" on Activity List page
 # WHY: One long recording → AI splits by location into separate activities.

@@ -358,6 +358,25 @@ export const scanApi = {
     return response.data;
   },
 
+  /**
+   * Proofread — read finished text and flag what reads wrong, without
+   * changing anything. Every issue quotes text verbatim so the UI can find
+   * and replace exactly that span.
+   */
+  proofread: async (text: string, fieldType: string = 'summary'): Promise<{
+    issues: Array<{
+      quote: string;
+      issue_type: string;
+      severity: 'high' | 'medium' | 'low';
+      why: string;
+      suggestion: string;
+    }>;
+    checked_chars: number;
+  }> => {
+    const response = await api.post('/ai/proofread', { text, field_type: fieldType }, { timeout: 120000 });
+    return response.data;
+  },
+
   /** AI Analyze Questions — WWWW check, returns targeted questions */
   analyzeQuestions: async (
     text: string,
