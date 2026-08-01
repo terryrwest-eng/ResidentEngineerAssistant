@@ -33,6 +33,30 @@ export interface CustomResourceCodes {
   equipment: string[];
 }
 
+/** House style: write `right`, never `wrong`. */
+export interface PreferredTerm {
+  wrong: string;
+  right: string;
+}
+
+/** A word that must not appear, and the reason shown when it does. */
+export interface BannedTerm {
+  term: string;
+  why: string;
+}
+
+/**
+ * The words this project uses. Injected into every prompt that writes or checks
+ * report prose, so the AI stops flagging real trade names as misspellings and
+ * stops rewording terms the owner expects verbatim.
+ */
+export interface Vocabulary {
+  protected_terms: string[];
+  known_acronyms: string[];
+  preferred_terms: PreferredTerm[];
+  banned_terms: BannedTerm[];
+}
+
 export interface AppSettings {
   default_project: string;
   default_resident_engineer: string;
@@ -49,6 +73,7 @@ export interface AppSettings {
   default_zip_code: string;
   master_lists: MasterLists;
   custom_resource_codes: CustomResourceCodes;
+  vocabulary: Vocabulary;
   user_templates: UserTemplate[];
   /** Backfill's own copies of the header defaults — see SettingsPage. */
   project_number: string;

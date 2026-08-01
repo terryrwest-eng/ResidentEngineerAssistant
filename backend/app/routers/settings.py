@@ -49,6 +49,40 @@ BUILTIN_TEMPLATES: list[dict[str, str]] = [
     {"id": "paving",          "name": "AC Paving",             "body": "AC paving placed at ___. Thickness ___\". Compacted and checked for smoothness."},
 ]
 
+# ── Seed lists ─────────────────────────────────────────────────────────────────
+# Pulled out of DEFAULT_SETTINGS so the vocabulary library can be seeded from the
+# same terms rather than repeating them. These are the words the AI must never
+# "correct" — they are real trades, machines and companies, not misspellings.
+DEFAULT_COMPANIES = [
+    "OHL NA", "SRK Eng", "AR Concrete", "Brino Builders",
+    "NorCal Pipeline", "City of San Diego", "Jacobs", "RJ Noble",
+]
+
+DEFAULT_MANPOWER = [
+    "Laborer", "Operator", "Foreman", "General Foreman",
+    "Carpenter", "Electrician", "Pipefitter", "Teamster",
+    "Finisher", "Ironworker", "Mason", "Welder",
+    "Journeyman", "Apprentice", "Superintendent", "PM", "PE",
+]
+
+DEFAULT_EQUIPMENT = [
+    "Excavator", "Mini Excavator", "Loader", "Backhoe",
+    "Dump Truck", "Water Truck", "Pickup Truck", "Crew Truck",
+    "Compressor", "Generator", "Crane", "Boom Truck",
+    "Roller / Compactor", "Plate Compactor", "Dewatering Pump",
+    "Concrete Pump", "Grader", "Bulldozer", "Forklift",
+]
+
+# Trade abbreviations and industry acronyms the reader already knows. Spelling
+# these out ("Best Management Practice (BMP)") is one of the tells that text was
+# written by a model rather than an inspector.
+DEFAULT_KNOWN_ACRONYMS = [
+    "BMP", "TCP", "AC", "PCC", "CLSM", "RCP", "PVC", "DIP", "HDPE",
+    "MH", "CB", "SDR", "ROW", "RFI", "SWPPP", "QC", "QA", "OSHA",
+    "CCTV", "PSI", "LF", "CY", "SF", "EA", "TON",
+]
+
+
 # ── Default values ─────────────────────────────────────────────────────────────
 DEFAULT_SETTINGS: dict[str, Any] = {
     "default_project": "",
@@ -56,24 +90,29 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "projects": [],
     "default_start_time": "7:00 AM",
     "default_stop_time": "3:30 PM",
-    "companies": [
-        "OHL NA", "SRK Eng", "AR Concrete", "Brino Builders",
-        "NorCal Pipeline", "City of San Diego", "Jacobs", "RJ Noble",
-    ],
+    "companies": list(DEFAULT_COMPANIES),
     "master_lists": {
-        "manpower": [
-            "Laborer", "Operator", "Foreman", "General Foreman",
-            "Carpenter", "Electrician", "Pipefitter", "Teamster",
-            "Finisher", "Ironworker", "Mason", "Welder",
-            "Journeyman", "Apprentice", "Superintendent", "PM", "PE",
-        ],
-        "equipment": [
-            "Excavator", "Mini Excavator", "Loader", "Backhoe",
-            "Dump Truck", "Water Truck", "Pickup Truck", "Crew Truck",
-            "Compressor", "Generator", "Crane", "Boom Truck",
-            "Roller / Compactor", "Plate Compactor", "Dewatering Pump",
-            "Concrete Pump", "Grader", "Bulldozer", "Forklift",
-        ],
+        "manpower": list(DEFAULT_MANPOWER),
+        "equipment": list(DEFAULT_EQUIPMENT),
+    },
+    # ── Vocabulary library ────────────────────────────────────────────────────
+    # Injected into BOTH the proofreader and the writing prompts, so the words
+    # you insist on are the words that come back — and the proofreader stops
+    # flagging real field terms as mistakes.
+    "vocabulary": {
+        # Never flag these as misspellings and never rewrite them. Seeded from
+        # the trade, equipment and company lists above.
+        "protected_terms": sorted(set(
+            DEFAULT_MANPOWER + DEFAULT_EQUIPMENT + DEFAULT_COMPANIES
+        )),
+        # Acronyms to leave as acronyms — never expanded on first use.
+        "known_acronyms": list(DEFAULT_KNOWN_ACRONYMS),
+        # House style: write the right, never the wrong. e.g.
+        # {"wrong": "blow-off", "right": "blowoff"}
+        "preferred_terms": [],
+        # Words that must not appear at all, with the reason shown to you.
+        # e.g. {"term": "punch list", "why": "owner calls it a deficiency list"}
+        "banned_terms": [],
     },
     "user_templates": [],
     "resource_aliases": {"equipment": {}, "manpower": {}},
@@ -122,6 +161,33 @@ class CustomResourceCodes(BaseModel):
     equipment: list[str] = []
 
 
+class PreferredTerm(BaseModel):
+    """House style: write `right`, never `wrong`."""
+    wrong: str = ""
+    right: str = ""
+
+
+class BannedTerm(BaseModel):
+    """A word that must not appear, and the reason shown when it does."""
+    term: str = ""
+    why: str = ""
+
+
+class Vocabulary(BaseModel):
+    """
+    The words this project uses, fed to every prompt that writes or checks text.
+
+    WHY it belongs in settings rather than a prompt constant: the terms that
+    matter are per-project and per-owner. "Blowoff" vs "blow-off" is not a
+    preference the model can guess, and a trade name it does not recognise is
+    otherwise reported to the writer as a spelling mistake.
+    """
+    protected_terms: list[str] = []
+    known_acronyms: list[str] = []
+    preferred_terms: list[PreferredTerm] = []
+    banned_terms: list[BannedTerm] = []
+
+
 class UserTemplate(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -143,13 +209,12 @@ class SettingsPayload(BaseModel):
     default_zip_code: str = ""
     master_lists: MasterLists = Field(default_factory=MasterLists)
     custom_resource_codes: CustomResourceCodes = Field(default_factory=CustomResourceCodes)
+    vocabulary: Vocabulary = Field(default_factory=Vocabulary)
     user_templates: list[dict[str, Any]] = []
     # Project defaults. These were stored in settings.json but missing from this
     # payload, so the Settings page could never actually set them — which is why
     # weather fell back to a browser prompt on every report, and why backfill
     # skipped weather entirely.
-    default_zip_code: str = ""
-    default_company: str = ""
     project_number: str = ""
     project_location: str = ""
     word_filename_prefix: str = "Morena Conveyance North"

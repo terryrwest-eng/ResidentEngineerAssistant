@@ -496,19 +496,74 @@ export function ActivityEditor({
     }
   }
 
-  /** Swap one flagged span for its suggestion, leaving everything else alone. */
-  function applyProofIssue(issue: ProofIssue) {
+  /**
+   * What will actually replace each flagged span. Starts as the model's
+   * suggestion and is whatever you typed after that.
+   *
+   * WHY editable: the model must not invent facts, so a finding like "several
+   * loads" comes back with NO suggestion — only you know it was three. Rather
+   * than offer a made-up number or a dead end, the box is yours to fill.
+   */
+  const [proofEdits, setProofEdits] = useState<Record<string, string>>({});
+
+  /** Stable key for a finding — the quote plus its position in the list. */
+  function proofKey(issue: ProofIssue, i: number) {
+    return `${i}:${issue.quote}`;
+  }
+
+  /**
+   * The flagged text with enough of its own bullet around it to be recognised.
+   *
+   * WHY: a bare quote like "properly" tells you nothing about which of eight
+   * bullets it came from, so the fix becomes a hunt through the summary. This
+   * returns the containing line split around the match so it can be shown in
+   * place, highlighted.
+   */
+  function proofContext(quote: string): { before: string; match: string; after: string } | null {
+    const text = activity.summary || '';
+    const at = text.indexOf(quote);
+    if (at === -1) return null;
+
+    // Widen to the bullet/line the match sits in, then trim so one very long
+    // bullet cannot push the controls off screen.
+    const lineStart = text.lastIndexOf('\n', at) + 1;
+    const lineEndRaw = text.indexOf('\n', at);
+    const lineEnd = lineEndRaw === -1 ? text.length : lineEndRaw;
+
+    const PAD = 45;
+    const from = Math.max(lineStart, at - PAD);
+    const to = Math.min(lineEnd, at + quote.length + PAD);
+
+    return {
+      before: (from > lineStart ? '…' : '') + text.slice(from, at),
+      match: text.slice(at, at + quote.length),
+      after: text.slice(at + quote.length, to) + (to < lineEnd ? '…' : ''),
+    };
+  }
+
+  function proofReplacement(issue: ProofIssue, i: number) {
+    const edited = proofEdits[proofKey(issue, i)];
+    return edited !== undefined ? edited : issue.suggestion;
+  }
+
+  /** Swap one flagged span for your replacement, leaving everything else alone. */
+  function applyProofIssue(issue: ProofIssue, i: number) {
     const current = activity.summary || '';
     const at = current.indexOf(issue.quote);
     if (at === -1) {
       // The text moved on since the check ran — drop the stale finding rather
       // than replace the wrong span.
-      setProofIssues((prev) => prev.filter((i) => i !== issue));
+      setProofIssues((prev) => prev.filter((x) => x !== issue));
       return;
     }
-    const next = current.slice(0, at) + issue.suggestion + current.slice(at + issue.quote.length);
+    const replacement = proofReplacement(issue, i);
+    const next = current.slice(0, at) + replacement + current.slice(at + issue.quote.length);
     updateActivity(activity.id, { summary: next });
-    setProofIssues((prev) => prev.filter((i) => i !== issue));
+    setProofIssues((prev) => prev.filter((x) => x !== issue));
+    setProofEdits((prev) => {
+      const { [proofKey(issue, i)]: _removed, ...rest } = prev;
+      return rest;
+    });
   }
 
   function dismissProofIssue(issue: ProofIssue) {
@@ -841,29 +896,81 @@ export function ActivityEditor({
                         }}>
                           {PROOF_LABELS[issue.issue_type] || issue.issue_type}
                         </div>
-                        <div style={{ marginTop: 2 }}>
-                          <s style={{ color: 'var(--color-text-tertiary)' }}>{issue.quote}</s>
-                          {issue.suggestion && (
-                            <>
-                              {' → '}
-                              <strong>{issue.suggestion}</strong>
-                            </>
-                          )}
-                          {!issue.suggestion && (
-                            <em style={{ color: 'var(--color-text-tertiary)' }}> (delete)</em>
-                          )}
-                        </div>
+                        {/* The flagged span shown where it actually lives, so
+                            you do not have to hunt for it in the summary. */}
+                        {(() => {
+                          const ctx = proofContext(issue.quote);
+                          return (
+                            <div style={{
+                              marginTop: 3,
+                              padding: '4px 6px',
+                              background: 'var(--color-surface-active)',
+                              borderRadius: 'var(--radius-sm)',
+                              fontSize: '0.7rem',
+                              lineHeight: 1.5,
+                              color: 'var(--color-text-secondary)',
+                              wordBreak: 'break-word',
+                            }}>
+                              {ctx ? (
+                                <>
+                                  {ctx.before}
+                                  <mark style={{
+                                    background: 'var(--color-warning-light, #FEF3C7)',
+                                    color: 'var(--color-text)',
+                                    fontWeight: 700,
+                                    borderRadius: 2,
+                                    padding: '0 2px',
+                                  }}>
+                                    {ctx.match}
+                                  </mark>
+                                  {ctx.after}
+                                </>
+                              ) : (
+                                <s>{issue.quote}</s>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {issue.why && (
                           <div style={{ marginTop: 2, color: 'var(--color-text-secondary)' }}>
                             {issue.why}
                           </div>
                         )}
+                        {/* Yours to edit. Empty means the model had no fact to
+                            work from — type the real one, or Apply to delete. */}
+                        <input
+                          className="input"
+                          value={proofReplacement(issue, i)}
+                          onChange={(e) => setProofEdits((prev) => ({
+                            ...prev,
+                            [proofKey(issue, i)]: e.target.value,
+                          }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              applyProofIssue(issue, i);
+                            }
+                          }}
+                          placeholder={
+                            issue.suggestion
+                              ? 'Replacement'
+                              : 'Type the replacement — leave blank to delete'
+                          }
+                          aria-label={`Replacement for "${issue.quote}"`}
+                          style={{
+                            marginTop: 4,
+                            width: '100%',
+                            fontSize: '0.75rem',
+                            padding: '3px 6px',
+                            height: 'auto',
+                          }}
+                        />
                       </div>
                       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={() => applyProofIssue(issue)}
-                          title="Apply this fix"
+                          onClick={() => applyProofIssue(issue, i)}
+                          title="Replace the flagged text with what is in the box"
                           style={{ fontSize: '0.625rem', padding: '1px 6px' }}
                         >
                           Apply

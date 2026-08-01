@@ -25,8 +25,15 @@ import {
   Loader2,
   MapPin,
   X,
+  BookMarked,
 } from 'lucide-react';
-import { settingsApi, type AppSettings } from '../lib/settingsApi';
+import {
+  settingsApi,
+  type AppSettings,
+  type Vocabulary,
+  type PreferredTerm,
+  type BannedTerm,
+} from '../lib/settingsApi';
 import { DEFAULT_MANPOWER, DEFAULT_EQUIPMENT } from '../lib/constants';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -77,6 +84,17 @@ export function SettingsPage() {
   const [newProject, setNewProject]            = useState('');
   const [companies, setCompanies]              = useState<string[]>([]);
   const [newCompany, setNewCompany]            = useState('');
+  // ── Vocabulary library ──────────────────────────────────────────────────────
+  const [protectedTerms, setProtectedTerms]    = useState<string[]>([]);
+  const [newProtected, setNewProtected]        = useState('');
+  const [knownAcronyms, setKnownAcronyms]      = useState<string[]>([]);
+  const [newAcronym, setNewAcronym]            = useState('');
+  const [preferredTerms, setPreferredTerms]    = useState<PreferredTerm[]>([]);
+  const [newWrong, setNewWrong]                = useState('');
+  const [newRight, setNewRight]                = useState('');
+  const [bannedTerms, setBannedTerms]          = useState<BannedTerm[]>([]);
+  const [newBanned, setNewBanned]              = useState('');
+  const [newBannedWhy, setNewBannedWhy]        = useState('');
   // Backfill reads its own settings keys (project_number / project_location).
   // These mirror the default_* values above so one visible field keeps both in
   // sync — see the Project Number / Project Location inputs below.
@@ -129,6 +147,10 @@ export function SettingsPage() {
         setFilenamePrefix(s.word_filename_prefix || '');
         setCustomLabor(s.custom_resource_codes?.labor || []);
         setCustomEquipment(s.custom_resource_codes?.equipment || []);
+        setProtectedTerms(s.vocabulary?.protected_terms || []);
+        setKnownAcronyms(s.vocabulary?.known_acronyms || []);
+        setPreferredTerms(s.vocabulary?.preferred_terms || []);
+        setBannedTerms(s.vocabulary?.banned_terms || []);
         setUserTemplates(s.user_templates || []);
         setHasKey(keyStatus.has_key);
       } catch (err) {
@@ -146,6 +168,29 @@ export function SettingsPage() {
   function showToast(msg: string, type: 'ok' | 'err') {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
+  }
+
+  // ── Vocabulary ──────────────────────────────────────────────────────────────
+
+  /**
+   * Persist the vocabulary immediately on every add/remove.
+   *
+   * WHY not wait for the Save button: this list is edited one word at a time,
+   * usually right after the AI got a word wrong. Losing three entries because
+   * the page was closed before saving would teach you not to bother using it.
+   */
+  function saveVocabulary(next: Partial<Vocabulary>) {
+    if (!settings) return;
+    const vocabulary: Vocabulary = {
+      protected_terms: protectedTerms,
+      known_acronyms: knownAcronyms,
+      preferred_terms: preferredTerms,
+      banned_terms: bannedTerms,
+      ...next,
+    };
+    settingsApi.update({ ...settings, vocabulary })
+      .then((r) => setSettings(r.settings))
+      .catch(() => showToast('Failed to save vocabulary', 'err'));
   }
 
   // ── Preferences save ────────────────────────────────────────────────────────
@@ -171,6 +216,12 @@ export function SettingsPage() {
         projects,
         companies,
         user_templates: userTemplates,
+        vocabulary: {
+          protected_terms: protectedTerms,
+          known_acronyms: knownAcronyms,
+          preferred_terms: preferredTerms,
+          banned_terms: bannedTerms,
+        },
       });
       setSettings(updated.settings);
       showToast('Settings saved', 'ok');
@@ -495,6 +546,178 @@ export function SettingsPage() {
                 }
               }} />
               <AddRow value={newCompany} onChange={setNewCompany} onAdd={addCompany} placeholder="New company name..." />
+            </div>
+          </div>
+
+          {/* Vocabulary library — feeds Rewrite and Check */}
+          <div className="card">
+            <div className="card-header">
+              <h3><BookMarked size={18} style={{ verticalAlign: 'middle', marginRight: 8 }} />Vocabulary</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+                The words this project uses. Fed to both Rewrite and Check, so the AI stops
+                "correcting" real field terms and writes the words you actually use.
+              </p>
+            </div>
+            <div className="card-body">
+
+              {/* Protected terms */}
+              <label className="label">Known terms — never flagged, never reworded</label>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 6px' }}>
+                Trades, equipment and companies. Anything here is treated as spelled correctly.
+              </p>
+              <TagList items={protectedTerms} onRemove={v => {
+                const updated = protectedTerms.filter(t => t !== v);
+                setProtectedTerms(updated);
+                saveVocabulary({ protected_terms: updated });
+              }} />
+              <AddRow
+                value={newProtected}
+                onChange={setNewProtected}
+                onAdd={() => {
+                  const v = newProtected.trim();
+                  if (!v || protectedTerms.includes(v)) { setNewProtected(''); return; }
+                  const updated = [...protectedTerms, v].sort((a, b) => a.localeCompare(b));
+                  setProtectedTerms(updated);
+                  setNewProtected('');
+                  saveVocabulary({ protected_terms: updated });
+                }}
+                placeholder="e.g. blowoff, Vactor, RJ Noble..."
+              />
+
+              {/* Known acronyms */}
+              <label className="label" style={{ marginTop: 'var(--space-lg)' }}>
+                Known acronyms — never spelled out
+              </label>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 6px' }}>
+                The reader knows these. Writing "Best Management Practice (BMP)" instead of "BMP"
+                is the clearest sign a machine wrote the text.
+              </p>
+              <TagList items={knownAcronyms} onRemove={v => {
+                const updated = knownAcronyms.filter(t => t !== v);
+                setKnownAcronyms(updated);
+                saveVocabulary({ known_acronyms: updated });
+              }} />
+              <AddRow
+                value={newAcronym}
+                onChange={setNewAcronym}
+                onAdd={() => {
+                  const v = newAcronym.trim().toUpperCase();
+                  if (!v || knownAcronyms.includes(v)) { setNewAcronym(''); return; }
+                  const updated = [...knownAcronyms, v];
+                  setKnownAcronyms(updated);
+                  setNewAcronym('');
+                  saveVocabulary({ known_acronyms: updated });
+                }}
+                placeholder="e.g. SWPPP, CLSM, RCP..."
+              />
+
+              {/* Preferred spellings */}
+              <label className="label" style={{ marginTop: 'var(--space-lg)' }}>
+                House spelling — always write the second, never the first
+              </label>
+              {preferredTerms.length > 0 && (
+                <div style={{ marginBottom: 'var(--space-sm)' }}>
+                  {preferredTerms.map((p, i) => (
+                    <div key={`${p.wrong}-${i}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '4px 0', fontSize: 13,
+                    }}>
+                      <s style={{ color: 'var(--text-muted)' }}>{p.wrong}</s>
+                      <span style={{ color: 'var(--text-muted)' }}>→</span>
+                      <strong style={{ flex: 1 }}>{p.right}</strong>
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        aria-label={`Remove ${p.wrong}`}
+                        onClick={() => {
+                          const updated = preferredTerms.filter((_, x) => x !== i);
+                          setPreferredTerms(updated);
+                          saveVocabulary({ preferred_terms: updated });
+                        }}
+                        style={{ width: 22, height: 22, padding: 0 }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+                <input
+                  className="input" value={newWrong} onChange={e => setNewWrong(e.target.value)}
+                  placeholder="blow-off" style={{ flex: 1 }}
+                />
+                <input
+                  className="input" value={newRight} onChange={e => setNewRight(e.target.value)}
+                  placeholder="blowoff" style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-primary" style={{ flexShrink: 0 }}
+                  onClick={() => {
+                    const w = newWrong.trim(), r = newRight.trim();
+                    if (!w || !r) return;
+                    const updated = [...preferredTerms, { wrong: w, right: r }];
+                    setPreferredTerms(updated);
+                    setNewWrong(''); setNewRight('');
+                    saveVocabulary({ preferred_terms: updated });
+                  }}
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+
+              {/* Banned terms */}
+              <label className="label" style={{ marginTop: 'var(--space-lg)' }}>
+                Banned words — flagged wherever they appear
+              </label>
+              {bannedTerms.length > 0 && (
+                <div style={{ marginBottom: 'var(--space-sm)' }}>
+                  {bannedTerms.map((b, i) => (
+                    <div key={`${b.term}-${i}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '4px 0', fontSize: 13,
+                    }}>
+                      <strong>{b.term}</strong>
+                      {b.why && <span style={{ color: 'var(--text-muted)', flex: 1 }}>— {b.why}</span>}
+                      {!b.why && <span style={{ flex: 1 }} />}
+                      <button
+                        className="btn btn-ghost btn-icon"
+                        aria-label={`Remove ${b.term}`}
+                        onClick={() => {
+                          const updated = bannedTerms.filter((_, x) => x !== i);
+                          setBannedTerms(updated);
+                          saveVocabulary({ banned_terms: updated });
+                        }}
+                        style={{ width: 22, height: 22, padding: 0 }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
+                <input
+                  className="input" value={newBanned} onChange={e => setNewBanned(e.target.value)}
+                  placeholder="Word to ban" style={{ flex: 1 }}
+                />
+                <input
+                  className="input" value={newBannedWhy} onChange={e => setNewBannedWhy(e.target.value)}
+                  placeholder="Why (optional)" style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-primary" style={{ flexShrink: 0 }}
+                  onClick={() => {
+                    const t = newBanned.trim();
+                    if (!t) return;
+                    const updated = [...bannedTerms, { term: t, why: newBannedWhy.trim() }];
+                    setBannedTerms(updated);
+                    setNewBanned(''); setNewBannedWhy('');
+                    saveVocabulary({ banned_terms: updated });
+                  }}
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
             </div>
           </div>
 

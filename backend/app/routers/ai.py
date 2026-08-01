@@ -174,7 +174,7 @@ FIELD RULES:
 
 STYLE — MANDATORY:
 1. Use DIRECT field language. "The crew excavated from Sta 10+00 to 12+50" NOT "The construction workforce proceeded with excavation activities."
-2. NO unnecessary adjectives: "properly," "efficiently," "successfully," "in accordance with" — DELETE.
+2. NO adjectives YOU added: "efficiently," "successfully," "smoothly" — DELETE. But NEVER delete a conformance statement the speaker made ("per plan," "per spec," "in accordance with the approved submittal"): the author is the Resident Engineer and that verdict is the point of the report. Keep those verbatim. Only "properly"/"correctly" standing alone, with no plan or spec named, should go.
 3. NO corporate vocabulary: "utilized" → "used," "commenced" → "started," "implemented" → "installed."
 4. STATION FORMAT: Always use "Sta XX+XX" (e.g. "Sta 10+50 to 12+00").
 5. FIRST PERSON TO THIRD PERSON — ONLY when the sentence uses a first-person pronoun (we/I/our/us/my). Use the real subject (company, trade) when known. ALWAYS use "The crew" instead of "crews" when referring to a group of workers. Do NOT prepend "The crew" to bullets already in third person.
@@ -1757,11 +1757,18 @@ QUALITY STANDARDS:
 4. PRESERVE ALL DATA: Keep ALL stations, measurements, quantities, dates, and times exactly as provided. Never round or approximate.
 5. FORMAT: Output ONLY bullet points starting with "• ". One complete thought per bullet.
 
-NEUTRAL TONE (CRITICAL):
-- Use ONLY neutral, factual statements describing work performed
-- DO NOT include judgments, opinions, or evaluations
-- NEVER use words like: good, well, safe, proper, correct, excellent, satisfactory, successful, quality
-- Simply state WHAT was done, not how well it was done
+TONE (CRITICAL):
+- The author is a Resident Engineer. Verifying that work conforms to the contract
+  documents is their job, and recording that verdict is the point of the report.
+- KEEP every conformance statement exactly as given: "per plan", "per spec",
+  "in accordance with the approved submittal", "per manufacturer data",
+  "conforms", "meets", "verified", "observed", "acceptable", "rejected",
+  "deficient", "non-conforming". These are professional findings, not opinions.
+  NEVER delete or soften them.
+- Do NOT ADD an evaluation the author did not make. If they said what was done,
+  say what was done — do not decide it was proper, adequate or successful.
+- Drop only bare praise with nothing to check it against: "great job",
+  "excellent workmanship", "nice clean weld", "things went well".
 
 BANNED WORDS AND PHRASES:
 - NEVER use: "to facilitate," "in order to," "for the purpose of," "to ensure"
@@ -1778,7 +1785,10 @@ OUTPUT FORMAT — CRITICAL:
         response = _gemini_call_with_retry(
             client,
             model_name,
-            contents=[system_prompt, f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}'],
+            contents=[
+                system_prompt + _vocabulary_block(),
+                f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}',
+            ],
             config=genai_types.GenerateContentConfig(
                 # Thinking tokens are spent out of max_output_tokens. The old 4096
                 # budget could be consumed entirely by thinking, leaving no answer
@@ -1841,7 +1851,27 @@ ISSUE TYPES — use exactly these values for "issue_type":
 
 "ai_language" — Phrasing that reads as machine-written rather than as a field inspector: "delve into", "it is worth noting", "showcasing", "seamless", "robust", "leverage", "navigate the challenges", "plays a crucial role", "stands as a testament", "in the realm of", "furthermore", "moreover", "additionally" as a sentence opener, "overall" as a summary opener. Also flag sentences that state the obvious or add no fact.
 
-"judgment" — Evaluative or opinion words. These are a LIABILITY in an inspection report because they assert a conclusion the inspector may not be qualified or authorized to make: "properly", "correctly", "successfully", "satisfactory", "good", "quality", "safely", "adequate", "as required", "in accordance with", "per spec" (unless quoting a specific spec section). State WHAT was done, never how well.
+ALSO flag SPELLED-OUT ACRONYMS. Expanding an acronym the reader already knows is one of the clearest tells that a model wrote the text — an inspector writes "BMP", never "Best Management Practice (BMP)". Flag the expansion and suggest the bare acronym:
+  - "Best Management Practice (BMP)" -> "BMP"
+  - "Traffic Control Plan (TCP)" -> "TCP"
+  - "Request for Information (RFI)" -> "RFI"
+  - "asphalt concrete (AC)" -> "AC"
+This applies to any industry acronym in the project vocabulary below, and to any acronym written as "Full Words (ABC)".
+
+"judgment" — Praise or opinion with NOTHING to check it against.
+
+READ THIS CAREFULLY. The author is a Resident Engineer. Verifying that work conforms to the contract documents IS THEIR JOB, and recording that verdict is the entire point of the report. Conformance statements are CORRECT and must NEVER be flagged:
+  - "Traffic control was installed per plan." — CORRECT, do not flag.
+  - "Backfill compacted per spec section 7-3." — CORRECT, do not flag.
+  - "Pipe installed in accordance with the approved submittal." — CORRECT, do not flag.
+  - "Shoring set per manufacturer data." — CORRECT, do not flag.
+Any statement measured against a named plan, spec, submittal, permit, standard, detail or manufacturer instruction is a professional finding. Leave it alone.
+
+Flag ONLY these two cases:
+  1. Bare praise with no referent — an aesthetic verdict, not an inspection: "the crew did a great job", "excellent workmanship", "good progress", "nice clean weld", "things went well".
+  2. A conformance verdict with the reference MISSING, where naming it would make the statement defensible: "the pipe was installed correctly", "compaction was adequate". Here the suggestion should ADD the reference in the author's own words — use "per plan" or "per spec" as a placeholder they will complete. Severity "low", because the finding is a prompt to cite, not an error.
+
+Do NOT flag: "per plan", "per spec", "per the approved TCP", "in accordance with", "as required", "conforms", "meets", "verified", "confirmed", "observed", "acceptable", "rejected", "deficient", "non-conforming". These are the vocabulary of the job.
 
 "tense" — Anything not in simple past. A daily report records work already performed. Flag present ("crew is placing"), future ("will pour"), and present perfect ("has been completed") where simple past belongs.
 
@@ -1866,6 +1896,7 @@ RULES:
 4. "severity": "high" = creates liability or is factually wrong (judgment, contradiction). "medium" = clearly wrong register or tense (ai_language, tense, person, corporate_vocab). "low" = polish (station_format, vague, repetition, minor spelling).
 5. NEVER change or flag: station numbers, quantities, measurements, times, dates, company names, equipment names, or people's names. Preserve all field data exactly.
 6. Do not flag bullet characters, line breaks or formatting.
+7. NEVER INVENT A FACT THAT IS NOT IN THE TEXT. This is the most important rule here. If fixing an issue would require information you do not have — a quantity, a time, a station, a spec section — return "suggestion": "" and let the author supply it. Writing "3 loads" for "several loads", or "at 14:00" for "later in the day", puts a number the author never said into a legal record. Flag it, explain what is missing in "why", and STOP. An empty suggestion is always better than a plausible invention.
 
 Return JSON ONLY:
 {
@@ -1879,6 +1910,65 @@ Return JSON ONLY:
     }
   ]
 }"""
+
+
+def _vocabulary_block() -> str:
+    """
+    Render the user's vocabulary library as prompt text.
+
+    Injected into everything that writes or checks report prose. Without it the
+    model reports real trade names as misspellings and quietly re-words terms
+    the owner expects to see verbatim.
+
+    Returns '' when nothing is configured, so prompts stay unchanged for a fresh
+    install rather than carrying an empty heading.
+    """
+    try:
+        from app.routers.settings import _load as _load_settings
+        vocab = (_load_settings() or {}).get('vocabulary') or {}
+    except Exception as exc:  # settings unreadable must never break an AI call
+        logger.warning(f'[vocabulary] Could not load: {exc}')
+        return ''
+
+    protected = [t for t in (vocab.get('protected_terms') or []) if str(t).strip()]
+    acronyms = [a for a in (vocab.get('known_acronyms') or []) if str(a).strip()]
+    preferred = [
+        p for p in (vocab.get('preferred_terms') or [])
+        if isinstance(p, dict) and str(p.get('wrong', '')).strip() and str(p.get('right', '')).strip()
+    ]
+    banned = [
+        b for b in (vocab.get('banned_terms') or [])
+        if isinstance(b, dict) and str(b.get('term', '')).strip()
+    ]
+
+    if not (protected or acronyms or preferred or banned):
+        return ''
+
+    parts = ['\n\nPROJECT VOCABULARY — this overrides your own judgement about wording:']
+
+    if protected:
+        parts.append(
+            '\nKNOWN TERMS — these are real trades, equipment and companies on this '
+            'project. NEVER flag them as misspellings and NEVER reword them:\n'
+            + ', '.join(str(t).strip() for t in protected)
+        )
+    if acronyms:
+        parts.append(
+            '\nKNOWN ACRONYMS — the reader knows these. Use the acronym alone. NEVER '
+            'expand one on first use ("BMP" NOT "Best Management Practice (BMP)"):\n'
+            + ', '.join(str(a).strip() for a in acronyms)
+        )
+    if preferred:
+        parts.append('\nHOUSE SPELLING — always write the term on the right:')
+        for p in preferred:
+            parts.append(f"  - \"{str(p['wrong']).strip()}\" -> \"{str(p['right']).strip()}\"")
+    if banned:
+        parts.append('\nBANNED WORDS — these must not appear:')
+        for b in banned:
+            why = str(b.get('why', '') or '').strip()
+            parts.append(f"  - \"{str(b['term']).strip()}\"" + (f' ({why})' if why else ''))
+
+    return '\n'.join(parts)
 
 
 class ProofreadRequest(BaseModel):
@@ -1915,7 +2005,7 @@ async def ai_proofread(request: ProofreadRequest):
             client,
             model_name,
             contents=[
-                PROOFREAD_SYSTEM_PROMPT,
+                PROOFREAD_SYSTEM_PROMPT + _vocabulary_block(),
                 f'REPORT TEXT TO REVIEW:\n{text}',
             ],
             config=genai_types.GenerateContentConfig(
