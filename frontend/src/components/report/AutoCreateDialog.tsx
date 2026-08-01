@@ -49,6 +49,17 @@ interface StepState {
   status: StepStatus;
   label: string;
   detail: string;
+  /**
+   * Kept out of the progress list entirely.
+   *
+   * WHY: dispatches only exist for paving work with one company, so nine days
+   * in ten have none. Showing "Load dispatch — none for this date", "Match
+   * schedule — needs a dispatch" and "Build activities — skipped" makes the
+   * ordinary, correct outcome look like three failures and reads as though the
+   * app is asking for a file that does not exist. When there is no dispatch
+   * these steps are not skipped work, they are not part of the job.
+   */
+  hidden?: boolean;
 }
 
 interface AutoCreateDialogProps {
@@ -62,9 +73,11 @@ interface AutoCreateDialogProps {
 const INITIAL_STEPS: StepState[] = [
   { status: 'pending', label: 'Create report', detail: '' },
   { status: 'pending', label: 'Fetch weather', detail: '' },
-  { status: 'pending', label: 'Load dispatch', detail: '' },
-  { status: 'pending', label: 'Match schedule', detail: '' },
-  { status: 'pending', label: 'Build activities', detail: '' },
+  // Hidden until a dispatch is actually found. A paving day reveals all three;
+  // every other day never sees them.
+  { status: 'pending', label: 'Load dispatch', detail: '', hidden: true },
+  { status: 'pending', label: 'Match schedule', detail: '', hidden: true },
+  { status: 'pending', label: 'Build activities', detail: '', hidden: true },
 ];
 
 /** Browser geolocation — resolves to coordinates or rejects. */
@@ -281,7 +294,8 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
       // ─── STEP 2: Load dispatch (optional) ───
       // Dispatches only exist for paving work with one particular company, so
       // most days there won't be one. Never block on it.
-      updateStep(2, { status: 'running' });
+      // Looked up silently. The step only joins the list if one turns up, so a
+      // day without a dispatch never advertises the absence.
       let dispatchData: { date: string; company: string; jobs: DispatchJob[] } | null = null;
       try {
         console.debug('[AutoCreate] Looking for dispatch for date:', date);
@@ -292,6 +306,7 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
         });
         updateStep(2, {
           status: 'success',
+          hidden: false,
           detail: `${dispatchData?.jobs.length} jobs — ${dispatchData?.company}`,
         });
       } catch (err: unknown) {
@@ -299,19 +314,25 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
         const status = httpErr?.response?.status;
         if (status === 404) {
           console.debug('[AutoCreate] No dispatch for date:', date, '— continuing without one');
-          updateStep(2, { status: 'skipped', detail: 'No dispatch for this date' });
+          // Not a skipped step — there was nothing to do. Stays hidden.
         } else {
           // A dispatch file existed but couldn't be parsed, or the server
           // errored. Report it and carry on — the report is still usable.
           const detail = httpErr?.response?.data?.detail
             || (err instanceof Error ? err.message : 'Dispatch could not be loaded');
+          // A dispatch existed but could not be read — that IS worth showing,
+          // because something was there and did not work.
           console.warn('[AutoCreate] Dispatch load failed:', detail);
-          updateStep(2, { status: 'error', detail });
+          updateStep(2, { status: 'error', hidden: false, detail });
         }
         setCanUploadDispatch(true);
       }
 
       if (dispatchData) {
+        // A dispatch turned up, so the work it drives becomes visible.
+        updateStep(3, { hidden: false });
+        updateStep(4, { hidden: false });
+
         // ─── STEP 3: Match schedule shift ───
         updateStep(3, { status: 'running' });
         let matchedShift: ScheduleShift | null = null;
@@ -395,9 +416,9 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
           updateStep(4, { status: 'error', detail: 'Could not build activities — add them manually' });
         }
       } else {
-        // No dispatch — nothing to derive activities from
-        updateStep(3, { status: 'skipped', detail: 'Needs a dispatch' });
-        updateStep(4, { status: 'skipped', detail: 'Add activities in the report' });
+        // No dispatch, which is the ordinary case. Nothing was skipped and
+        // nothing is missing — these steps simply do not apply today, so they
+        // stay out of the list rather than reporting themselves as gaps.
       }
 
       // ─── DONE ───
@@ -672,8 +693,8 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
                 Progress
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-                {steps.map((step, i) => (
-                  <StepRow key={i} step={step} />
+                {steps.filter(s => !s.hidden).map((step) => (
+                  <StepRow key={step.label} step={step} />
                 ))}
               </div>
             </div>
