@@ -172,6 +172,46 @@ date is authoritative and has already been resolved. Do not "correct" it.
 ONE CREW SHEET = ONE ACTIVITY, unless a single sheet clearly describes work in
 two separate locations, in which case split it.
 
+WHOSE REPORT THIS IS — READ THIS FIRST:
+You are writing the Resident Engineer's daily report. The timesheets are the
+CONTRACTOR's record, written by their foreman for their own company. They are
+evidence of what happened; they are not the report and they are not the voice.
+
+Re-report the work as the inspector who stood there and watched it. Do not
+reformat the foreman's summary box, do not preserve his sentence structure, and
+do not carry over his wording. Read what he wrote, work out what actually
+happened on the ground, and state that.
+
+- The contractor writes "we" and "our crew". The Resident Engineer never does.
+  Name the party: "OHL", "the pipe crew", "the sub".
+- A foreman writes to his office. An inspector writes to the record. Anything
+  addressed inward to the contractor's own organisation is not part of this
+  report — see the filter below.
+- Never copy a distinctive phrase from the sheet into the summary. If the sheet
+  says "boys got after it on the north end", the report says what work was
+  performed at the north end.
+
+WHAT TO LEAVE OUT — these are meaningless to the Resident Engineer:
+- Instructions and reminders to the contractor's own people ("call the shop",
+  "order more 12in", "bring the plate compactor tomorrow").
+- Their internal labour administration — who took PTO, who is owed a lunch
+  penalty, who to swap onto another job. Hours still go in the manpower rows;
+  the commentary about them does not go in the summary.
+- Self-assessment and morale ("good production", "great day", "crushed it").
+- Commercial positioning — assertions that work was extra, that they are owed
+  time, that a delay is someone's fault. If the sheet records a FACT bearing on
+  that (a crew stood by, a conflict was hit, an inspection was missed), report
+  the fact plainly and neutrally. Never repeat the argument, the blame, or the
+  claim itself.
+- Their equipment housekeeping — servicing, fuelling, moving iron between their
+  own yards — unless it affected the work on this project.
+
+WHAT ALWAYS MATTERS — keep every one of these that the sheet contains:
+work performed and where, stations and limits, quantities and materials placed,
+crews and equipment actually on site, deliveries, tests / surveys / inspections,
+utility conflicts and unforeseen conditions, delays and standby with the cause,
+traffic control, safety incidents, and any subcontractor or third-party work.
+
 {scope_note}
 
 FOR EACH ACTIVITY:
@@ -226,19 +266,22 @@ TRANSCRIPTION TO STRUCTURE:
 """
 
 DETAIL_NOTE_FACTUAL = (
-    "Report ONLY what the timesheet states. Do not add station ranges, "
-    "quantities, or percent-complete that are not written on the sheet — put "
-    "those in missing_info instead. If the summary box was BLANK, use the "
-    "continuity context below to state what the crew was continuing, and add "
-    '"work description inferred from prior day — confirm" to missing_info.'
+    "Report ONLY facts the timesheet contains, restated in the inspector's own "
+    "words — never the foreman's. Do not add station ranges, quantities, or "
+    "percent-complete that are not written on the sheet; put those in "
+    "missing_info instead. Restating is required, inventing is forbidden: the "
+    "wording is yours, every fact is the sheet's. If the summary box was BLANK, "
+    "use the continuity context below to state what the crew was continuing, and "
+    'add "work description inferred from prior day — confirm" to missing_info.'
 )
 
 DETAIL_NOTE_NARRATIVE = (
     "Write the summary the way the sample daily reports do — a short factual "
-    "narrative of the crew's day. You may connect the sheet's facts into full "
-    "sentences, but you may NOT introduce any station, quantity, or measurement "
-    "that is not on the sheet. Anything you would need but do not have goes in "
-    "missing_info."
+    "narrative of the day as the inspector observed it. Connect the sheet's "
+    "facts into full sentences in your own words; do not follow the order or the "
+    "phrasing of the foreman's summary box. You may NOT introduce any station, "
+    "quantity, or measurement that is not on the sheet. Anything you would need "
+    "but do not have goes in missing_info."
 )
 
 
