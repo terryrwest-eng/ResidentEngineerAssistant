@@ -79,8 +79,10 @@ WEEKDAY_NAMES = {
 
 # M.D.YY — the contractor's own filename convention ("1.13.26 Tuesday.pdf")
 _DOTTED_DATE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{2,4})")
-# MM-DD-YYYY — how the finished reports are named
-_DASHED_DATE = re.compile(r"(\d{1,2})-(\d{1,2})-(\d{4})")
+# MM-DD-YY or MM-DD-YYYY. The two-digit form is how the timesheets actually
+# arrive ("Brandon 5-21-26.pdf"); requiring four digits here meant those names
+# yielded no date at all and fell through to reading it off the scan.
+_DASHED_DATE = re.compile(r"(\d{1,2})-(\d{1,2})-(\d{2,4})")
 # YYYY-MM-DD — ISO, if anything upstream ever produces it
 _ISO_DATE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 
@@ -453,14 +455,11 @@ def _extract_date_from_filename(filename: str) -> tuple[str, str, str]:
             candidates.append(date_type(y, m, d))
         except ValueError:
             pass
-    elif dashed:
-        m, d, y = int(dashed.group(1)), int(dashed.group(2)), int(dashed.group(3))
-        try:
-            candidates.append(date_type(y, m, d))
-        except ValueError:
-            pass
-    elif dotted:
-        m, d, raw_y = int(dotted.group(1)), int(dotted.group(2)), dotted.group(3)
+    elif dashed or dotted:
+        # Same handling either way. "5-21-26" and "5.21.26" are the same date
+        # written by different people, and both turn up in one batch.
+        match = dashed or dotted
+        m, d, raw_y = int(match.group(1)), int(match.group(2)), match.group(3)
         year = int(raw_y)
         if len(raw_y) <= 2:
             year += 2000

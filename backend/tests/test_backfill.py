@@ -247,6 +247,27 @@ check("second year typo corrected", d == "2026-01-16", f"{d} ({src})")
 d, src, wk = backfill_router._extract_date_from_filename("scan_no_date.pdf")
 check("undated filename yields nothing", d == "" and src == "none", f"{d}/{src}")
 
+# Dashes with a two-digit year. This is how the timesheets actually arrive, and
+# the pattern used to require four digits — so "Brandon 5-21-26.pdf" produced no
+# date at all, fell through to reading the date off the scan, and landed on a
+# different day from the identical sheet named "5-21-2026". Same-day sheets then
+# split across two groups and never became one report, which is the whole point
+# of the scope rule. The failure was silent: a date came back, just the wrong one.
+d, src, wk = backfill_router._extract_date_from_filename("Brandon 5-21-26.pdf")
+check("dashed 2-digit year parsed", d == "2026-05-21", f"{d} ({src})")
+
+d, src, wk = backfill_router._extract_date_from_filename("6-8-26 MONDAY.pdf")
+check("dashed 2-digit year takes the weekday checksum too", d == "2026-06-08" and wk == "ok",
+      f"{d} (weekday={wk})")
+
+same_day = {
+    backfill_router._extract_date_from_filename(n)[0]
+    for n in ("brandon 5-21-2026.pdf", "Brandon 5-21-26.pdf",
+              "Jimmy 5-21-26.pdf", "5.21.26 Thursday.pdf")
+}
+check("one day's sheets group to ONE date however they are named",
+      same_day == {"2026-05-21"}, str(sorted(same_day)))
+
 
 # ── 2. The scope rule ───────────────────────────────────────────────────────
 

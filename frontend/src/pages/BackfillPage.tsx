@@ -137,8 +137,16 @@ export function BackfillPage() {
       poll(batchId);
       pollRef.current = window.setInterval(() => poll(batchId), POLL_MS);
     } catch (err) {
+      // Show what the server actually said. "Try again" hid real, actionable
+      // causes — no dates to group, a batch already generating — behind advice
+      // that could not work, because retrying an unchanged request fails
+      // identically every time.
       console.error('[Backfill] Generate failed:', err);
-      setError('Could not start generation. Try again.');
+      const httpErr = err as { response?: { data?: { detail?: string } } };
+      setError(
+        httpErr?.response?.data?.detail
+        || (err instanceof Error ? err.message : 'Could not start generation.')
+      );
     }
   };
 
