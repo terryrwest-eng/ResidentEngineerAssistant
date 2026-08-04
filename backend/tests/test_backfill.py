@@ -269,6 +269,33 @@ check("one day's sheets group to ONE date however they are named",
       same_day == {"2026-05-21"}, str(sorted(same_day)))
 
 
+# ── 1b. The standing sub crew ───────────────────────────────────────────────
+# Sub emails report work and nothing else — no roster, no equipment, ever. The
+# sub's activity would otherwise land in the report with nobody against it, as
+# though the work happened by itself.
+
+from app.routers.settings import DEFAULT_SETTINGS as _SETTINGS
+
+mp, eq, co = backfill_router._standing_sub_crew(
+    "SUB EMAIL — SRK Engineering", _SETTINGS, "7:00 AM", "3:30 PM"
+)
+check("standing crew matches the company", co == "SRK Engineering", co)
+check("standing crew is 1 FM + 2 LAB + 1 OP",
+      [(r["trade"], r["qty"]) for r in mp]
+      == [("Foreman", 1), ("Laborer", 2), ("Operator", 1)],
+      str([(r["trade"], r["qty"]) for r in mp]))
+check("standing crew brings all 7 pieces of equipment", len(eq) == 7, str(len(eq)))
+check("sub crew is marked third party", all(r["is_3rd_party"] for r in mp + eq))
+check("hours stay blank — the email never states them",
+      all(r["hours"] == 0 for r in mp + eq),
+      "an invented shift length in a payroll-adjacent document")
+
+check("a normal timesheet never gets a sub crew",
+      backfill_router._standing_sub_crew("SHEET 1", _SETTINGS, "", "")[2] == "")
+check("an unconfigured sub gets nothing rather than someone else's crew",
+      backfill_router._standing_sub_crew("SUB EMAIL — Other Co", _SETTINGS, "", "")[2] == "")
+
+
 # ── 2. The scope rule ───────────────────────────────────────────────────────
 
 kept, excluded = backfill_router._apply_scope_rule(PASS1_TWO_SHEETS)

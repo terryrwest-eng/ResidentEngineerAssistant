@@ -135,6 +135,34 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "word_filename_prefix": "Morena Conveyance North",
     "dispatch_folder_path": "",
     "tc_plan_path": "",
+    # ── Standing sub crews ────────────────────────────────────────────────────
+    # Subcontractor emails report what work was done and nothing else — no
+    # roster, no equipment list, ever. The crew is still known: it is the same
+    # one every time. Without this the sub's work lands in a report with no
+    # manpower and no equipment against it, which reads as though nobody was
+    # there.
+    #
+    # This is standing knowledge supplied by the Resident Engineer, not
+    # something read off a document, so every row it produces is flagged in the
+    # report for confirmation. Edit the crew here when it changes.
+    "sub_crew_defaults": {
+        "SRK Engineering": {
+            "manpower": [
+                {"trade": "Foreman", "qty": 1},
+                {"trade": "Laborer", "qty": 2},
+                {"trade": "Operator", "qty": 1},
+            ],
+            "equipment": [
+                {"name": "Crew Truck", "qty": 1},
+                {"name": "Dump Truck", "qty": 1},
+                {"name": "Mini Excavator", "qty": 1},
+                {"name": "Roller / Compactor", "qty": 1},
+                {"name": "Wacker", "qty": 1},
+                {"name": "Air Compressor", "qty": 1},
+                {"name": "Jack Hammer", "qty": 1},
+            ],
+        },
+    },
     # Backfill scope rule — see routers/backfill.py.
     # "All timesheets for a date, MINUS the 805 tunnel crew, = one report."
     # The foreman list is configuration rather than a constant because that

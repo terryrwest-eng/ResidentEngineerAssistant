@@ -257,6 +257,8 @@ HARD RULES:
 - Bullets use the "• " character. Plain text — no HTML tags.
 - Everything past tense.
 
+{sub_email_block}
+
 {continuity_block}
 
 TRANSCRIPTION TO STRUCTURE:
@@ -264,6 +266,28 @@ TRANSCRIPTION TO STRUCTURE:
 {pass1_text}
 ---
 """
+
+SUB_EMAIL_BLOCK = """SUBCONTRACTOR EMAILS — the text below is transcribed from emails a
+subcontractor sent about work they performed on this date. Each email becomes
+its OWN activity, under exactly the same rules and the same voice as the
+timesheets. A sub's day is part of this report, not a footnote to it.
+
+- Set source_sheet to "SUB EMAIL — <company>" using the company that sent it, so
+  the standing crew can be attached afterwards.
+- Leave manpower and equipment EMPTY. These emails never carry a roster or an
+  equipment list, and the crew is filled in afterwards from configuration. Do
+  NOT invent rows, and do NOT infer a headcount from the wording — only use a
+  number the email states outright.
+- The email is the sub's own account of their work, written to their client. The
+  same filter applies: report what was done and where, drop the scheduling
+  chatter, the apologies, the invoicing and the commercial positioning.
+
+EMAILS:
+---
+{sub_email_text}
+---
+"""
+
 
 DETAIL_NOTE_FACTUAL = (
     "Report ONLY facts the timesheet contains, restated in the inspector's own "
@@ -839,9 +863,19 @@ def _structure_timesheets(
     detail_level: str,
     continuity: str,
     scope_note: str,
+    sub_email_notes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Pass 2 — structure the verified text. Schema-enforced, no images."""
     from google.genai import types as genai_types
+
+    # Sub emails go through the same pass as the timesheets so the sub's work
+    # becomes a real activity in the inspector's voice. Appending the raw
+    # transcription to the notes instead — which is what used to happen — put
+    # the subcontractor's own sentences into the report verbatim.
+    notes = [note for note in (sub_email_notes or []) if note.strip()]
+    sub_email_block = (
+        SUB_EMAIL_BLOCK.format(sub_email_text="\n\n---\n\n".join(notes)) if notes else ""
+    )
 
     prompt = TIMESHEET_JSON_PROMPT.format(
         work_date=work_date,
@@ -850,6 +884,7 @@ def _structure_timesheets(
             DETAIL_NOTE_NARRATIVE if detail_level == "narrative" else DETAIL_NOTE_FACTUAL
         ),
         continuity_block=continuity,
+        sub_email_block=sub_email_block,
         pass1_text=pass1_text,
     )
 
@@ -925,6 +960,75 @@ _RESOURCE_KEYS = (
 )
 
 
+def _standing_sub_crew(
+    source_sheet: str,
+    settings: dict[str, Any],
+    shift_start: str,
+    shift_stop: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+    """
+    The crew a subcontractor email does not list.
+
+    Sub emails report the work and nothing else — never a roster, never
+    equipment. The crew is known anyway because it is the same one every time,
+    so it is configured per company in Settings under sub_crew_defaults.
+
+    Returns (manpower, equipment, company). Everything produced here is standing
+    knowledge rather than something read off the document, so the caller flags
+    it for confirmation — see the note about hours below.
+    """
+    marker = (source_sheet or "").upper()
+    if "SUB EMAIL" not in marker:
+        return [], [], ""
+
+    defaults = settings.get("sub_crew_defaults") or {}
+    company = next(
+        (name for name in defaults if name and name.upper() in marker),
+        "",
+    )
+    if not company:
+        return [], [], ""
+
+    crew = defaults.get(company) or {}
+
+    manpower = [
+        {
+            "id": str(uuid.uuid4()),
+            "trade": row.get("trade", ""),
+            "name": "",
+            "qty": row.get("qty", 1),
+            # Hours are deliberately 0. The email does not state them and the
+            # standing crew says who was there, not how long — guessing a shift
+            # would put an invented number into a payroll-adjacent document.
+            "hours": 0,
+            "company": company,
+            "start_time": shift_start,
+            "stop_time": shift_stop,
+            "is_3rd_party": True,
+        }
+        for row in (crew.get("manpower") or [])
+        if row.get("trade")
+    ]
+
+    equipment = [
+        {
+            "id": str(uuid.uuid4()),
+            "name": row.get("name", ""),
+            "description": "",
+            "qty": row.get("qty", 1),
+            "hours": 0,
+            "company": company,
+            "start_time": shift_start,
+            "stop_time": shift_stop,
+            "is_3rd_party": True,
+        }
+        for row in (crew.get("equipment") or [])
+        if row.get("name")
+    ]
+
+    return manpower, equipment, company
+
+
 def _build_report(
     work_date: str,
     parsed: dict[str, Any],
@@ -951,13 +1055,36 @@ def _build_report(
             if company and work:
                 summary = summary.rstrip() + f"\n• {company}: {work}"
 
+        act_manpower = act.get("manpower", []) or []
+        act_equipment = act.get("equipment", []) or []
+
+        # A subcontractor email lists no crew, so the sub's work would otherwise
+        # appear in the report with nobody and nothing against it — as though
+        # the work happened by itself. Fill the standing crew from Settings.
+        sub_manpower, sub_equipment, sub_company = _standing_sub_crew(
+            act.get("source_sheet", ""),
+            settings,
+            parsed.get("shift_start", "") or "",
+            parsed.get("shift_stop", "") or "",
+        )
+        if sub_company:
+            if not act_manpower:
+                act_manpower = sub_manpower
+            if not act_equipment:
+                act_equipment = sub_equipment
+            flags.append(
+                f"{sub_company}: crew and equipment filled from the standing crew "
+                "in Settings — the email does not list them. Hours are blank "
+                "because it does not state them. Confirm."
+            )
+
         activity = {
             "id": str(uuid.uuid4()),
             "work_area": act.get("work_area", ""),
             "stations": act.get("stations", ""),
             "summary": summary,
-            "manpower": act.get("manpower", []) or [],
-            "equipment": act.get("equipment", []) or [],
+            "manpower": act_manpower,
+            "equipment": act_equipment,
             "extra_work_manpower": [],
             "extra_work_equipment": [],
             "consultant_manpower": [],
@@ -981,9 +1108,14 @@ def _build_report(
     notes_parts: list[str] = []
     if parsed.get("general_notes"):
         notes_parts.append(parsed["general_notes"])
+    # The emails themselves are NOT pasted in here any more. They now go through
+    # pass 2 and come back as activities in the inspector's voice; dumping the
+    # transcription into the notes as well would put the subcontractor's own
+    # sentences back into the report and duplicate work already reported above.
     if sub_email_notes:
-        notes_parts.append(
-            "From subcontractor emails:\n" + "\n".join(sub_email_notes)
+        flags.append(
+            f"{len(sub_email_notes)} subcontractor email(s) were read into this "
+            "report as activities — check them against the email."
         )
     if excluded:
         notes_parts.append(
@@ -1315,7 +1447,10 @@ async def _run_generation(
                     )
                 )
 
-            if not kept_text.strip():
+            # A day can be nothing but a subcontractor email — the sub worked and
+            # the prime did not. That is still a day that needs a report, so only
+            # skip when there is no in-scope timesheet AND no sub email either.
+            if not kept_text.strip() and not any(n.strip() for n in sub_email_notes):
                 # Every sheet for the day was tunnel work — this date correctly
                 # produces no report. Recorded, not silently dropped.
                 entry["state"] = "skipped"
@@ -1337,6 +1472,7 @@ async def _run_generation(
                 _structure_timesheets,
                 client, model_name, kept_text, work_date,
                 request.detail_level, continuity, scope_note,
+                sub_email_notes,
             )
 
             for item in excluded:
