@@ -24,6 +24,8 @@ import { PhoneScannerModal } from '@/components/report/PhoneScannerModal';
 import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
 import { applyEndTimeToRows, isEndTimeApplied, formatEndTime } from '@/lib/dispatchHelpers';
+import { findActivityGaps } from '@/lib/activityGaps';
+import { ActivityGapChips } from '@/components/report/ActivityGapChips';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
 import { useMicLevel } from '@/hooks/useMicLevel';
 import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
@@ -591,18 +593,7 @@ export function ActivityEditor({
   // see what wants attention without opening all five resource tables.
   // "Hours" counts only rows that have a resource picked — an empty placeholder
   // row is not a missing-hours problem.
-  const gaps: string[] = [];
-  if (!activity.work_area?.trim()) gaps.push('location');
-  if (!activity.summary?.trim()) gaps.push('summary');
-  if (mpCount === 0) gaps.push('crew');
-  else {
-    const filled = [
-      ...(activity.manpower || []),
-      ...(activity.extra_work_manpower || []),
-      ...(activity.consultant_manpower || []),
-    ].filter((r) => r.trade?.trim());
-    if (filled.length > 0 && filled.some((r) => !r.hours)) gaps.push('hours');
-  }
+  const gaps = findActivityGaps(activity);
 
   return (
     <>
@@ -638,9 +629,9 @@ export function ActivityEditor({
             {gaps.length > 0 ? (
               <span
                 className="doc-status doc-status-warn"
-                title={`Still needed: ${gaps.join(', ')}`}
+                title={`Still needed: ${gaps.map((g) => g.label).join(', ')}`}
               >
-                {gaps.length === 1 ? gaps[0] : `${gaps.length} missing`}
+                {gaps.length === 1 ? gaps[0].label : `${gaps.length} missing`}
               </span>
             ) : (
               <CheckCircle2 size={15} style={{ color: 'var(--color-success)' }} />
@@ -652,6 +643,15 @@ export function ActivityEditor({
         {/* Expanded Content */}
         {isExpanded && (
           <div className="card-body" style={{ borderTop: '1px solid var(--color-border)' }}>
+            {/* Anything not mentioned when this was dictated. The Dictate
+                button in the summary toolbar above merges a follow-up into
+                this activity, so the gaps can be filled by talking. */}
+            {gaps.length > 0 && (
+              <div style={{ marginBottom: 'var(--space-md)' }}>
+                <ActivityGapChips activity={activity} variant="full" />
+              </div>
+            )}
+
             {/* Work Area + Stations */}
             <div style={{
               display: 'grid',

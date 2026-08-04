@@ -18,6 +18,8 @@ import { useState, useRef, useCallback } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
+import { DICTATION_CHECKLIST, findActivityGaps } from '@/lib/activityGaps';
+import { ActivityGapChips } from '@/components/report/ActivityGapChips';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
 import { useMicLevel, MIC_SILENCE_THRESHOLD } from '@/hooks/useMicLevel';
 import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
@@ -536,6 +538,43 @@ export function BulkDictateButton() {
             <p style={{ marginTop: 'var(--space-md)', fontSize: '0.75rem', color: 'var(--color-text-tertiary)' }}>
               {phase === 'recording' ? 'Tap to stop' : 'Tap to start'}
             </p>
+
+            {/* What to cover — visible while talking, so the detail gets said
+                in the first place instead of chased down afterwards. */}
+            <div style={{
+              marginTop: 'var(--space-lg)',
+              textAlign: 'left',
+              border: '1px solid var(--color-border)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-sm) var(--space-md)',
+              background: 'var(--color-bg)',
+            }}>
+              <div style={{
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: 'var(--color-text-secondary)',
+                marginBottom: 6,
+              }}>
+                Remember to say
+              </div>
+              <ul style={{ margin: 0, paddingLeft: '1.1rem', fontSize: '0.8125rem', lineHeight: 1.55 }}>
+                {DICTATION_CHECKLIST.map((item) => (
+                  <li key={item.label}>
+                    <strong>{item.label}</strong>
+                    <span style={{ color: 'var(--color-text-tertiary)' }}> — {item.hint}</span>
+                  </li>
+                ))}
+              </ul>
+              <div style={{
+                marginTop: 6,
+                fontSize: '0.6875rem',
+                color: 'var(--color-text-tertiary)',
+              }}>
+                For each location. Anything skipped gets flagged after processing.
+              </div>
+            </div>
           </div>
         )}
 
@@ -834,6 +873,14 @@ export function BulkDictateButton() {
                     {act.equipment.length > 0 && <span>{act.equipment.length} equip</span>}
                   </div>
                 </button>
+
+                {/* What was never said for this location — shown before it is
+                    added, while still on site and able to go say it. */}
+                {findActivityGaps(act).length > 0 && (
+                  <div style={{ padding: '0 var(--space-md) var(--space-xs)' }}>
+                    <ActivityGapChips activity={act} variant="compact" />
+                  </div>
+                )}
 
                 {expandedIdx === i && (
                   <div style={{ padding: 'var(--space-sm) var(--space-md)', fontSize: '0.8125rem', borderTop: '1px solid var(--color-border)' }}>
