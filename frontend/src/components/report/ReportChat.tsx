@@ -25,6 +25,7 @@ import { Sparkles, Send, X, Check, XCircle, Mic, MicOff, MessageSquare, Trash2 }
 import type { Activity, GeneralInfo, Schedule } from '@/types';
 import { useMicLevel } from '@/hooks/useMicLevel';
 import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
+import { describeActivityPatches, isDestructive } from '@/lib/chatChanges';
 
 // --- Types ---
 
@@ -35,6 +36,44 @@ interface ChatMessage {
   transcription?: string;
   /** Was this message sent via voice? */
   isVoice?: boolean;
+  /**
+   * Placeholder shown while a voice message is in flight, replaced by the
+   * transcription once the server reports what it heard.
+   */
+  pending?: boolean;
+  /**
+   * App chatter — "Changes applied", error notices. Displayed in the thread but
+   * never sent back as conversation history.
+   *
+   * WHY: these are the app talking to the user, not the assistant taking a turn.
+   * Feeding them back made the model treat "Changes applied! What else can I
+   * help with?" as its own previous answer.
+   */
+  uiOnly?: boolean;
+}
+
+/**
+ * The conversation as the model should see it.
+ *
+ * WHY THIS IS NOT `messages` DIRECTLY
+ *
+ * Two kinds of message in the thread are not conversation turns, and sending
+ * them corrupted the model's view of who said what:
+ *
+ *   1. Voice transcriptions used to be pushed as `model` messages, so the words
+ *      the USER spoke came back to the model as ITS OWN previous output. Ask it
+ *      to fix something by voice and it would read your correction as text it
+ *      had written for the report, and duly write your correction into the
+ *      report. That is the "it typed my instruction into the summary" bug.
+ *   2. UI chatter ("Changes applied!") is the app speaking, not the assistant.
+ *
+ * A voice turn now carries the transcription as the USER's message, which is
+ * what it always was.
+ */
+function toHistory(messages: ChatMessage[]): { role: string; content: string }[] {
+  return messages
+    .filter(m => !m.uiOnly && !m.pending && m.content.trim().length > 0)
+    .map(m => ({ role: m.role, content: m.content }));
 }
 
 interface PendingChanges {
@@ -145,7 +184,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
           activities: report.activities,
           ...(activeSchedule ? { schedule: activeSchedule } : {}),
         } as Record<string, unknown>,
-        chat_history: messages.map(m => ({ role: m.role, content: m.content })),
+        chat_history: toHistory(messages),
       });
 
       setMessages(prev => [...prev, { role: 'model', content: response.reply }]);
@@ -163,6 +202,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
       setMessages(prev => [...prev, {
         role: 'model',
         content: 'Sorry, I hit an error talking to the server. Check your connection and try again.',
+        uiOnly: true,
       }]);
     } finally {
       setIsLoading(false);
@@ -172,10 +212,13 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
   // --- Send voice message ---
   const handleSendAudio = useCallback(async (audioBlob: Blob) => {
     setIsLoading(true);
+    // Placeholder so the thread reacts immediately. Replaced below by what the
+    // server actually heard, keeping it attributed to the user.
     setMessages(prev => [...prev, {
       role: 'user',
       content: ' Voice message',
       isVoice: true,
+      pending: true,
     }]);
 
     try {
@@ -195,22 +238,27 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
           activities: report.activities,
           ...(activeSchedule ? { schedule: activeSchedule } : {}),
         } as Record<string, unknown>,
-        chat_history: messages.map(m => ({ role: m.role, content: m.content })),
+        chat_history: toHistory(messages),
       });
 
-      // Show what the AI heard
-      const aiMessages: ChatMessage[] = [];
-
-      if (response.transcription) {
-        aiMessages.push({
-          role: 'model',
-          content: response.transcription,
-          transcription: response.transcription,
-        });
-      }
-
-      aiMessages.push({ role: 'model', content: response.reply });
-      setMessages(prev => [...prev, ...aiMessages]);
+      // Replace the placeholder with what the AI heard — still the USER's turn,
+      // because these are the user's words. Attributing them to the model made
+      // it treat spoken corrections as report text it had authored.
+      setMessages(prev => {
+        const next = [...prev];
+        const idx = next.map(m => m.pending === true).lastIndexOf(true);
+        if (idx !== -1) {
+          next[idx] = response.transcription
+            ? {
+                role: 'user',
+                content: response.transcription,
+                transcription: response.transcription,
+                isVoice: true,
+              }
+            : { ...next[idx], pending: false };
+        }
+        return [...next, { role: 'model' as const, content: response.reply }];
+      });
 
       if (response.modified_general || response.modified_activities || response.new_activities || response.deleted_activity_ids) {
         setPendingChanges({
@@ -225,6 +273,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
       setMessages(prev => [...prev, {
         role: 'model',
         content: 'Sorry, I had trouble processing that recording. Try again, or type your message instead.',
+        uiOnly: true,
       }]);
     } finally {
       setIsLoading(false);
@@ -271,6 +320,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
           setMessages(prev => [...prev, {
             role: 'model',
             content: "That recording was too short — I need at least a couple seconds. Try again!",
+            uiOnly: true,
           }]);
         }
       };
@@ -296,6 +346,7 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
       setMessages(prev => [...prev, {
         role: 'model',
         content: "I can't access your microphone. Please allow mic permissions in your browser settings and try again.",
+        uiOnly: true,
       }]);
     }
   };
@@ -361,12 +412,12 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
 
     setPendingChanges(null);
     bumpRevision();
-    setMessages(prev => [...prev, { role: 'model', content: ' Changes applied! What else can I help with?' }]);
+    setMessages(prev => [...prev, { role: 'model', content: ' Changes applied! What else can I help with?', uiOnly: true }]);
   };
 
   const handleDiscard = () => {
     setPendingChanges(null);
-    setMessages(prev => [...prev, { role: 'model', content: 'Changes discarded. What would you like to do instead?' }]);
+    setMessages(prev => [...prev, { role: 'model', content: 'Changes discarded. What would you like to do instead?', uiOnly: true }]);
   };
 
   // --- Format duration ---
@@ -398,6 +449,15 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
     }
     return parts.join(' + ');
   };
+
+  // What the proposed activity patches do to what is already written.
+  const activityChanges = pendingChanges?.modifiedActivities
+    ? describeActivityPatches(
+        pendingChanges.modifiedActivities as (Partial<Activity> & { id: string })[],
+        report.activities,
+      )
+    : [];
+  const hasRemovals = activityChanges.some(isDestructive);
 
   return (
     <div style={{
@@ -580,6 +640,63 @@ export function ReportChat({ onClose }: { onClose: () => void }) {
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/*
+                What each activity change actually does — and specifically what
+                it takes away. "1 activity updated" reads the same whether a
+                bullet was added or three were deleted; this is where that
+                becomes visible while Discard is still one tap away.
+              */}
+              {activityChanges.length > 0 && (
+                <div style={{
+                  fontSize: '0.75rem', backgroundColor: 'var(--background)',
+                  borderRadius: 'var(--radius-sm, 4px)', padding: 'var(--space-xs) var(--space-sm)',
+                  marginBottom: 'var(--space-sm)', maxHeight: '220px', overflowY: 'auto',
+                }}>
+                  {activityChanges.map(change => (
+                    <div key={change.id} style={{ marginBottom: 'var(--space-xs)' }}>
+                      <div style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        {change.name}
+                      </div>
+                      {change.fields.map((f, i) => (
+                        <div key={i} style={{ marginLeft: 'var(--space-xs)' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>{f.label}</span>
+                          {f.replaced && (
+                            <div style={{ color: 'var(--color-danger, #ef4444)' }}>
+                              − {f.replaced.from} → {f.replaced.to}
+                            </div>
+                          )}
+                          {f.removed.map((line, j) => (
+                            <div key={`r${j}`} style={{ color: 'var(--color-danger, #ef4444)' }}>
+                              − {line}
+                            </div>
+                          ))}
+                          {f.added.map((line, j) => (
+                            <div key={`a${j}`} style={{ color: 'var(--color-success, #16a34a)' }}>
+                              + {line}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/*
+                Removing content is the case worth slowing down for — it is how
+                an "add this" request silently eats what was already written.
+              */}
+              {hasRemovals && (
+                <p style={{
+                  fontSize: '0.75rem',
+                  color: 'var(--color-danger, #ef4444)',
+                  marginBottom: 'var(--space-sm)',
+                }}>
+                  This removes content that is in the report now. If you asked to
+                  add something, discard and say "add it, keep what's there".
+                </p>
               )}
 
               <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
