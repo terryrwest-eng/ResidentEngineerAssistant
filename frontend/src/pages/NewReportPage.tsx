@@ -32,30 +32,8 @@ const REPORT_SECTIONS: NavSection[] = [
 ];
 import { reportApi } from '@/lib/api';
 import { settingsApi } from '@/lib/settingsApi';
+import { buildReportDefaults } from '@/lib/reportDefaults';
 
-/**
- * Convert 12-hour time string ("6:30 AM", "3:00 PM") to 24-hour format ("06:30", "15:00").
- * HTML <input type="time"> requires HH:mm format.
- * Passes through values already in 24h format unchanged.
- */
-function to24h(time12: string): string {
-  if (!time12) return '';
-  // Already in HH:mm format?
-  const match24 = time12.match(/^(\d{1,2}):(\d{2})$/);
-  if (match24) return time12;
-  // Parse 12h: "6:30 AM", "3:00 PM", "12:00 PM"
-  const match12 = time12.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match12) {
-    console.warn('[NewReportPage] Could not parse time for 24h conversion:', time12);
-    return time12;
-  }
-  let hrs = parseInt(match12[1]);
-  const mins = match12[2];
-  const period = match12[3].toUpperCase();
-  if (period === 'PM' && hrs !== 12) hrs += 12;
-  if (period === 'AM' && hrs === 12) hrs = 0;
-  return `${hrs.toString().padStart(2, '0')}:${mins}`;
-}
 import {
   Save,
   SaveAll,
@@ -123,12 +101,7 @@ export function NewReportPage() {
           start: s.default_start_time,
           stop: s.default_stop_time,
         });
-        newReport({
-          project_name: s.default_project || '',
-          resident_engineer: s.default_resident_engineer || '',
-          start_time: to24h(s.default_start_time || ''),
-          end_time: to24h(s.default_stop_time || ''),
-        });
+        newReport(buildReportDefaults(s));
       }).catch((err) => {
         console.warn('[NewReportPage] Settings fetch failed, creating blank report:', err);
         newReport();
