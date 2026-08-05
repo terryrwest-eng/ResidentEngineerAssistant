@@ -24,6 +24,7 @@ import { settingsApi } from '@/lib/settingsApi';
 import { buildActivity } from '@/lib/dispatchHelpers';
 import { loadResourceAliases } from '@/lib/resourceMatcher';
 import { SKY_CONDITIONS } from '@/lib/constants';
+import { buildReportDefaults, to24Hour, type ReportDefaultSettings } from '@/lib/reportDefaults';
 import type {
   DispatchJob,
   ScheduleShift,
@@ -95,21 +96,6 @@ function getDeviceCoords(): Promise<{ lat: number; lon: number }> {
   });
 }
 
-/** Convert a "7:00 AM" settings value into the "07:00" a time input expects. */
-function to24Hour(value: string): string {
-  if (!value?.trim()) return '';
-  const match12 = value.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (match12) {
-    let hrs = parseInt(match12[1]);
-    const period = match12[3].toUpperCase();
-    if (period === 'PM' && hrs !== 12) hrs += 12;
-    if (period === 'AM' && hrs === 12) hrs = 0;
-    return `${hrs.toString().padStart(2, '0')}:${match12[2]}`;
-  }
-  const match24 = value.match(/^(\d{1,2}):(\d{2})$/);
-  if (match24) return `${match24[1].padStart(2, '0')}:${match24[2]}`;
-  return '';
-}
 
 // ============================================
 // Component
@@ -208,17 +194,12 @@ export function AutoCreateDialog({ onClose }: AutoCreateDialogProps) {
       // Close any existing report and start fresh. Header fields come from
       // Settings where they've been filled in, and stay blank where they haven't.
       closeReport();
-      const reportDefaults: Partial<GeneralInfo> = {
-        project_name: (settings.default_project as string) || '',
-        project_number: (settings.default_project_number as string) || '',
-        project_location: (settings.default_project_location as string) || '',
-        inspector_name: (settings.default_inspector_name as string) || '',
-        resident_engineer: (settings.default_resident_engineer as string) || '',
+      // Same defaults New Report uses — see lib/reportDefaults. The date and the
+      // start time come from this dialog's own fields, so they override.
+      const reportDefaults = buildReportDefaults(settings as ReportDefaultSettings, {
         report_date: date,
         start_time: startTime,
-        // Filled in later by "Set End Time" on each activity
-        end_time: '',
-      };
+      });
 
       newReport(reportDefaults);
       updateStep(0, {

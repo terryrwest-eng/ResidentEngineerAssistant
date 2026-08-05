@@ -140,7 +140,15 @@ export function DashboardPage() {
         <QuickAction
           icon={<Zap size={24} />}
           label="Quick Create"
-          description="Auto-create report from dispatch"
+          /*
+            Was "Auto-create report from dispatch", which is what made this feel
+            like the dispatch button. Dispatches exist for paving work with one
+            company — nine days in ten there is none, and on those days this
+            still does the useful thing: seeds the header from Settings and
+            fills in the weather, which New Report leaves you to do by hand.
+            The description now names that, not the rare case.
+          */
+          description="Start today's report with weather filled in"
           onClick={() => setShowAutoCreate(true)}
           accent
         />
