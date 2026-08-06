@@ -22,13 +22,20 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import Depends, APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/ai", tags=["ai"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/ai", tags=["ai"], dependencies=[Depends(require_user)])
 
 
 def _gemini_call_with_retry(client: Any, model_name: str, max_retries: int = 3, **kwargs: Any) -> Any:
@@ -3345,10 +3352,10 @@ def _find_tc_plan_pdf() -> str | None:
     1. Check tc_plan_path from settings (direct file path on disk)
     2. Search data/specs/ for any PDF whose name contains TCP or traffic control
     """
-    from app.core.paths import SETTINGS_FILE, SPECS_DIR
+    from app.core.paths import settings_file, specs_dir
 
     # ── Step 1: Check settings for explicit tc_plan_path ──
-    settings_path = SETTINGS_FILE
+    settings_path = settings_file()
     if os.path.exists(settings_path):
         try:
             with open(settings_path, "r", encoding="utf-8") as f:
@@ -3363,13 +3370,13 @@ def _find_tc_plan_pdf() -> str | None:
             logger.warning(f'[generate-tc] Failed to read settings for tc_plan_path: {exc}')
 
     # ── Step 2: Scan data/specs/ ──
-    specs_dir = SPECS_DIR
-    if not os.path.exists(specs_dir):
+    specs_root = specs_dir()
+    if not os.path.exists(specs_root):
         logger.debug('[generate-tc] specs directory does not exist')
         return None
 
-    for item in os.listdir(specs_dir):
-        item_path = os.path.join(specs_dir, item)
+    for item in os.listdir(specs_root):
+        item_path = os.path.join(specs_root, item)
         if not os.path.isdir(item_path):
             continue
         # Each spec is stored in a subdirectory with metadata.json + the PDF

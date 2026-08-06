@@ -9,7 +9,23 @@ python3 backend/tests/test_dictation.py
 python3 backend/tests/test_backfill.py
 python3 backend/tests/test_word_export.py
 python3 backend/tests/test_extension_context.py
+python3 backend/tests/test_duplicate_date_guard.py
+python3 backend/tests/test_multiuser.py
+python3 backend/tests/test_migration.py
 ```
+
+`test_multiuser.py` is the one that matters for privacy: it registers two
+accounts and checks that neither can list, read or delete the other's reports,
+that settings and trackers stay separate, that an unauthenticated caller gets
+nothing, and that revoking somebody takes effect on their next request rather
+than whenever their token expires.
+
+`test_migration.py` covers the one-shot adoption of pre-multi-user data. It
+stages a realistic old-layout directory — including a real SQLite database —
+registers the first user, and checks every file arrives, is readable through the
+API afterwards, and that a second user inherits none of it.
+
+Both create their own scratch storage, so they need no environment setup.
 
 Each prints PASS/FAIL per check and exits non-zero if anything fails.
 

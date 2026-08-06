@@ -7,7 +7,7 @@ CRUD endpoints for the 4 field tracking modules:
   - Punch List              GET/POST/PUT/DELETE /api/trackers/punch-list
   - Redline Tracker         GET/POST/PUT/DELETE /api/trackers/redlines
 
-All data stored in individual JSON files under data/trackers/{type}.json
+All data stored in individual JSON files under each user's trackers/{type}.json
 Atomic writes (tempfile → rename) prevent corruption.
 No MongoDB — all state is files on disk.
 
@@ -26,14 +26,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/trackers", tags=["trackers"])
+from app.core.auth import require_user
+from app.core.paths import data_dir
 
-TRACKER_DIR = Path("data/trackers")
-TRACKER_DIR.mkdir(parents=True, exist_ok=True)
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/trackers", tags=["trackers"], dependencies=[Depends(require_user)])
+
+def _tracker_dir() -> Path:
+    """
+    The calling user's tracker directory.
+
+    This used to be a module-level Path("data/trackers") created at import
+    time — a single shared directory, relative to whatever the process's working
+    directory happened to be. It never went through app.core.paths, so when
+    storage became per-user it was the one place that silently kept writing
+    everybody's excavation, pay item, punch and redline entries into the same
+    files. Resolving it per call is what puts it inside the asking user's tree.
+    """
+    directory = Path(data_dir()) / "trackers"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 # ─────────────────────────────────────────
 # FILE HELPERS
@@ -41,7 +61,7 @@ TRACKER_DIR.mkdir(parents=True, exist_ok=True)
 
 def _tracker_path(name: str) -> Path:
     """Returns the JSON file path for a tracker."""
-    return TRACKER_DIR / f"{name}.json"
+    return _tracker_dir() / f"{name}.json"
 
 
 def _load(name: str) -> list[dict[str, Any]]:
@@ -63,7 +83,7 @@ def _save(name: str, rows: list[dict[str, Any]]) -> None:
     """
     path = _tracker_path(name)
     try:
-        fd, tmp = tempfile.mkstemp(dir=TRACKER_DIR, suffix=".json")
+        fd, tmp = tempfile.mkstemp(dir=_tracker_dir(), suffix=".json")
         with open(fd, "w", encoding="utf-8") as f:
             json.dump(rows, f, indent=2, default=str)
         shutil.move(tmp, path)

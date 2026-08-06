@@ -13,9 +13,10 @@ from collections import Counter
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import Depends, APIRouter, HTTPException, Query, Request
 
-from app.core.paths import DATA_DIR
+
+from app.core.paths import data_dir
 from app.models.report import ReportModel, ReportIndexModel
 from app.services.database import (
     save_report,
@@ -27,7 +28,14 @@ from app.services.database import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api", tags=["reports"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api", tags=["reports"], dependencies=[Depends(require_user)])
 
 
 def _normalize_activities(report_dict: dict) -> None:
@@ -214,12 +222,16 @@ The volume is the same one the reports live on, so there is nothing new to
 configure.
 """
 
-_CONTEXT_PATH = os.path.join(DATA_DIR, "extension_context.json")
+def _context_path() -> str:
+    """Which report the Chrome extension should auto-fill, per user. Was a
+    module constant; it now resolves inside the calling user's directory so two
+    people using the extension do not overwrite each other's context."""
+    return os.path.join(data_dir(), "extension_context.json")
 
 
 def _read_context() -> dict:
     try:
-        with open(_CONTEXT_PATH, "r", encoding="utf-8") as f:
+        with open(_context_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
         return {"report_id": data.get("report_id") or None}
     except FileNotFoundError:
@@ -230,11 +242,11 @@ def _read_context() -> dict:
 
 
 def _write_context(report_id: str | None) -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = _CONTEXT_PATH + ".tmp"
+    os.makedirs(data_dir(), exist_ok=True)
+    tmp = _context_path() + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"report_id": report_id, "updated_at": datetime.utcnow().isoformat()}, f)
-    os.replace(tmp, _CONTEXT_PATH)
+    os.replace(tmp, _context_path())
 
 
 @router.post("/extension/context")

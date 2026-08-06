@@ -5,7 +5,8 @@
  * Used by web, desktop (Electron), and mobile (Capacitor) builds.
  */
 
-import axios, { type AxiosInstance } from 'axios';
+import { type AxiosInstance } from 'axios';
+import { BASE_URL, createAuthedClient } from '@/lib/authClient';
 import type { Report } from '@/types';
 import { Capacitor } from '@capacitor/core';
 
@@ -18,36 +19,10 @@ export type WordSaveResult = 'external' | 'saved-to-chosen-folder' | 'downloaded
 
 // In development, Vite's proxy handles /api → localhost:8000
 // In production, the backend serves the frontend (same origin)
-const BASE_URL = import.meta.env.VITE_API_URL || '';
-
-const api: AxiosInstance = axios.create({
+const api: AxiosInstance = createAuthedClient({
   baseURL: `${BASE_URL}/api`,
   timeout: 120000, // 2 minutes default
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
-
-// --- Request interceptor: attach auth token ---
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// --- Response interceptor: handle errors ---
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      console.error('[API] 401 Unauthorized:', error.config?.url);
-      // Future: redirect to login
-    }
-    return Promise.reject(error);
-  }
-);
 
 // ============================================
 // REPORTS

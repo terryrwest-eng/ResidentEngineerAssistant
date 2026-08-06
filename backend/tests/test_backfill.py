@@ -196,11 +196,15 @@ weather_router._fetch_weather = fake_fetch_weather
 backfill_router._geocode_zip = fake_geocode
 
 from app.main import app  # noqa: E402
-from app.services.database import init_database, get_report  # noqa: E402
+from app.services.database import get_report  # noqa: E402
 from app.routers.settings import _load, _save  # noqa: E402
 
-init_database()
-client = TestClient(app)
+# Signs in as the first (auto-approved admin) account. Every data route now
+# requires a user, and storage resolves inside that user's directory — the
+# client carries the token so these checks exercise the real path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _auth_helper import authed_client  # noqa: E402
+client = authed_client(app)
 
 # Make sure the scope rule has the tunnel foreman configured (a fresh settings
 # file gets it from DEFAULT_SETTINGS, but be explicit — this is what's under test).

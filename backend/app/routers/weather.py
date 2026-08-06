@@ -12,11 +12,18 @@ Historical weather uses the Open-Meteo Archive API for past dates.
 from datetime import date as date_type, datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import Depends, APIRouter, HTTPException, Query
 import httpx
 import logging
 
-router = APIRouter(prefix="/api", tags=["weather"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api", tags=["weather"], dependencies=[Depends(require_user)])
 logger = logging.getLogger(__name__)
 
 # Open-Meteo APIs (free, no key required)

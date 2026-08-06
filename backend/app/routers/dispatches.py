@@ -24,18 +24,25 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import Depends, APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.services.dispatch_parser import parse_dispatch_pdf
+from app.core.paths import dispatches_dir, settings_file
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/dispatches", tags=["dispatches"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/dispatches", tags=["dispatches"], dependencies=[Depends(require_user)])
 
 # ── Storage path ──────────────────────────────────────────────────────────────
-from app.core.paths import DISPATCHES_DIR, SETTINGS_FILE  # noqa: E402
 
-os.makedirs(DISPATCHES_DIR, exist_ok=True)
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DISPATCH_PDF_FILENAME = "dispatch.pdf"
@@ -45,16 +52,19 @@ FILENAME_DATE_PATTERN = re.compile(r'(\d{1,2})\.(\d{1,2})\.(\d{2})')
 DATE_FORMAT = "%Y-%m-%d"
 TWO_DIGIT_YEAR_BASE = 2000
 # Settings file path — read dispatch_folder_path from here
-_SETTINGS_PATH = SETTINGS_FILE
+def _settings_path() -> str:
+    """The calling user's settings file. A function, not a constant: the path
+    depends on who is asking, so it cannot be resolved at import time."""
+    return settings_file()
 
 
 def _get_dispatch_folder_path() -> str | None:
     """Read dispatch_folder_path from settings. Returns None if not set."""
-    if not os.path.exists(_SETTINGS_PATH):
+    if not os.path.exists(_settings_path()):
         logger.debug('[dispatches] No settings.json found')
         return None
     try:
-        with open(_SETTINGS_PATH, 'r', encoding='utf-8') as f:
+        with open(_settings_path(), 'r', encoding='utf-8') as f:
             settings = json.load(f)
         folder_path = settings.get('dispatch_folder_path', '')
         if folder_path and os.path.isdir(folder_path):
@@ -162,7 +172,7 @@ class BatchUploadResponse(BaseModel):
 
 def _get_date_dir(date_str: str) -> str:
     """Get the directory path for a dispatch date. Creates if needed."""
-    date_dir = os.path.join(DISPATCHES_DIR, date_str)
+    date_dir = os.path.join(dispatches_dir(), date_str)
     os.makedirs(date_dir, exist_ok=True)
     return date_dir
 
@@ -202,7 +212,7 @@ def _save_parsed(date_str: str, filename: str, parsed_data: dict[str, Any]) -> s
 
 def _load_parsed(date_str: str) -> dict[str, Any] | None:
     """Load parsed dispatch data from disk. Returns None if not found."""
-    parsed_path = os.path.join(DISPATCHES_DIR, date_str, PARSED_JSON_FILENAME)
+    parsed_path = os.path.join(dispatches_dir(), date_str, PARSED_JSON_FILENAME)
     if not os.path.exists(parsed_path):
         logger.debug(f'[dispatches] No parsed.json found for {date_str}')
         return None
@@ -532,12 +542,12 @@ async def list_dispatches():
 
     dispatches: list[DispatchListItem] = []
 
-    if not os.path.exists(DISPATCHES_DIR):
+    if not os.path.exists(dispatches_dir()):
         logger.debug('[dispatches] Dispatches directory does not exist')
         return DispatchListResponse(dispatches=[], count=0)
 
-    for item in sorted(os.listdir(DISPATCHES_DIR), reverse=True):
-        item_path = os.path.join(DISPATCHES_DIR, item)
+    for item in sorted(os.listdir(dispatches_dir()), reverse=True):
+        item_path = os.path.join(dispatches_dir(), item)
         if not os.path.isdir(item_path):
             continue
 
@@ -576,7 +586,7 @@ async def delete_dispatch(date: str):
     _validate_date_format(date)
     logger.info(f'[dispatches] DELETE dispatch for {date}')
 
-    date_dir = os.path.join(DISPATCHES_DIR, date)
+    date_dir = os.path.join(dispatches_dir(), date)
     if not os.path.exists(date_dir):
         raise HTTPException(status_code=404, detail=f"No dispatch found for {date}")
 

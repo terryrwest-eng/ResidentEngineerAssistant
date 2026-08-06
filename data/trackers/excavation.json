@@ -1,0 +1,17 @@
+[
+  {
+    "date": "2026-08-05",
+    "location": "",
+    "station_from": "10+00",
+    "station_to": "11+00",
+    "length_lf": 0.0,
+    "width_ft": 0.0,
+    "depth_ft": 0.0,
+    "soil_type": "clay",
+    "notes": "Terry entry",
+    "id": "563091df-aff9-4032-a2e6-c220b1c54d8c",
+    "created_at": "2026-08-06T00:00:39.438688+00:00",
+    "updated_at": "2026-08-06T00:00:39.438697+00:00",
+    "volume_cy": 0.0
+  }
+]

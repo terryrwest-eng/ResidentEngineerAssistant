@@ -26,7 +26,14 @@ import {
   MapPin,
   X,
   BookMarked,
+  User as UserIcon,
+  Users as UsersIcon,
+  LogOut,
+  Copy,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/lib/authContext';
+import { getToken } from '@/lib/authClient';
 import {
   settingsApi,
   type AppSettings,
@@ -62,6 +69,68 @@ const BUILTIN_TEMPLATES: UserTemplate[] = [
 type Tab = 'preferences' | 'resourcecodes' | 'templates';
 
 // ── Component ──────────────────────────────────────────────────────────────────
+
+/**
+ * Who is signed in, and the way out.
+ *
+ * Lives here rather than in the bottom navigation, which is full at five tabs.
+ * The People link only appears for administrators — it is the approval queue,
+ * and it is the only way anybody else gets access.
+ */
+function AccountCard() {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
+  if (!user) return null;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 'var(--space-sm)',
+      flexWrap: 'wrap', padding: 'var(--space-sm) var(--space-md)',
+      marginBottom: 'var(--space-lg)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', backgroundColor: 'var(--surface)',
+    }}>
+      <UserIcon size={18} style={{ color: 'var(--text-secondary)' }} />
+      <div style={{ flex: 1, minWidth: '150px' }}>
+        <div style={{ fontWeight: 600 }}>{user.name}</div>
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+          {user.email}
+          {user.role === 'admin' && ' · administrator'}
+        </div>
+      </div>
+      {/*
+        The Chrome extension is a separate origin with no session of its own, so
+        it needs a token pasted in. This is the only place to get one.
+      */}
+      <button
+        className="btn btn-outline" style={{ fontSize: '0.8rem' }}
+        onClick={async () => {
+          const token = getToken();
+          if (!token) return;
+          try {
+            await navigator.clipboard.writeText(token);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2500);
+          } catch {
+            // Clipboard is blocked over plain http and in some webviews.
+            window.prompt('Copy this access token for the Chrome extension:', token);
+          }
+        }}
+      >
+        <Copy size={14} /> {copied ? 'Copied' : 'Copy access token'}
+      </button>
+      {user.role === 'admin' && (
+        <button className="btn btn-outline" style={{ fontSize: '0.8rem' }}
+                onClick={() => navigate('/users')}>
+          <UsersIcon size={14} /> People
+        </button>
+      )}
+      <button className="btn btn-outline" style={{ fontSize: '0.8rem' }} onClick={signOut}>
+        <LogOut size={14} /> Sign out
+      </button>
+    </div>
+  );
+}
 
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('preferences');
@@ -391,6 +460,8 @@ export function SettingsPage() {
         <h1><Settings size={24} style={{ verticalAlign: 'middle', marginRight: 10 }} />Settings</h1>
         <p>Project defaults, master lists, and API keys</p>
       </div>
+
+      <AccountCard />
 
       {/* Tab bar */}
       <div style={{ display: 'flex', gap: 'var(--space-xs)', marginBottom: 'var(--space-lg)', borderBottom: '2px solid var(--border)', paddingBottom: 0 }}>

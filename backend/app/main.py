@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.services.database import init_database
 from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches, backfill
 
 # --- Logging ---
@@ -23,22 +22,22 @@ logging.basicConfig(
 logger = logging.getLogger("daily-reporter")
 
 # --- Data directories (single source of truth: app.core.paths) ---
-from app.core.paths import (  # noqa: E402
-    DATA_DIR, REPORTS_DIR, PHOTOS_DIR, SPECS_DIR,
-    SCHEDULES_DIR, DISPATCHES_DIR, ensure_dirs,
-)
+from app.core.paths import ROOT_DIR, ensure_root_dirs  # noqa: E402
+from app.services.auth_db import init_auth_database  # noqa: E402
 
-ensure_dirs()
+ensure_root_dirs()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("Starting Daily Reporter V3 backend...")
-    init_database()
-    logger.info("Database initialized.")
-    logger.info(f"Data directory: {DATA_DIR}")
-    logger.info(f"Reports directory: {REPORTS_DIR}")
+    # Only the identity store is created here. Each user's own database lives
+    # inside their directory and is created on their first authenticated
+    # request — there is no single database to initialize at startup any more.
+    init_auth_database()
+    logger.info("Auth database initialized.")
+    logger.info(f"Storage root: {ROOT_DIR}")
     yield
     logger.info("Shutting down Daily Reporter V3 backend.")
 
@@ -61,8 +60,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Static files for photos ---
-app.mount("/api/photos", StaticFiles(directory=PHOTOS_DIR), name="photos")
+# NOTE: there is no /api/photos static mount.
+#
+# It used to serve PHOTOS_DIR directly, but photos are now per-user and a static
+# mount points at one fixed directory with no authentication — under multi-user
+# that is precisely the leak this design exists to prevent. Nothing referenced
+# it (no frontend caller, no upload endpoint), so it is gone rather than
+# rebuilt. Serving photos again means an authenticated route that resolves
+# photos_dir() for the calling user.
 
 # --- Routers ---
 app.include_router(auth.router)
@@ -84,7 +89,7 @@ async def health_check():
     return {
         "status": "healthy",
         "version": "3.0.0",
-        "data_dir": DATA_DIR,
+        "storage_root": ROOT_DIR,
     }
 
 

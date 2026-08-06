@@ -5,14 +5,11 @@
  * The Gemini API key is write-only from the frontend — status only is returned.
  */
 
-import axios from 'axios';
+import { BASE_URL, createAuthedClient } from '@/lib/authClient';
 
-const BASE_URL = import.meta.env.VITE_API_URL || '';
-
-const api = axios.create({
+const api = createAuthedClient({
   baseURL: `${BASE_URL}/api/settings`,
   timeout: 15000,
-  headers: { 'Content-Type': 'application/json' },
 });
 
 // ── Types ──────────────────────────────────────────────────────────────────────

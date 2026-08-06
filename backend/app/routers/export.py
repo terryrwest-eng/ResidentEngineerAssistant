@@ -12,7 +12,7 @@ Chrome Extension endpoints live in reports.py:
 """
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from datetime import datetime
@@ -25,7 +25,14 @@ from app.services.word import (
 from app.services.reports import get_report
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/export", tags=["export"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(require_user)])
 
 
 @router.get("/{report_id}/word")

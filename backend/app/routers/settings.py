@@ -24,14 +24,22 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from app.core.paths import data_dir, settings_file
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/settings", tags=["settings"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(require_user)])
 
 # ── Storage path ──────────────────────────────────────────────────────────────
-from app.core.paths import DATA_DIR, SETTINGS_FILE  # noqa: E402
+
 
 # ── Built-in activity templates (not editable, always available) ───────────────
 BUILTIN_TEMPLATES: list[dict[str, str]] = [
@@ -256,12 +264,12 @@ class SyncResourcesPayload(BaseModel):
 
 def _load() -> dict[str, Any]:
     """Load settings from disk. Returns defaults if file doesn't exist."""
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if not os.path.exists(SETTINGS_FILE):
+    os.makedirs(data_dir(), exist_ok=True)
+    if not os.path.exists(settings_file()):
         logger.info("[settings] No settings file found — using defaults")
         return dict(DEFAULT_SETTINGS)
     try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        with open(settings_file(), "r", encoding="utf-8") as f:
             data = json.load(f)
         # Back-fill any keys added since last save
         for k, v in DEFAULT_SETTINGS.items():
@@ -275,15 +283,15 @@ def _load() -> dict[str, Any]:
 
 def _save(data: dict[str, Any]) -> None:
     """Atomic write — write to temp then rename to prevent partial writes."""
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(data_dir(), exist_ok=True)
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=DATA_DIR, delete=False, suffix=".tmp"
+            mode="w", encoding="utf-8", dir=data_dir(), delete=False, suffix=".tmp"
         ) as tmp:
             json.dump(data, tmp, indent=2, default=str)
             tmp_path = tmp.name
-        shutil.move(tmp_path, SETTINGS_FILE)
+        shutil.move(tmp_path, settings_file())
         logger.info("[settings] Saved successfully")
     except Exception as exc:
         logger.error(f"[settings] Save failed: {exc}")

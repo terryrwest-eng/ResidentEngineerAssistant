@@ -106,7 +106,8 @@ class Api:
         logger.warning("No usable filename in Content-Disposition — using fallback")
         return f"DailyReport_{report_date}.docx"
 
-    def auto_save_word(self, report_id: str, report_date: str) -> dict:
+    def auto_save_word(self, report_id: str, report_date: str,
+                       auth_token: str = "") -> dict:
         """
         Download the Word .docx for a submitted report and save it
         to the configured work folder on the local hard drive.
@@ -122,6 +123,11 @@ class Api:
         Args:
             report_id: The UUID of the submitted report.
             report_date: The report date string (e.g. "2026-07-19").
+            auth_token: The signed-in user's bearer token, handed over by the
+                page. Reports are per-user now, so the export endpoint refuses
+                an unauthenticated request. Defaults to empty so an older
+                frontend bundle still calls this without a TypeError — it will
+                get a clear "not signed in" error instead of a crash.
 
         Returns:
             dict with 'success' (bool), 'path' or 'error' (str),
@@ -163,7 +169,27 @@ class Api:
             url = f"{RAILWAY_URL}/api/export/{report_id}/word"
             logger.info(f"Downloading Word file from: {url}")
 
-            response = httpx.get(url, timeout=60.0, follow_redirects=True)
+            # The export endpoint requires a signed-in user now that reports are
+            # per-user — without the token the server cannot tell whose report
+            # this is, and would have no safe answer even if it could.
+            #
+            # The token comes from the page rather than being stored here: the
+            # webview is already signed in, and keeping a second copy of a
+            # credential on disk to go stale is worse than passing the live one
+            # across the bridge that already exists.
+            headers = {}
+            if auth_token:
+                headers['Authorization'] = f'Bearer {auth_token}'
+            else:
+                logger.warning("No auth token supplied — the download will be refused")
+
+            response = httpx.get(url, timeout=60.0, follow_redirects=True, headers=headers)
+            if response.status_code in (401, 403):
+                logger.error(f"Word download refused ({response.status_code}) — not signed in")
+                return {
+                    'success': False,
+                    'error': 'Not signed in. Sign in again in the app and re-submit.',
+                }
             response.raise_for_status()
 
             # --- SAVE TO DISK ---

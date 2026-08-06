@@ -10,23 +10,30 @@ Run:  python backend/tests/test_duplicate_date_guard.py
 Needs: fastapi, httpx (already in backend/requirements.txt)
 """
 import os, sys, tempfile, shutil
-tmp = tempfile.mkdtemp()
-os.environ["DATA_DIR"] = tmp
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import app.services.database as db
-# Point the real database module at a throwaway dir
-db.DB_PATH = os.path.join(tmp, "t.db")
-db.REPORTS_DIR = os.path.join(tmp, "reports")
-os.makedirs(db.REPORTS_DIR, exist_ok=True)
-db.init_database()
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from app.routers.reports import router
+# Scratch storage must be set BEFORE app.core.paths is imported — it reads the
+# env var once, at import time.
+#
+# This replaced monkeypatching db.DB_PATH and db.REPORTS_DIR. Those were
+# module-level constants; storage is per-user now, so they are functions that
+# resolve against whoever is asking, and assigning to the old names quietly did
+# nothing at all.
+from _auth_helper import use_scratch_storage, authed_client  # noqa: E402
 
-api = FastAPI(); api.include_router(router)
-c = TestClient(api, raise_server_exceptions=False)
+tmp = use_scratch_storage("rea-dupguard-")
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from app.routers.reports import router  # noqa: E402
+from app.routers.auth import router as auth_router  # noqa: E402
+
+# The auth router comes along so the client has an account to sign in as; the
+# reports routes require one.
+api = FastAPI(); api.include_router(auth_router); api.include_router(router)
+c = authed_client(api)
 
 DATE = "2026-07-30"
 PROJ = "Morena Conveyance"

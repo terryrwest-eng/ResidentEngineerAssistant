@@ -85,9 +85,13 @@ def fake_client():
 ai_router._get_gemini_client = fake_client
 
 from app.main import app  # noqa: E402
-from app.services.database import init_database  # noqa: E402
-init_database()
-client = TestClient(app)
+# Signs in as the first (auto-approved admin) account. Every data route now
+# requires a user, and storage resolves inside that user's directory — the
+# client carries the token so these checks exercise the real path.
+import os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from _auth_helper import authed_client  # noqa: E402
+client = authed_client(app)
 
 AUDIO = base64.b64encode(b"x" * 50_000).decode()
 

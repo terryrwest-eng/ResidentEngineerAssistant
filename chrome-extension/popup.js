@@ -5,6 +5,73 @@ let activitiesData = []; // Activities (OnSite) rows
 let fullData = null; // Full PMWeb data bundle from /pmweb-full
 let API_BASE = ''; // Will be set from storage or detected
 
+// ── Signing requests ─────────────────────────────────────────────────────────
+//
+// Reports are per-user now, so every endpoint except /api/health requires a
+// signed-in user. The extension is a separate origin with no session of its
+// own, so it carries an access token the user pastes in once — copy it from
+// Settings in the app ("Copy access token").
+//
+// apiFetch attaches it to every call. The token is stored alongside apiBase in
+// chrome.storage.local, which is per-profile and not readable by pages.
+
+async function getAuthToken() {
+    const stored = await chrome.storage.local.get(['apiToken']);
+    return stored.apiToken || '';
+}
+
+/** fetch() with the stored access token attached. */
+async function apiFetch(url, options = {}) {
+    const token = await getAuthToken();
+    const headers = Object.assign({}, options.headers || {});
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const resp = await fetch(url, Object.assign({}, options, { headers }));
+    if (resp.status === 401 || resp.status === 403) {
+        // Distinguishable from "the server is down", which is the other way
+        // these calls fail and needs an entirely different fix from the user.
+        showTokenPrompt();
+    }
+    return resp;
+}
+
+/** Tell the user the extension needs a token, without wiping the popup. */
+function showTokenPrompt() {
+    const el = document.getElementById('tokenPrompt');
+    if (el) el.style.display = 'block';
+}
+
+/** Wire up the token box. Called once the popup DOM exists. */
+function initTokenBox() {
+    const input = document.getElementById('tokenInput');
+    const button = document.getElementById('saveTokenBtn');
+    const message = document.getElementById('tokenMsg');
+    if (!input || !button) return;
+
+    button.addEventListener('click', async () => {
+        const token = (input.value || '').trim();
+        if (!token) {
+            if (message) message.textContent = 'Paste the token first.';
+            return;
+        }
+        await chrome.storage.local.set({ apiToken: token });
+        input.value = '';
+        if (message) message.textContent = 'Saved. Try that again.';
+        const prompt = document.getElementById('tokenPrompt');
+        if (prompt) setTimeout(() => { prompt.style.display = 'none'; }, 1500);
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') button.click();
+    });
+
+    // Say so up front when there is no token at all, rather than waiting for
+    // the first request to fail and look like a connection problem.
+    getAuthToken().then(token => { if (!token) showTokenPrompt(); });
+}
+
+document.addEventListener('DOMContentLoaded', initTokenBox);
+
+
 // Get saved API URL or detect it
 async function getApiBase() {
     // Check storage first
@@ -115,7 +182,7 @@ async function fetchData() {
         // 1. Check for specific "Active" context first (set by "Combined View")
         let reportId = null;
         try {
-            const contextResp = await fetch(`${API_BASE}/api/extension/context`);
+            const contextResp = await apiFetch(`${API_BASE}/api/extension/context`);
             if (contextResp.ok) {
                 const context = await contextResp.json();
                 if (context.report_id) {
@@ -135,7 +202,7 @@ async function fetchData() {
             return;
         }
 
-        const dataResp = await fetch(`${API_BASE}/api/reports/${reportId}/consolidated`);
+        const dataResp = await apiFetch(`${API_BASE}/api/reports/${reportId}/consolidated`);
         rowsData = await dataResp.json();
 
         // Store in extension storage for content script
@@ -314,7 +381,7 @@ async function fetchActivities() {
         // Get active report context
         let reportId = null;
         try {
-            const contextResp = await fetch(`${API_BASE}/api/extension/context`);
+            const contextResp = await apiFetch(`${API_BASE}/api/extension/context`);
             if (contextResp.ok) {
                 const context = await contextResp.json();
                 if (context.report_id) {
@@ -333,7 +400,7 @@ async function fetchActivities() {
             return;
         }
 
-        const dataResp = await fetch(`${API_BASE}/api/reports/${reportId}/activities-consolidated`);
+        const dataResp = await apiFetch(`${API_BASE}/api/reports/${reportId}/activities-consolidated`);
         activitiesData = await dataResp.json();
 
         // Store in extension storage
@@ -439,7 +506,7 @@ async function syncPMWebResources() {
 
                 try {
                     syncBtn.textContent = '⏳ Saving to App...';
-                    const response = await fetch(`${API_BASE}/api/settings/sync-pmweb-resources`, {
+                    const response = await apiFetch(`${API_BASE}/api/settings/sync-pmweb-resources`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ resources: message.data.resources })
@@ -493,7 +560,7 @@ async function fetchFullData() {
     // Get active report context
     let reportId = null;
     try {
-        const contextResp = await fetch(`${API_BASE}/api/extension/context`);
+        const contextResp = await apiFetch(`${API_BASE}/api/extension/context`);
         if (contextResp.ok) {
             const context = await contextResp.json();
             if (context.report_id) reportId = context.report_id;
@@ -507,7 +574,7 @@ async function fetchFullData() {
         return null;
     }
 
-    const resp = await fetch(`${API_BASE}/api/export/${reportId}/pmweb-full`);
+    const resp = await apiFetch(`${API_BASE}/api/export/${reportId}/pmweb-full`);
     if (!resp.ok) throw new Error(`API returned ${resp.status}`);
     return await resp.json();
 }
@@ -691,7 +758,7 @@ function renderActiveReport(report) {
 async function selectReport(reportId) {
     const report = pickerReports.find(r => r.id === reportId);
     try {
-        await fetch(`${API_BASE}/api/extension/context`, {
+        await apiFetch(`${API_BASE}/api/extension/context`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ report_id: reportId }),
@@ -762,7 +829,7 @@ async function loadReportPicker() {
         return;
     }
     try {
-        const resp = await fetch(`${API_BASE}/api/extension/reports?limit=30`);
+        const resp = await apiFetch(`${API_BASE}/api/extension/reports?limit=30`);
         const data = await resp.json();
         pickerReports = data.reports || [];
 
@@ -770,7 +837,7 @@ async function loadReportPicker() {
         // reflecting reality rather than a guess.
         let activeId = null;
         try {
-            const ctx = await fetch(`${API_BASE}/api/extension/context`);
+            const ctx = await apiFetch(`${API_BASE}/api/extension/context`);
             activeId = (await ctx.json()).report_id || null;
         } catch (e) { /* non-fatal */ }
 
@@ -829,7 +896,7 @@ async function copyReportForPasting() {
         const reportId = await getActiveReportId();
         if (!reportId) return;   // getActiveReportId already told the user
 
-        const resp = await fetch(`${API_BASE}/api/export/${reportId}/notes-html`);
+        const resp = await apiFetch(`${API_BASE}/api/export/${reportId}/notes-html`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const { html } = await resp.json();
         if (!html) throw new Error('The report came back empty');
@@ -863,7 +930,7 @@ async function copyReportForPasting() {
 /** The selected report, or null after telling the user why not. */
 async function getActiveReportId() {
     try {
-        const resp = await fetch(`${API_BASE}/api/extension/context`);
+        const resp = await apiFetch(`${API_BASE}/api/extension/context`);
         const { report_id } = await resp.json();
         if (report_id) return report_id;
     } catch (e) {

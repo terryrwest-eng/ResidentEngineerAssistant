@@ -1,5 +1,24 @@
 # Deploying
 
+## First run after the multi-user change
+
+The app now requires an account. On the first visit it offers "create the first
+account" instead of a sign-in form; that account becomes the administrator, and
+anything already on the volume from the single-user version is adopted into it.
+
+Everyone else registers and then waits — an administrator approves them from
+**Settings → People**. Nobody can sign in until approved.
+
+Two things worth knowing before the first deploy:
+
+- **`JWT_SECRET`** (optional). Session tokens are signed with it. Leave it unset
+  and one is generated and stored on the volume, which is fine as long as the
+  volume persists; set it in Railway if you would rather sessions survive the
+  volume being replaced.
+- **The Chrome extension** needs an access token pasted into it once —
+  **Settings → Copy access token**. It is a separate origin with no session of
+  its own, so it cannot pick up the browser's.
+
 Railway builds this repo from `Dockerfile` — it compiles the React frontend and
 serves it from FastAPI as a single service. There are two ways to ship.
 
@@ -35,6 +54,25 @@ $env:RAILWAY_TOKEN = "<project token>"        # Windows
 Never commit the token. It is an environment variable, not a file.
 
 ### Deploying
+
+## First run after the multi-user change
+
+The app now requires an account. On the first visit it offers "create the first
+account" instead of a sign-in form; that account becomes the administrator, and
+anything already on the volume from the single-user version is adopted into it.
+
+Everyone else registers and then waits — an administrator approves them from
+**Settings → People**. Nobody can sign in until approved.
+
+Two things worth knowing before the first deploy:
+
+- **`JWT_SECRET`** (optional). Session tokens are signed with it. Leave it unset
+  and one is generated and stored on the volume, which is fine as long as the
+  volume persists; set it in Railway if you would rather sessions survive the
+  volume being replaced.
+- **The Chrome extension** needs an access token pasted into it once —
+  **Settings → Copy access token**. It is a separate origin with no session of
+  its own, so it cannot pick up the browser's.
 
 ```bash
 ./deploy.sh          # macOS / Linux
