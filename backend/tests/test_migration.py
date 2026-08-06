@@ -50,9 +50,16 @@ os.makedirs(os.path.join(_TEST_ROOT, "backfill", "batch-1"), exist_ok=True)
 os.makedirs(os.path.join(_TEST_ROOT, "trackers"), exist_ok=True)
 
 staged = {
-    "reports/2026-07-30_Morena_abc12345.json": json.dumps(
-        {"id": "abc12345", "general": {"project_name": "Morena Conveyance"}, "activities": []}
-    ),
+    "reports/2026-07-30_Morena_abc12345.json": json.dumps({
+        "id": "abc12345",
+        "general": {"project_name": "Morena Conveyance", "report_date": "2026-07-30"},
+        "activities": [{
+            "id": "a1", "work_area": "North trench", "stations": "",
+            "summary": "\u2022 Excavated the north trench",
+            "manpower": [], "equipment": [], "extra_work_manpower": [],
+            "extra_work_equipment": [], "consultant_manpower": [],
+        }],
+    }),
     "photos/report-1/site.jpg": "not-really-a-jpeg",
     "specs/spec-notes.txt": "spec",
     "schedules/sched-1/sched-1.json": json.dumps({"filename": "digout.pdf"}),
@@ -85,7 +92,7 @@ _conn.executescript("""
 _conn.execute(
     "INSERT INTO reports (id, project_name, report_date, status, activity_count, "
     "file_path, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-    ("abc12345", "Morena Conveyance", "2026-07-30", "draft", 0,
+    ("abc12345", "Morena Conveyance", "2026-07-30", "draft", 1,
      os.path.join(_TEST_ROOT, "reports", "2026-07-30_Morena_abc12345.json"),
      "2026-07-30T00:00:00", "2026-07-30T00:00:00"),
 )
@@ -123,6 +130,8 @@ with open(os.path.join(user_dir, "reports/2026-07-30_Morena_abc12345.json"), enc
 check("report contents are intact",
       moved["general"]["project_name"] == "Morena Conveyance",
       moved["general"]["project_name"])
+check("the activity survived the move on disk",
+      len(moved["activities"]) == 1 and moved["activities"][0]["work_area"] == "North trench")
 
 with open(os.path.join(user_dir, "settings.json"), encoding="utf-8") as f:
     moved_settings = json.load(f)
@@ -149,6 +158,41 @@ _adopted = _body if isinstance(_body, list) else _body.get("reports", [])
 check("the adopted report is listed through the API",
       any(x.get("project_name") == "Morena Conveyance" for x in _adopted),
       f"saw {[x.get('project_name') for x in _adopted]}")
+
+# OPENING one is the check that matters, and its absence is what let a real bug
+# through: the reports index stores an absolute file path, so after the move
+# every adopted report still LISTED correctly — the list is built from the index
+# — and then 404'd on open, because the path pointed at the old directory.
+# Listing proves the index survived; only opening proves the data is reachable.
+_report_id = next((x.get("id") for x in _adopted
+                   if x.get("project_name") == "Morena Conveyance"), "")
+check("the adopted report has an id to open", bool(_report_id), str(_report_id))
+
+r = client.get(f"/api/reports/{_report_id}", headers={"Authorization": f"Bearer {token}"})
+check("the adopted report OPENS", r.status_code == 200, f"HTTP {r.status_code}")
+
+_full = r.json() if r.status_code == 200 else {}
+_full = _full.get("report", _full)
+check("its general info is intact",
+      _full.get("general", {}).get("project_name") == "Morena Conveyance",
+      str(_full.get("general", {}).get("project_name")))
+_acts = _full.get("activities", [])
+check("its activities came with it", len(_acts) == 1, f"{len(_acts)} activities")
+check("the activity's work area survived",
+      bool(_acts) and _acts[0].get("work_area") == "North trench",
+      str(_acts[0].get("work_area")) if _acts else "(none)")
+
+# The index should point at the new location, not be limping along on the
+# lazy repair in get_report.
+_db = os.path.join(user_dir, "reporter.db")
+_conn2 = sqlite3.connect(_db)
+_stored = _conn2.execute("SELECT file_path FROM reports WHERE id = ?", (_report_id,)).fetchone()
+_conn2.close()
+check("the index points inside the user's directory",
+      bool(_stored) and _stored[0].startswith(user_dir),
+      str(_stored[0]) if _stored else "(no row)")
+check("the file the index names actually exists",
+      bool(_stored) and os.path.isfile(_stored[0]))
 
 r = client.get("/api/settings", headers={"Authorization": f"Bearer {token}"})
 check("the adopted settings load through the API",

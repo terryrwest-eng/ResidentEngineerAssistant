@@ -28,6 +28,7 @@ HOW IT AVOIDS LOSING ANYTHING
 import logging
 import os
 import shutil
+import sqlite3
 
 from app.core.paths import ROOT_DIR, ensure_user_dirs, user_root
 
@@ -58,6 +59,69 @@ def has_legacy_data() -> bool:
         if os.path.isfile(os.path.join(ROOT_DIR, name)):
             return True
     return False
+
+
+def _repoint_report_paths(destination: str, result: dict[str, list[str]]) -> None:
+    """
+    Rewrite the reports index to point at where the files now are.
+
+    WHY THIS IS NOT OPTIONAL
+
+    The reports table stores each report's JSON file as an ABSOLUTE path, and
+    moving the files does not change it. Left alone, every adopted report still
+    LISTS correctly — the list comes from the index — and then fails to open,
+    because the path in the row points at a directory that no longer has the
+    file. A history full of reports that 404 is a worse outcome than an obvious
+    failure, because it looks like the data is gone.
+
+    Only the filename is reused; the directory is replaced with the user's own.
+    Rows whose file is genuinely absent are left untouched rather than pointed
+    somewhere wrong.
+    """
+    db = os.path.join(destination, "reporter.db")
+    if not os.path.isfile(db):
+        return
+
+    new_reports_dir = os.path.join(destination, "reports")
+    try:
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+        try:
+            has_table = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='reports'"
+            ).fetchone()
+            if not has_table:
+                return
+
+            repointed = 0
+            for row in conn.execute("SELECT id, file_path FROM reports").fetchall():
+                filename = os.path.basename(row["file_path"] or "")
+                if not filename:
+                    continue
+                candidate = os.path.join(new_reports_dir, filename)
+                if not os.path.isfile(candidate):
+                    logger.warning(
+                        f"Report {row['id']} indexed at {row['file_path']} has no file "
+                        f"at {candidate} — leaving the row alone"
+                    )
+                    result["skipped"].append(row["file_path"])
+                    continue
+                if candidate != row["file_path"]:
+                    conn.execute(
+                        "UPDATE reports SET file_path = ? WHERE id = ?",
+                        (candidate, row["id"]),
+                    )
+                    repointed += 1
+            conn.commit()
+            if repointed:
+                logger.info(f"Repointed {repointed} report file paths into {new_reports_dir}")
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as exc:
+        # A database we cannot read is worth reporting, not worth failing
+        # registration over — the lazy repair in get_report still covers it.
+        logger.error(f"Could not repoint report paths in {db}: {exc}")
+        result["failed"].append(db)
 
 
 def migrate_legacy_data_to(user_id: str) -> dict[str, list[str]]:
@@ -116,6 +180,8 @@ def migrate_legacy_data_to(user_id: str) -> dict[str, list[str]]:
         except OSError as exc:
             logger.error(f"Could not migrate {source}: {exc}")
             result["failed"].append(source)
+
+    _repoint_report_paths(destination, result)
 
     try:
         with open(os.path.join(ROOT_DIR, MARKER), "w", encoding="utf-8") as f:

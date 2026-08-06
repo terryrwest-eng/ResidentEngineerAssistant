@@ -307,6 +307,36 @@ def find_report_by_date(report_date: str, project_name: str = "") -> Optional[di
         conn.close()
 
 
+def _relocate_report_file(stored_path: str, report_id: str) -> Optional[str]:
+    """
+    Find a report's JSON file when the indexed path no longer resolves.
+
+    Tries the filename in the current user's reports directory first, which is
+    the case that matters: the file kept its name and only its directory
+    changed. Falls back to scanning for a file whose name carries the report's
+    short id, the last component of the naming convention in _report_file_path,
+    so a renamed project still resolves.
+
+    Returns the path it found, or None.
+    """
+    directory = reports_dir()
+
+    candidate = os.path.join(directory, os.path.basename(stored_path or ""))
+    if os.path.basename(stored_path or "") and os.path.isfile(candidate):
+        return candidate
+
+    if not os.path.isdir(directory):
+        return None
+
+    short_id = (report_id or "")[:8]
+    if not short_id:
+        return None
+    for name in os.listdir(directory):
+        if name.endswith(".json") and short_id in name:
+            return os.path.join(directory, name)
+    return None
+
+
 def get_report(report_id: str) -> Optional[dict]:
     """
     Get a full report by ID.
@@ -322,7 +352,30 @@ def get_report(report_id: str) -> Optional[dict]:
             logger.warning(f"Report not found in index: {report_id}")
             return None
 
-        return read_report_file(row["file_path"])
+        report = read_report_file(row["file_path"])
+        if report is not None:
+            return report
+
+        # The index stores an ABSOLUTE path, so anything that moves the file on
+        # disk without rewriting the row leaves a pointer to nowhere — and the
+        # report then lists correctly (that comes from the index) while failing
+        # to open. The move to per-user storage did exactly that.
+        #
+        # The file itself is fine; only the pointer is stale. Look for it by
+        # name in this user's reports directory and repair the row, so a volume
+        # remounted at a different path heals itself rather than presenting a
+        # history full of reports that will not open.
+        recovered = _relocate_report_file(row["file_path"], report_id)
+        if recovered:
+            conn.execute(
+                "UPDATE reports SET file_path = ? WHERE id = ?", (recovered, report_id)
+            )
+            conn.commit()
+            logger.info(f"Repaired stale file path for report {report_id}: {recovered}")
+            return read_report_file(recovered)
+
+        logger.error(f"Report {report_id} is indexed but its file is missing: {row['file_path']}")
+        return None
     finally:
         conn.close()
 
