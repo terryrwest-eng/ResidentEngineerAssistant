@@ -12,7 +12,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.core.auth import create_access_token, require_admin, require_user
+from app.core.auth import (
+    create_access_token, create_download_token, require_admin, require_user,
+)
+from app.core.auth import DOWNLOAD_TOKEN_TTL_MINUTES
 from app.services import auth_db
 from app.services.migrate_to_multiuser import migrate_legacy_data_to
 
@@ -125,6 +128,21 @@ async def setup_state() -> dict[str, Any]:
     infer by trying to register anyway.
     """
     return {'needs_first_user': auth_db.count_users() == 0}
+
+
+@router.get("/auth/download-token")
+async def download_token(user: dict[str, Any] = Depends(require_user)) -> dict[str, Any]:
+    """
+    A short-lived token for a download that cannot send headers.
+
+    Android opens the export URL in the system browser — a different app, with
+    no access to this one's session — so the credential has to travel in the
+    URL. This token expires in minutes and opens nothing but a file download.
+    """
+    return {
+        'token': create_download_token(user['id']),
+        'expires_in_minutes': DOWNLOAD_TOKEN_TTL_MINUTES,
+    }
 
 
 @router.post("/auth/change-password")

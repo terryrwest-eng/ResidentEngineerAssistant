@@ -170,6 +170,20 @@ export const authApi = {
   register: async (name: string, email: string, password: string): Promise<AuthResult> =>
     (await authHttp.post('/register', { name, email, password })).data,
 
+  /**
+   * A short-lived token for a download that cannot send headers.
+   *
+   * Android hands the export URL to the system browser — a separate app with
+   * no access to this session — so the credential has to ride in the URL.
+   */
+  downloadToken: async (): Promise<string> => {
+    const token = getToken();
+    const res = await authHttp.get('/download-token', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.data.token as string;
+  },
+
   me: async (): Promise<AuthUser> => {
     const token = getToken();
     return (

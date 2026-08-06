@@ -6,7 +6,7 @@
  */
 
 import { type AxiosInstance } from 'axios';
-import { BASE_URL, createAuthedClient } from '@/lib/authClient';
+import { authApi, BASE_URL, createAuthedClient } from '@/lib/authClient';
 import type { Report } from '@/types';
 import { Capacitor } from '@capacitor/core';
 
@@ -81,9 +81,23 @@ export const reportApi = {
     // export URL is a different origin — Capacitor hands those to the system
     // browser, which downloads the .docx properly. No plugin required.
     if (Capacitor.isNativePlatform()) {
-      const url = `${BASE_URL}/api/export/${id}/word`;
+      // The system browser is a DIFFERENT APPLICATION. It has no access to this
+      // app's session, and window.open cannot attach an Authorization header —
+      // so once the export endpoint started requiring a signed-in user, this
+      // silently produced a 401 page instead of the Word file the phone has
+      // always saved. A short-lived token in the URL is what that browser can
+      // actually carry.
+      let url = `${BASE_URL}/api/export/${id}/word`;
+      try {
+        const t = await authApi.downloadToken();
+        url += `?t=${encodeURIComponent(t)}`;
+      } catch (err) {
+        // Better to open it and let the browser show the sign-in error than to
+        // fail silently — submitting has already succeeded by this point.
+        console.warn('[Export] Could not get a download token:', err);
+      }
       window.open(url, '_blank');
-      console.debug('[Export] Opened externally for native download:', url);
+      console.debug('[Export] Opened externally for native download');
       return 'external';
     }
 
@@ -194,23 +208,13 @@ export const reportApi = {
 // ============================================
 // AUTH
 // ============================================
-
-export const authApi = {
-  login: async (email: string, password: string) => {
-    const response = await api.post('/auth/login', { email, password });
-    return response.data;
-  },
-
-  register: async (name: string, email: string, password: string) => {
-    const response = await api.post('/auth/register', { name, email, password });
-    return response.data;
-  },
-
-  me: async () => {
-    const response = await api.get('/auth/me');
-    return response.data;
-  },
-};
+//
+// There is no authApi here. It lives in lib/authClient, which every caller
+// already used — this was a leftover from when the auth endpoints were stubs,
+// and a second export with the same name is only ever going to be imported by
+// accident. It also routed login through the shared client, whose 401 handler
+// ends the session: a mistyped password would have fired "you have been signed
+// out" instead of "wrong password".
 
 // ============================================
 // SCANNING (Phase 4)

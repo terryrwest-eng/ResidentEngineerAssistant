@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 
@@ -50,13 +50,61 @@ def create_access_token(user_id: str) -> str:
     return jwt.encode(payload, get_or_create_secret(), algorithm=ALGORITHM)
 
 
+# A download handed to something that cannot send headers.
+#
+# On Android the export URL is opened in the SYSTEM BROWSER — Capacitor cannot
+# download a blob inside its WebView, so the file has to go out to a different
+# application entirely. That application has no access to this app's token, and
+# window.open cannot attach an Authorization header, so a normal bearer token is
+# useless for it.
+#
+# The answer is a token that survives being put in a URL: separate scope so it
+# opens nothing but a download, and minutes rather than days of life, because a
+# query string is the one place a credential reliably ends up in server logs and
+# browser history.
+DOWNLOAD_SCOPE = 'download'
+DOWNLOAD_TOKEN_TTL_MINUTES = 5
+
+
+def create_download_token(user_id: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        'sub': user_id,
+        'scope': DOWNLOAD_SCOPE,
+        'iat': now,
+        'exp': now + timedelta(minutes=DOWNLOAD_TOKEN_TTL_MINUTES),
+    }
+    return jwt.encode(payload, get_or_create_secret(), algorithm=ALGORITHM)
+
+
 def decode_access_token(token: str) -> Optional[str]:
-    """The user id inside a valid token, or None if it is invalid or expired."""
+    """
+    The user id inside a valid SESSION token, or None.
+
+    A download token is deliberately refused here — it is scoped to fetching a
+    file and must not be usable as a session, which is the whole reason it is
+    safe to put in a URL.
+    """
     try:
         payload = jwt.decode(token, get_or_create_secret(), algorithms=[ALGORITHM])
+        if payload.get('scope') == DOWNLOAD_SCOPE:
+            logger.debug("Refused a download token used as a session token")
+            return None
         return payload.get('sub')
     except JWTError as exc:
         logger.debug(f"Rejected token: {exc}")
+        return None
+
+
+def decode_download_token(token: str) -> Optional[str]:
+    """The user id inside a valid download token, or None."""
+    try:
+        payload = jwt.decode(token, get_or_create_secret(), algorithms=[ALGORITHM])
+        if payload.get('scope') != DOWNLOAD_SCOPE:
+            return None
+        return payload.get('sub')
+    except JWTError as exc:
+        logger.debug(f"Rejected download token: {exc}")
         return None
 
 
@@ -122,6 +170,46 @@ async def require_user(
     _ensure_storage_ready(user_id)
     # Handy for logging and for routes that want the user without re-declaring
     # the dependency.
+    request.state.user = user
+    return user
+
+
+async def require_user_or_download_token(
+    request: Request,
+    t: Optional[str] = Query(
+        None,
+        description='Short-lived download token, for fetches that cannot send headers',
+    ),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> dict[str, Any]:
+    """
+    As require_user, but also accepts a download token in the query string.
+
+    Only the export routes use this. It exists because Android hands the export
+    URL to the system browser, which cannot send an Authorization header — see
+    create_download_token. Everything else still requires a real session.
+    """
+    if credentials is not None and credentials.credentials:
+        return await require_user(request, credentials)
+
+    if not t:
+        raise _unauthorized('Sign in to continue')
+
+    user_id = decode_download_token(t)
+    if not user_id:
+        raise _unauthorized('That download link has expired — try exporting again')
+
+    user = get_user(user_id)
+    if not user:
+        raise _unauthorized('That account no longer exists')
+    if not user['is_approved']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Your account is waiting for approval',
+        )
+
+    set_user_id(user_id)
+    _ensure_storage_ready(user_id)
     request.state.user = user
     return user
 
