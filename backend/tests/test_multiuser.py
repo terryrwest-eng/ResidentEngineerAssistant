@@ -232,6 +232,56 @@ check("a garbage token is refused", r.status_code == 401, f"HTTP {r.status_code}
 r = client.get("/api/reports", headers={"Authorization": "Bearer "})
 check("an empty bearer token is refused", r.status_code == 401, f"HTTP {r.status_code}")
 
+# ── Download tokens ──
+#
+# Android cannot download a blob inside the Capacitor WebView, so the export URL
+# is handed to the SYSTEM BROWSER — a different application, with no access to
+# this app's session and no way to set an Authorization header. Requiring a
+# bearer header on the export routes silently stopped the phone saving the Word
+# copy it has always saved. A short-lived token in the query string is what that
+# browser can carry; these checks are what stop it becoming a way around auth.
+print("\n--- download tokens ---")
+
+# Re-approve Sam, revoked above, so there are two live accounts again.
+client.post(f"/api/auth/users/{sam_id}/approve", headers=auth(admin_token))
+sam_token = client.post(
+    "/api/auth/login",
+    json={"email": "sam@example.com", "password": "correct-horse-battery"},
+).json()["token"]
+
+r = client.get("/api/auth/download-token", headers=auth(admin_token))
+check("a signed-in user can mint a download token", r.status_code == 200, f"HTTP {r.status_code}")
+terry_dl = r.json().get("token", "")
+
+r = client.get("/api/auth/download-token")
+check("an anonymous caller cannot mint one", r.status_code == 401, f"HTTP {r.status_code}")
+
+r = client.get(f"/api/export/{terry_report_id}/word")
+check("export refuses a request with no credentials at all",
+      r.status_code == 401, f"HTTP {r.status_code}")
+
+r = client.get(f"/api/export/{terry_report_id}/word?t={terry_dl}")
+check("export works with the token in the URL and no header",
+      r.status_code == 200, f"HTTP {r.status_code}")
+check("and returns a real Word document",
+      r.content[:2] == b"PK" and len(r.content) > 1000, f"{len(r.content)} bytes")
+
+# The token must open a download and nothing else.
+r = client.get("/api/reports", headers=auth(terry_dl))
+check("a download token is not accepted as a session", r.status_code == 401, f"HTTP {r.status_code}")
+
+r = client.get(f"/api/settings?t={terry_dl}")
+check("a download token does not work on other routes", r.status_code == 401, f"HTTP {r.status_code}")
+
+# And it must not cross between users.
+sam_dl = client.get("/api/auth/download-token", headers=auth(sam_token)).json()["token"]
+r = client.get(f"/api/export/{terry_report_id}/word?t={sam_dl}")
+check("Sam's download token cannot fetch Terry's report",
+      r.status_code == 404, f"HTTP {r.status_code}")
+
+r = client.get(f"/api/export/{terry_report_id}/word?t=nonsense")
+check("a forged download token is refused", r.status_code == 401, f"HTTP {r.status_code}")
+
 shutil.rmtree(_TEST_ROOT, ignore_errors=True)
 
 print("\n" + "=" * 70)

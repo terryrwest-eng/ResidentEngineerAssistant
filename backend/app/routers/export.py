@@ -25,14 +25,19 @@ from app.services.word import (
 from app.services.reports import get_report
 
 logger = logging.getLogger(__name__)
-from app.core.auth import require_user
+from app.core.auth import require_user_or_download_token
 
 # Every route below requires a signed-in user, declared once here rather than on
 # each endpoint: a per-endpoint decorator is something you can forget to add,
 # and forgetting it on a data route would expose one user's records to another.
-# require_user also pins the request to that user's storage, which is what makes
-# every path in this file resolve inside their own directory.
-router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(require_user)])
+#
+# These routes accept a short-lived download token in the query string as well
+# as a bearer header. Android cannot download a blob inside the Capacitor
+# WebView, so the export URL is handed to the system browser — a separate app
+# that has no access to this one's session and cannot set an Authorization
+# header. Without this, submitting a report on the phone would silently stop
+# producing the Word copy it has always produced. No other router accepts it.
+router = APIRouter(prefix="/api/export", tags=["export"], dependencies=[Depends(require_user_or_download_token)])
 
 
 @router.get("/{report_id}/word")
