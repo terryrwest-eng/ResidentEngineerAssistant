@@ -28,18 +28,24 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import Depends, APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
+from app.core.paths import schedules_dir
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/schedule", tags=["schedule"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/schedule", tags=["schedule"], dependencies=[Depends(require_user)])
 
 # Data directory for schedules
-from app.core.paths import SCHEDULES_DIR  # noqa: E402
 
-os.makedirs(SCHEDULES_DIR, exist_ok=True)
 
 
 # ============================================
@@ -338,7 +344,7 @@ async def upload_schedule(file: UploadFile = File(...)):
 
         # ─── Save to disk ───
         schedule_id = str(uuid.uuid4())
-        schedule_dir = os.path.join(SCHEDULES_DIR, schedule_id)
+        schedule_dir = os.path.join(schedules_dir(), schedule_id)
         os.makedirs(schedule_dir, exist_ok=True)
 
         # Save original PDF
@@ -431,13 +437,13 @@ async def get_active_schedule():
     Scans data/schedules/ for JSON files, sorts by uploaded_at descending.
     """
     try:
-        if not os.path.exists(SCHEDULES_DIR):
+        if not os.path.exists(schedules_dir()):
             raise HTTPException(status_code=404, detail="No schedules found.")
 
         schedules: list[dict[str, Any]] = []
 
-        for item in os.listdir(SCHEDULES_DIR):
-            item_path = os.path.join(SCHEDULES_DIR, item)
+        for item in os.listdir(schedules_dir()):
+            item_path = os.path.join(schedules_dir(), item)
             if not os.path.isdir(item_path):
                 continue
 
@@ -487,13 +493,13 @@ async def get_active_schedule():
 async def list_schedules():
     """Return list of all uploaded schedules with summary metadata."""
     try:
-        if not os.path.exists(SCHEDULES_DIR):
+        if not os.path.exists(schedules_dir()):
             return {"schedules": [], "count": 0}
 
         schedules: list[dict[str, Any]] = []
 
-        for item in os.listdir(SCHEDULES_DIR):
-            item_path = os.path.join(SCHEDULES_DIR, item)
+        for item in os.listdir(schedules_dir()):
+            item_path = os.path.join(schedules_dir(), item)
             if not os.path.isdir(item_path):
                 continue
 
@@ -534,7 +540,7 @@ async def list_schedules():
 @router.get("/{schedule_id}")
 async def get_schedule_by_id(schedule_id: str):
     """Return a specific schedule's full parsed data by ID."""
-    schedule_dir = os.path.join(SCHEDULES_DIR, schedule_id)
+    schedule_dir = os.path.join(schedules_dir(), schedule_id)
     if not os.path.isdir(schedule_dir):
         raise HTTPException(status_code=404, detail=f"Schedule '{schedule_id}' not found.")
 
@@ -565,7 +571,7 @@ async def delete_schedule(schedule_id: str):
     """Delete both the .json and .pdf files for a schedule."""
     import shutil
 
-    schedule_dir = os.path.join(SCHEDULES_DIR, schedule_id)
+    schedule_dir = os.path.join(schedules_dir(), schedule_id)
     if not os.path.isdir(schedule_dir):
         raise HTTPException(status_code=404, detail=f"Schedule '{schedule_id}' not found.")
 

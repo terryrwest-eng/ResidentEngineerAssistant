@@ -58,10 +58,14 @@ def fake_client():
 ai_router._get_gemini_client = fake_client
 
 from app.main import app  # noqa: E402
-from app.services.database import init_database  # noqa: E402
 
-init_database()  # lifespan doesn't run unless TestClient is used as a context manager
-client = TestClient(app)
+# Signs in as the first (auto-approved admin) account. Every data route now
+# requires a user, and storage resolves inside that user's directory — the
+# client carries the token so these checks exercise the real path.
+import os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from _auth_helper import authed_client  # noqa: E402
+client = authed_client(app)
 
 results = []
 def check(name, cond, detail=""):

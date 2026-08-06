@@ -109,6 +109,25 @@
     Checking connection...
   </div>
 
+  <!-- ═══════ ACCESS TOKEN ═══════
+       Reports belong to individual accounts now, so the extension has to say
+       who it is. Hidden until a request comes back unauthorised, then it stays
+       open until a working token is saved. -->
+  <div id="tokenPrompt" style="display:none; background: rgba(255,193,7,0.15); border: 1px solid #ffc107; border-radius: 6px; padding: 8px; margin-bottom: 8px;">
+    <div style="font-size: 12px; color: #ffc107; font-weight: 600; margin-bottom: 4px;">
+      Sign-in needed
+    </div>
+    <div style="font-size: 11px; color: rgba(255,255,255,0.75); margin-bottom: 6px; line-height: 1.4;">
+      Open the app, go to Settings and press "Copy access token", then paste it here.
+    </div>
+    <div style="display: flex; gap: 6px;">
+      <input id="tokenInput" type="password" placeholder="Paste access token"
+             style="flex:1; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; font-size: 12px;">
+      <button id="saveTokenBtn" class="btn btn-secondary" style="width:auto; padding: 6px 10px; font-size: 12px;">Save</button>
+    </div>
+    <div id="tokenMsg" style="font-size: 11px; margin-top: 4px; color: rgba(255,255,255,0.6);"></div>
+  </div>
+
   <!-- ═══════ REPORT PICKER ═══════
        Choose the report here instead of relying on whatever the app last
        flagged as "active". That handshake was a single global pointer shared

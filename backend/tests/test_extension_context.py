@@ -28,10 +28,13 @@ os.environ.setdefault(
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
-from app.services.database import init_database  # noqa: E402
 
-init_database()
-client = TestClient(app)
+# Signs in as the first (auto-approved admin) account. Every data route now
+# requires a user, and storage resolves inside that user's directory — the
+# client carries the token so these checks exercise the real path.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _auth_helper import authed_client  # noqa: E402
+client = authed_client(app)
 
 results = []
 
@@ -61,7 +64,13 @@ check("reads back what was set", r.json().get("report_id") == "report-alpha", st
 import app.routers.reports as reports_module  # noqa: E402
 
 reloaded = importlib.reload(reports_module)
-second_worker_view = reloaded._read_context()
+# These call the router's storage helpers directly rather than over HTTP, so
+# there is no request to carry the user. acting_as supplies the same one the
+# client is signed in as — without it the path layer refuses to guess.
+from _auth_helper import acting_as_test_user  # noqa: E402
+
+with acting_as_test_user(client.user["id"]):
+    second_worker_view = reloaded._read_context()
 check(
     "a second worker sees the same context (THE BUG)",
     second_worker_view.get("report_id") == "report-alpha",
@@ -69,7 +78,8 @@ check(
 )
 
 # And a write from the second worker is visible to the first.
-reloaded._write_context("report-beta")
+with acting_as_test_user(client.user["id"]):
+    reloaded._write_context("report-beta")
 r = client.get("/api/extension/context")
 check(
     "a write from another worker is visible here",

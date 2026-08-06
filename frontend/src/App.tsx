@@ -17,13 +17,41 @@ import { ReportHistoryPage } from '@/pages/ReportHistoryPage';
 import { ToolsPage } from '@/pages/ToolsPage';
 import { BackfillPage } from '@/pages/BackfillPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { UsersPage } from '@/pages/UsersPage';
+import { SignInPage } from '@/pages/SignInPage';
+import { AuthProvider } from '@/lib/AuthProvider';
+import { useAuth } from '@/lib/authContext';
 import { UIProvider } from '@/components/ui/ConfirmProvider';
 import './index.css';
 
-function App() {
+/**
+ * Nothing renders until we know who is signed in.
+ *
+ * The gate is here rather than per-route so there is one place that decides,
+ * and no page can be reached by typing its URL while signed out. The server
+ * enforces this too — this only saves the round trip and the broken-looking
+ * screen that would follow it.
+ */
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{
+        minHeight: '100dvh', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', backgroundColor: 'var(--background)',
+      }}>
+        <div className="spinner spinner-lg" />
+      </div>
+    );
+  }
+
+  if (!user) return <SignInPage />;
+  return <>{children}</>;
+}
+
+function AppShell() {
   return (
-    <BrowserRouter>
-      <UIProvider>
       <div className="app-shell">
         <TopHeader />
         <main className="app-content">
@@ -37,11 +65,24 @@ function App() {
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/backfill" element={<BackfillPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/users" element={<UsersPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
         <BottomNav />
       </div>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <UIProvider>
+        <AuthProvider>
+          <AuthGate>
+            <AppShell />
+          </AuthGate>
+        </AuthProvider>
       </UIProvider>
     </BrowserRouter>
   );

@@ -21,19 +21,25 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import Depends, APIRouter, UploadFile, File, Form, HTTPException
 from PyPDF2 import PdfReader
 from io import BytesIO
 
 from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
+from app.core.paths import specs_dir
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api", tags=["pdf-search"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api", tags=["pdf-search"], dependencies=[Depends(require_user)])
 
 # Data directory for specs/PDFs
-from app.core.paths import SPECS_DIR  # noqa: E402
 
-os.makedirs(SPECS_DIR, exist_ok=True)
 
 
 def _get_gemini_client(model_name: str = GEMINI_MODEL_NAME):
@@ -50,7 +56,7 @@ def _get_gemini_client(model_name: str = GEMINI_MODEL_NAME):
 
 def _get_metadata_path(doc_id: str) -> str:
     """Get the metadata file path for a document."""
-    return os.path.join(SPECS_DIR, doc_id, "metadata.json")
+    return os.path.join(specs_dir(), doc_id, "metadata.json")
 
 
 def _load_metadata(doc_id: str) -> dict[str, Any] | None:
@@ -68,7 +74,7 @@ def _load_metadata(doc_id: str) -> dict[str, Any] | None:
 
 def _save_metadata(doc_id: str, metadata: dict[str, Any]) -> None:
     """Save document metadata to disk."""
-    doc_dir = os.path.join(SPECS_DIR, doc_id)
+    doc_dir = os.path.join(specs_dir(), doc_id)
     os.makedirs(doc_dir, exist_ok=True)
     path = _get_metadata_path(doc_id)
     with open(path, "w", encoding="utf-8") as f:
@@ -83,7 +89,7 @@ async def upload_documents(files: list[UploadFile] = File(...)):
     for file in files:
         try:
             file_id = str(uuid.uuid4())
-            doc_dir = os.path.join(SPECS_DIR, file_id)
+            doc_dir = os.path.join(specs_dir(), file_id)
             os.makedirs(doc_dir, exist_ok=True)
 
             # Read file content
@@ -335,11 +341,11 @@ async def list_documents():
     """List all uploaded PDF documents."""
     documents = []
 
-    if not os.path.exists(SPECS_DIR):
+    if not os.path.exists(specs_dir()):
         return {"documents": [], "count": 0}
 
-    for item in os.listdir(SPECS_DIR):
-        item_path = os.path.join(SPECS_DIR, item)
+    for item in os.listdir(specs_dir()):
+        item_path = os.path.join(specs_dir(), item)
         if os.path.isdir(item_path):
             meta = _load_metadata(item)
             if meta:
@@ -359,7 +365,7 @@ async def delete_document(doc_id: str):
     """Delete a PDF document and its associated files."""
     import shutil
 
-    doc_dir = os.path.join(SPECS_DIR, doc_id)
+    doc_dir = os.path.join(specs_dir(), doc_id)
     if not os.path.exists(doc_dir):
         raise HTTPException(status_code=404, detail="Document not found")
 

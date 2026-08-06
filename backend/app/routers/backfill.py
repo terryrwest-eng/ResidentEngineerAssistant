@@ -41,11 +41,12 @@ import zipfile
 from datetime import date as date_type, datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi import Depends, APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from app.core.paths import BACKFILL_DIR
+
+from app.core.paths import backfill_dir
 from app.routers.ai import (
     _clean_json,
     _finish_reason_problem,
@@ -54,7 +55,14 @@ from app.routers.ai import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/backfill", tags=["backfill"])
+from app.core.auth import require_user
+
+# Every route below requires a signed-in user, declared once here rather than on
+# each endpoint: a per-endpoint decorator is something you can forget to add,
+# and forgetting it on a data route would expose one user's records to another.
+# require_user also pins the request to that user's storage, which is what makes
+# every path in this file resolve inside their own directory.
+router = APIRouter(prefix="/api/backfill", tags=["backfill"], dependencies=[Depends(require_user)])
 
 
 # ============================================
@@ -445,11 +453,11 @@ class BackfillGenerateResponse(BaseModel):
 # ============================================
 
 def _batch_dir(batch_id: str) -> str:
-    """Resolve a batch directory, refusing anything that escapes BACKFILL_DIR."""
+    """Resolve a batch directory, refusing anything that escapes backfill_dir()."""
     if not re.fullmatch(r"[0-9a-fA-F-]{36}", batch_id):
         raise HTTPException(status_code=400, detail="Invalid batch id.")
-    path = os.path.join(BACKFILL_DIR, batch_id)
-    if not os.path.abspath(path).startswith(os.path.abspath(BACKFILL_DIR)):
+    path = os.path.join(backfill_dir(), batch_id)
+    if not os.path.abspath(path).startswith(os.path.abspath(backfill_dir())):
         raise HTTPException(status_code=400, detail="Invalid batch id.")
     return path
 
@@ -1184,7 +1192,7 @@ async def upload_backfill_files(files: list[UploadFile] = File(...)):
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
     batch_id = str(uuid.uuid4())
-    batch_path = os.path.join(BACKFILL_DIR, batch_id)
+    batch_path = os.path.join(backfill_dir(), batch_id)
     files_path = os.path.join(batch_path, "files")
     os.makedirs(files_path, exist_ok=True)
 
@@ -1547,12 +1555,12 @@ async def _run_generation(
 @router.get("")
 async def list_batches() -> dict[str, Any]:
     """List batches newest first, so a reload can pick up where it left off."""
-    if not os.path.isdir(BACKFILL_DIR):
+    if not os.path.isdir(backfill_dir()):
         return {"batches": []}
 
     batches: list[dict[str, Any]] = []
-    for entry in os.listdir(BACKFILL_DIR):
-        status_file = os.path.join(BACKFILL_DIR, entry, "status.json")
+    for entry in os.listdir(backfill_dir()):
+        status_file = os.path.join(backfill_dir(), entry, "status.json")
         if not os.path.exists(status_file):
             continue
         try:

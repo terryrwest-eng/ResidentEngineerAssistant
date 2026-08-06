@@ -26,16 +26,20 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # --- Paths ---
-from app.core.paths import DATA_DIR, DB_PATH, REPORTS_DIR, PHOTOS_DIR  # noqa: E402,F401
-SPECS_DIR = os.path.join(DATA_DIR, "specs")
+from app.core.paths import db_path, ensure_user_dirs, photos_dir, reports_dir  # noqa: E402
 
 
 def get_connection() -> sqlite3.Connection:
     """
     Get a SQLite connection with WAL mode and foreign keys enabled.
     WAL mode allows concurrent reads while writing — critical for a web server.
+
+    The file is the CURRENT USER's database — db_path() resolves inside their
+    own directory — so a query here cannot reach another user's rows. It raises
+    if no user is authenticated rather than falling back to a shared file.
     """
-    conn = sqlite3.connect(DB_PATH)
+    ensure_user_dirs()
+    conn = sqlite3.connect(db_path())
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
@@ -48,26 +52,16 @@ def init_database():
     Create all tables if they don't exist.
     Called once on app startup.
     """
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    os.makedirs(PHOTOS_DIR, exist_ok=True)
-    os.makedirs(SPECS_DIR, exist_ok=True)
+    ensure_user_dirs()
 
     conn = get_connection()
     try:
         conn.executescript("""
-            -- Users table
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'user',
-                is_approved INTEGER NOT NULL DEFAULT 0,
-                gemini_api_key TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
+            -- NOTE: there is no users table here. Identity lives in the
+            -- shared auth.db (app/services/auth_db.py) because it is the one
+            -- thing that cannot be per-user. Everything in THIS file belongs to
+            -- exactly one person — the database file itself is inside their
+            -- directory, which is what keeps users apart.
 
             -- Reports index (lightweight — full data is in JSON files)
             CREATE TABLE IF NOT EXISTS reports (
@@ -154,7 +148,7 @@ def init_database():
             );
         """)
         conn.commit()
-        logger.info(f"Database initialized at {DB_PATH}")
+        logger.info(f"Database initialized at {db_path()}")
     finally:
         conn.close()
 
@@ -178,7 +172,7 @@ def _report_file_path(report_id: str, report_date: str, project_name: str) -> st
     short_id = report_id[:8]
 
     filename = f"{safe_date}_{safe_project}_{short_id}.json"
-    return os.path.join(REPORTS_DIR, filename)
+    return os.path.join(reports_dir(), filename)
 
 
 def atomic_write_json(file_path: str, data: dict):
@@ -396,10 +390,10 @@ def delete_report(report_id: str) -> bool:
             logger.info(f"Deleted report file: {file_path}")
 
         # Delete associated photos
-        photos_dir = os.path.join(PHOTOS_DIR, report_id)
-        if os.path.exists(photos_dir):
-            shutil.rmtree(photos_dir)
-            logger.info(f"Deleted photos directory: {photos_dir}")
+        report_photos = os.path.join(photos_dir(), report_id)
+        if os.path.exists(report_photos):
+            shutil.rmtree(report_photos)
+            logger.info(f"Deleted photos directory: {report_photos}")
 
         logger.info(f"Report deleted: {report_id}")
         return True

@@ -1,11 +1,8 @@
-import axios from 'axios';
+import { BASE_URL, createAuthedClient } from '@/lib/authClient';
 
-const BASE_URL = import.meta.env.VITE_API_URL || '';
-
-const api = axios.create({
+const api = createAuthedClient({
   baseURL: `${BASE_URL}/api`,
   timeout: 30000,
-  headers: { 'Content-Type': 'application/json' },
 });
 
 export const trackerApi = {
@@ -36,7 +33,7 @@ export const trackerApi = {
 
 // ─── AI Feature API ───────────────────────────────────────────────────────────
 
-const aiApi = axios.create({
+const aiApi = createAuthedClient({
   baseURL: `${BASE_URL}/api/ai`,
   timeout: 120000, // 2 min — Gemini vision calls can be slow
 });

@@ -14,6 +14,7 @@
 
 import { create } from 'zustand';
 import { reportApi } from '@/lib/api';
+import { getToken } from '@/lib/authClient';
 import { cleanSummaryBullets, localDateString } from '@/lib/formatters';
 import type { Report, Activity, GeneralInfo } from '@/types';
 
@@ -496,14 +497,19 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
     // so even if this fails, the report data is safe.
     try {
       const pywebview = (window as unknown as Record<string, unknown>).pywebview as
-        | { api: { auto_save_word: (id: string, date: string) => Promise<{ success: boolean; path?: string; error?: string; skipped?: boolean }> } }
+        | { api: { auto_save_word: (id: string, date: string, token: string) => Promise<{ success: boolean; path?: string; error?: string; skipped?: boolean }> } }
         | undefined;
       const currentReport = get().report;
       const reportDate = currentReport?.general?.report_date || 'unknown';
 
       if (pywebview?.api?.auto_save_word) {
         if (currentReport?.id) {
-          const result = await pywebview.api.auto_save_word(currentReport.id, reportDate);
+          // The desktop shell downloads the .docx over its own HTTP client,
+          // which has no session of its own. Reports are per-user now, so it
+          // needs this page's token to be told which report it may fetch.
+          const result = await pywebview.api.auto_save_word(
+            currentReport.id, reportDate, getToken() || '',
+          );
           if (result?.skipped) {
             console.info('[Desktop] Word already saved for this report — no duplicate created');
           } else if (result?.success) {
