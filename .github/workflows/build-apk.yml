@@ -19,6 +19,13 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/build-apk.yml'
+  # On pull requests too, so a change to the build is proved before it is
+  # merged rather than after. Without this the workflow's own PR could not run
+  # it, which is precisely the case that needs checking.
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/build-apk.yml'
   # And on demand, for a branch or a rebuild without a code change.
   workflow_dispatch:
 
