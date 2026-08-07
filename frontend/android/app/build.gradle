@@ -16,7 +16,37 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Sign debug builds with a keystore kept in the repository, rather than
+    // whatever key happens to be on the machine doing the build.
+    //
+    // WHY: Android refuses to install an update signed by a different key than
+    // the installed copy. By default Gradle uses ~/.android/debug.keystore,
+    // which is generated per machine — so an APK from a laptop and one from a
+    // CI runner are signed by different keys and cannot replace each other. The
+    // install fails, sometimes with no more than a toast, and the old version
+    // stays put looking like a build that did not take effect.
+    //
+    // A shared key makes every build interchangeable: install over the top from
+    // any source and it just works.
+    //
+    // Committing a signing key is normally wrong. This one is a DEBUG key with
+    // the conventional public password — it grants nothing. It cannot sign a
+    // Play Store release, and it is not what protects the app; the server does
+    // that, and every route there requires a signed-in user. If this app is
+    // ever published, that needs a real release key from repository secrets,
+    // which is a different job from this one.
+    signingConfigs {
+        debug {
+            storeFile file('../debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
