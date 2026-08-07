@@ -112,6 +112,29 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
+      - name: Confirm it was signed with the repository key
+        working-directory: frontend/android
+        # The signingConfig can stop applying — a merge, a Capacitor upgrade
+        # regenerating build.gradle — and nothing would look wrong until an
+        # install refused to replace the previous version, which reads as a
+        # build that did not take rather than a signing problem. Comparing the
+        # APK's certificate against the committed keystore turns that into a
+        # failed build with an obvious cause.
+        run: |
+          set -euo pipefail
+          expected=$(keytool -list -v -keystore debug.keystore -storepass android \
+            | grep -i "SHA256:" | head -1 | sed 's/.*SHA256: *//' | tr -d ':' | tr 'A-Z' 'a-z')
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
+          actual=$("$apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk \
+            | grep -i "SHA-256 digest" | head -1 | sed 's/.*: *//' | tr 'A-Z' 'a-z')
+          echo "  keystore: $expected"
+          echo "  apk:      $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::The APK was not signed with the repository keystore — installs will not replace existing copies"
+            exit 1
+          fi
+          echo "  signed with the repository key"
+
       - name: Name it after the commit
         id: name
         run: |
