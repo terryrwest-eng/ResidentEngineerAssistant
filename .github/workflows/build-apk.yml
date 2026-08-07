@@ -96,10 +96,17 @@ jobs:
 
       - name: Build the debug APK
         working-directory: frontend/android
+        # chmod as well as the executable bit being set in git. The bit is the
+        # real fix, but this repo is developed on Windows, where the filesystem
+        # has no such bit — so a future commit that rewrites gradlew can drop it
+        # again without anyone noticing until a Linux runner refuses to execute
+        # it. One line here means that never breaks the build.
         # Debug, not release: there is no signingConfig in app/build.gradle, so a
         # release build produces an unsigned APK that Android refuses to install.
         # The debug key is what makes this sideloadable.
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Name it after the commit
         id: name
