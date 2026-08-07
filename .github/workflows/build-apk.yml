@@ -29,6 +29,10 @@ on:
   # And on demand, for a branch or a rebuild without a code change.
   workflow_dispatch:
 
+# Needed to publish the release below. Everything else here is read-only.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -116,7 +120,7 @@ jobs:
           echo "name=daily-reporter-${short}" >> "$GITHUB_OUTPUT"
           ls -la frontend/android/app/build/outputs/apk/debug/
 
-      - name: Upload the APK
+      - name: Upload the APK as a build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.name.outputs.name }}
@@ -124,3 +128,32 @@ jobs:
           # Long enough to still be there when somebody gets back to the office.
           retention-days: 30
           if-no-files-found: error
+
+      # Also publish it as a release, which is what you actually want on a phone.
+      #
+      # An artifact is a ZIP, and downloading it requires being signed in to
+      # GitHub — so on a phone it means signing in, downloading an archive, then
+      # finding something to extract it with before you can tap the APK. A
+      # release asset is the .apk itself, on a stable URL, with no unzipping.
+      #
+      # /releases/latest always resolves to the newest one, so there is a single
+      # address that is always the current build.
+      - name: Publish it as a release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          short=$(git rev-parse --short HEAD)
+          tag="apk-$(date -u +%Y%m%d-%H%M)-${short}"
+          apk="daily-reporter-${short}.apk"
+          cp frontend/android/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          gh release create "$tag" "$apk" \
+            --title "APK ${short}" \
+            --notes "Debug APK built from ${short} on $(date -u '+%d %b %Y %H:%M UTC').
+
+          Install: download the .apk below and tap it. You will need to allow
+          installation from your browser the first time.
+
+          Always-current link: https://github.com/${{ github.repository }}/releases/latest"
+          echo "Published $tag"
