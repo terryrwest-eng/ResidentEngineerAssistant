@@ -1,0 +1,126 @@
+# Build the Android APK in CI.
+#
+# WHY: the APK is built from three things that have to agree — the frontend
+# bundle, the Capacitor sync that copies it into android/, and Gradle. Doing
+# that by hand means a stale checkout or a skipped sync produces an APK that
+# looks fine and is weeks old, with no obvious sign anything went wrong. Here
+# every build starts from a clean checkout, so what comes out matches the commit
+# it was built from.
+#
+# The APK lands as a downloadable artifact on the run page, which also settles
+# "where did the file go" — there is one place, and it is named after the commit.
+
+name: Build APK
+
+on:
+  # Every push to main, so there is always a current APK to install.
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/build-apk.yml'
+  # On pull requests too, so a change to the build is proved before it is
+  # merged rather than after. Without this the workflow's own PR could not run
+  # it, which is precisely the case that needs checking.
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/build-apk.yml'
+  # And on demand, for a branch or a rebuild without a code change.
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        # Capacitor's postinstall would otherwise try to fetch a browser we do
+        # not need for an APK build.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Typecheck and build the frontend
+        working-directory: frontend
+        # This is `tsc -b && vite build` — a type error fails here, in seconds,
+        # rather than inside the Gradle build minutes later.
+        run: npm run build
+
+      - name: Copy the web build into the Android project
+        working-directory: frontend
+        run: npx cap sync android
+
+      - name: Confirm the bundle actually landed
+        working-directory: frontend
+        # A failed sync has previously left the Android assets stale while the
+        # build carried on and produced a working-looking APK of the old app.
+        # Comparing what index.html references against what is on disk turns
+        # that into a build failure instead of a silent one.
+        run: |
+          set -euo pipefail
+          html=android/app/src/main/assets/public/index.html
+          test -f "$html" || { echo "::error::No index.html in the Android assets — cap sync did not run"; exit 1; }
+          for ref in $(grep -o 'assets/index-[A-Za-z0-9_-]*\.\(js\|css\)' "$html"); do
+            asset="android/app/src/main/assets/public/$ref"
+            test -f "$asset" || { echo "::error::index.html references $ref but it is not in the Android assets"; exit 1; }
+            dist="dist/$ref"
+            test -f "$dist" || { echo "::error::$ref is not in dist — the Android assets are stale"; exit 1; }
+            if ! cmp -s "$asset" "$dist"; then
+              echo "::error::$ref differs between dist and the Android assets"
+              exit 1
+            fi
+            echo "  ok  $ref"
+          done
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # Gradle 8.13 with Android Gradle Plugin 8.13.2.
+          java-version: '21'
+
+      - name: Set up the Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build the debug APK
+        working-directory: frontend/android
+        # chmod as well as the executable bit being set in git. The bit is the
+        # real fix, but this repo is developed on Windows, where the filesystem
+        # has no such bit — so a future commit that rewrites gradlew can drop it
+        # again without anyone noticing until a Linux runner refuses to execute
+        # it. One line here means that never breaks the build.
+        # Debug, not release: there is no signingConfig in app/build.gradle, so a
+        # release build produces an unsigned APK that Android refuses to install.
+        # The debug key is what makes this sideloadable.
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Name it after the commit
+        id: name
+        run: |
+          set -euo pipefail
+          short=$(git rev-parse --short HEAD)
+          echo "name=daily-reporter-${short}" >> "$GITHUB_OUTPUT"
+          ls -la frontend/android/app/build/outputs/apk/debug/
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          # Long enough to still be there when somebody gets back to the office.
+          retention-days: 30
+          if-no-files-found: error
