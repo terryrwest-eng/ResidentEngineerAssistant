@@ -423,10 +423,18 @@ export const scanApi = {
     return response.data;
   },
 
-  /** STEP 2 of dictation — build activities from a CONFIRMED transcript. */
-  bulkParse: async (transcription: string) => {
+  /**
+   * STEP 2 of dictation — build activities from a CONFIRMED transcript.
+   *
+   * `answers` replies to the questions a previous call returned, keyed by
+   * question id. Passing them re-parses the same transcript with the gaps
+   * filled, which is how the report gets written only after the inspector has
+   * been asked rather than around a blank.
+   */
+  bulkParse: async (transcription: string, answers: Record<string, string> = {}) => {
     const response = await api.post('/ai/bulk-parse', {
       transcription,
+      answers,
     }, { timeout: 180000 });
     return response.data;
   },

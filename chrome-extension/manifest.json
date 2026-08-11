@@ -33,6 +33,18 @@
                 "content.js"
             ],
             "run_at": "document_idle"
+        },
+        {
+            "//": "Reads the app's own session token so the popup never needs one pasted. Hosts are listed explicitly rather than as *.up.railway.app: that wildcard would run this on every unrelated Railway site and let a foreign 'auth_token' overwrite ours.",
+            "matches": [
+                "https://residentengineerassistant-production.up.railway.app/*",
+                "http://localhost:*/*",
+                "http://127.0.0.1:*/*"
+            ],
+            "js": [
+                "token-sync.js"
+            ],
+            "run_at": "document_idle"
         }
     ],
     "web_accessible_resources": [
