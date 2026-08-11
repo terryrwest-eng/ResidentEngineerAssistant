@@ -36,6 +36,7 @@ import {
   Download,
   Play,
   RotateCcw,
+  HelpCircle,
 } from 'lucide-react';
 
 function generateId(): string {
@@ -51,7 +52,22 @@ interface BulkDictateResult {
   generalNotes: string;
 }
 
-type DictatePhase = 'idle' | 'recording' | 'review' | 'transcribing' | 'transcript' | 'processing' | 'results';
+/** Something the parser could not resolve without asking. */
+interface ParseQuestion {
+  id: string;
+  question: string;
+  /** The words around it in the transcript, so the question makes sense on its own. */
+  context: string;
+}
+
+/**
+ * 'questions' sits between building and showing results: when the parse comes
+ * back with things it could not work out, the inspector is asked BEFORE the
+ * report exists, instead of finding a blank in it afterwards.
+ */
+type DictatePhase =
+  | 'idle' | 'recording' | 'review' | 'transcribing' | 'transcript'
+  | 'processing' | 'questions' | 'results';
 
 /**
  * Preferred recording formats, best first.
@@ -92,6 +108,10 @@ export function BulkDictateButton() {
   // Transcript confirmation step (between recording and building activities)
   const [transcript, setTranscript] = useState('');
   const [transcriptWarning, setTranscriptWarning] = useState<string | null>(null);
+
+  // Questions the parse could not resolve, and what the inspector answers.
+  const [questions, setQuestions] = useState<ParseQuestion[]>([]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   /** Live mic level — proves the mic is actually picking up sound. */
   const mic = useMicLevel('bulk-dictate');
 
@@ -185,6 +205,9 @@ export function BulkDictateButton() {
       setTranscript('');
       setTranscriptWarning(null);
       setAdded(false);
+      // A new recording must not inherit the last one's unanswered questions.
+      setQuestions([]);
+      setAnswers({});
       mic.start(stream);
 
       timerRef.current = setInterval(() => {
@@ -251,8 +274,16 @@ export function BulkDictateButton() {
     }
   }, [audioBlob]);
 
-  /** STEP 2 — build activities from the transcript the user confirmed/edited. */
-  const buildActivities = useCallback(async () => {
+  /**
+   * STEP 2 — build activities from the transcript the user confirmed/edited.
+   *
+   * `pendingAnswers` is passed on the second pass, after the inspector has
+   * answered whatever the first pass could not work out. Answering is optional:
+   * skipping goes on to build the report with the questions left unresolved,
+   * which is no worse than the old behaviour and keeps a bad question from
+   * blocking the day's report.
+   */
+  const buildActivities = useCallback(async (pendingAnswers: Record<string, string> = {}) => {
     const text = transcript.trim();
     if (!text) {
       setError('The transcript is empty — nothing to build from.');
@@ -263,7 +294,7 @@ export function BulkDictateButton() {
     setError(null);
 
     try {
-      const data = await scanApi.bulkParse(text);
+      const data = await scanApi.bulkParse(text, pendingAnswers);
       const activities = mapActivities(data.activities || []);
 
       activities.forEach((act, i) => {
@@ -287,6 +318,22 @@ export function BulkDictateButton() {
         locations: data.locations || '',
         generalNotes: data.general_notes || '',
       });
+
+      // Ask before showing a finished report — but only on the first pass. If
+      // questions survive a round of answers, showing them again would loop.
+      const outstanding: ParseQuestion[] = (data.questions || []).filter(
+        (q: ParseQuestion) => q?.id && q?.question,
+      );
+      const isFirstPass = Object.keys(pendingAnswers).length === 0;
+
+      if (outstanding.length > 0 && isFirstPass) {
+        setQuestions(outstanding);
+        setAnswers({});
+        setPhase('questions');
+        return;
+      }
+
+      setQuestions([]);
       setPhase('results');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Processing failed';
@@ -441,6 +488,8 @@ export function BulkDictateButton() {
     setError(null);
     setAdded(false);
     setRecordingDuration(0);
+    setQuestions([]);
+    setAnswers({});
     setAudioBlob(null);
     setAudioUrl(null);
   }
@@ -453,6 +502,8 @@ export function BulkDictateButton() {
     setAdded(false);
     setError(null);
     setRecordingDuration(0);
+    setQuestions([]);
+    setAnswers({});
     setPhase('idle');
   }
 
@@ -668,7 +719,9 @@ export function BulkDictateButton() {
             <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginTop: 'var(--space-md)' }}>
               <button
                 className="btn btn-primary"
-                onClick={buildActivities}
+                // Wrapped, not passed directly: onClick would hand the click
+                // event to the first parameter, which is now the answers map.
+                onClick={() => buildActivities()}
                 disabled={!transcript.trim()}
                 style={{ flex: '1 1 auto' }}
               >
@@ -689,6 +742,104 @@ export function BulkDictateButton() {
               >
                 <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
                 Back
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── QUESTIONS PHASE — asked before the report is finished ──
+             Reached only when the parse could not work something out on its
+             own: an unclear word, an ambiguous reference, or a point where the
+             inspector spoke to the assistant instead of dictating. Asking here
+             is the alternative to writing a blank into the report and hoping it
+             gets spotted later. */}
+        {phase === 'questions' && (
+          <div style={{ padding: 'var(--space-md) 0' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 'var(--space-sm)',
+              padding: 'var(--space-sm) var(--space-md)',
+              marginBottom: 'var(--space-md)',
+              borderRadius: 'var(--radius)',
+              backgroundColor: 'var(--surface)',
+              border: '1px solid var(--border)',
+            }}>
+              <HelpCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+              <div style={{ fontSize: '0.85rem', lineHeight: 1.45 }}>
+                <strong>
+                  {questions.length === 1
+                    ? 'One thing before the report is written'
+                    : `${questions.length} things before the report is written`}
+                </strong>
+                <div style={{ color: 'var(--text-secondary)', marginTop: 2 }}>
+                  These were not clear enough to write down without guessing.
+                  Answer what you can — anything left blank is simply left out.
+                </div>
+              </div>
+            </div>
+
+            {questions.map((q) => (
+              <div key={q.id} style={{ marginBottom: 'var(--space-md)' }}>
+                <label
+                  htmlFor={`dictate-q-${q.id}`}
+                  style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 4 }}
+                >
+                  {q.question}
+                </label>
+                {q.context && (
+                  <div style={{
+                    fontSize: '0.78rem',
+                    color: 'var(--text-secondary)',
+                    fontStyle: 'italic',
+                    marginBottom: 6,
+                    paddingLeft: 'var(--space-sm)',
+                    borderLeft: '2px solid var(--border)',
+                  }}>
+                    “{q.context}”
+                  </div>
+                )}
+                <input
+                  id={`dictate-q-${q.id}`}
+                  type="text"
+                  value={answers[q.id] || ''}
+                  onChange={(e) => setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                  placeholder="Your answer — or leave blank to skip"
+                  style={{
+                    width: '100%',
+                    padding: 'var(--space-sm)',
+                    borderRadius: 'var(--radius)',
+                    border: '1px solid var(--border)',
+                    backgroundColor: 'var(--surface)',
+                    color: 'var(--color-text-primary)',
+                    fontSize: '0.9rem',
+                  }}
+                />
+              </div>
+            ))}
+
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap', marginTop: 'var(--space-md)' }}>
+              <button
+                className="btn btn-primary"
+                onClick={() => buildActivities(answers)}
+                style={{ flex: '1 1 auto' }}
+              >
+                <CheckCircle2 size={16} />
+                Use these answers
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => { setQuestions([]); setPhase('results'); }}
+                title="Build the report without answering"
+              >
+                Skip
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => { setQuestions([]); setAnswers({}); setPhase('transcript'); }}
+              >
+                <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+                Back to transcript
               </button>
             </div>
           </div>
@@ -746,6 +897,8 @@ export function BulkDictateButton() {
                   setAudioBlob(null);
                   setAudioUrl(null);
                   setError(null);
+                  setQuestions([]);
+                  setAnswers({});
                   setPhase('idle');
                 }}
                 title="Discard this recording and start over"

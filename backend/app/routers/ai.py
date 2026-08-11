@@ -497,8 +497,9 @@ async def scan_notes(
         logger.info(f'[scan-notes] merge={merge}, files={[n for n, _ in file_parts]}')
 
         def _run_gemini(parts_list: list) -> list[dict[str, Any]]:
-            resp = client.models.generate_content(
-                model=model_name,
+            resp = _gemini_call_with_retry(
+                client,
+                model_name,
                 contents=[NOTE_SCAN_PROMPT] + parts_list,
                 config=genai_types.GenerateContentConfig(
                     thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -563,8 +564,9 @@ async def scan_extra_work(
 
         prompt = EXTRA_WORK_PROMPT + date_clause
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=[prompt, genai_types.Part.from_bytes(data=content, mime_type=mime_type)],
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -607,8 +609,9 @@ async def scan_consultant(file: UploadFile = File(...)):
         if (file.filename or '').lower().endswith('.pdf'):
             mime_type = 'application/pdf'
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=[CONSULTANT_PROMPT, genai_types.Part.from_bytes(data=content, mime_type=mime_type)],
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -726,8 +729,9 @@ Return JSON:
 """
 
         logger.info('[transcribe] Pass 2: Structuring into activities (JSON mode)...')
-        pass2_response = client.models.generate_content(
-            model=model_name,
+        pass2_response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=[pass2_prompt],
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -850,9 +854,19 @@ PAY RATE vs SCOPE — IMPORTANT DISTINCTION:
 HANDLING UNINTELLIGIBLE WORDS:
 If a specific word or phrase is unintelligible:
 - DO NOT guess or fabricate it.
-- Provide context around the unintelligible word, use "_____" for the blank, then ask:
-  "Please provide the correct word for the blank."
-- Example: "• The trench was excavated to 5 feet. We encountered a _____ pipe. We stopped work immediately. Please provide the correct word for the blank."
+- Keep the words around it and put "_____" where the word should be.
+- Do NOT add a sentence asking for it. The blank is the marker; the inspector is
+  asked about it later, before the report is written.
+- Example: "• The trench was excavated to 5 feet. We encountered a _____ pipe. We stopped work immediately."
+
+IF THE INSPECTOR TALKS TO YOU INSTEAD OF DICTATING:
+Mid-recording they may stop describing work and address you directly — asking what
+something is called, telling you to look something up, or thinking out loud about
+how to word it.
+- Do NOT answer, and do NOT treat it as work that happened.
+- Transcribe what they asked, on its own line, prefixed exactly: "[ASIDE] "
+- Example: "[ASIDE] I can't remember what that valve assembly is called, look into that."
+- Everything else in the recording is still transcribed normally.
 
 If the entire audio is completely silent or unintelligible, output EXACTLY this:
 | Please try again, I couldn't hear you.
@@ -967,8 +981,9 @@ async def transcribe_smart(request: SmartDictationRequest):
         )
 
         logger.info('[transcribe-smart] Pass 2: Parsing into single activity JSON...')
-        pass2_response = client.models.generate_content(
-            model=model_name,
+        pass2_response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=[pass2_prompt],
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -1081,8 +1096,9 @@ Return JSON:
             contents.append(genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=msg.get('content', ''))]))
         contents.append(user_prompt)
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -1199,8 +1215,9 @@ Generate the professional report text now (bullet points, past tense, factual):"
             contents.append(genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=msg.get('content', ''))]))
         contents.append(user_prompt)
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -1290,8 +1307,9 @@ Return JSON:"""
             
         contents.append(user_prompt)
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -1642,8 +1660,9 @@ Return JSON:"""
         logger.info(f'[report-chat] Processing message ({len(user_message)} chars) against report '
                     f'with {len(activities)} activities...')
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=contents,
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
@@ -2160,6 +2179,10 @@ class BulkDictationResponse(BaseModel):
     raw_transcription: str = ''
     locations: str = ''
     general_notes: str = ''
+    # Things the parser could not resolve on its own. Surfaced so the user is
+    # ASKED before the report is written, rather than finding a "_____" in it
+    # afterwards. Empty is the normal case.
+    questions: list[dict[str, Any]] = []
 
 
 class BulkDictateRequest(BaseModel):
@@ -2198,6 +2221,10 @@ class TranscribeAudioResponse(BaseModel):
 class BulkParseRequest(BaseModel):
     transcription: str
     current_activities: list[dict[str, Any]] = []
+    # Answers to the questions a previous parse of THIS transcript returned,
+    # keyed by question id. Re-parsing with them is what turns "ask first" into
+    # a finished report: the answers are treated as if they had been spoken.
+    answers: dict[str, str] = {}
 
 
 # --- Structured output schema for the parse pass ---
@@ -2238,10 +2265,20 @@ class DictatedActivity(BaseModel):
     equipment: list[DictatedEquipment] = []
 
 
+class ParseQuestion(BaseModel):
+    """One thing the parser needs answered before the report can be accurate."""
+    id: str = ''
+    question: str = ''
+    # The surrounding words from the transcript, so the question is recognisable
+    # without replaying the recording.
+    context: str = ''
+
+
 class BulkParseResult(BaseModel):
     activities: list[DictatedActivity] = []
     locations: str = ''
     general_notes: str = ''
+    questions: list[ParseQuestion] = []
 
 
 def _finish_reason_problem(response: Any) -> str:
@@ -2450,6 +2487,23 @@ async def bulk_parse(request: BulkParseRequest):
 
     client, model_name = _get_gemini_client()
 
+    # Answers the inspector gave to a previous pass's questions. They are folded
+    # in as spoken words rather than as a separate instruction, so rule 3 keeps
+    # applying: everything in the report still traces to something a human said.
+    answers_block = ''
+    if request.answers:
+        answered = '\n'.join(
+            f'- {qid}: {text.strip()}'
+            for qid, text in request.answers.items()
+            if (text or '').strip()
+        )
+        if answered:
+            answers_block = (
+                '\nANSWERS FROM THE INSPECTOR — treat each of these as if it had been '
+                'spoken during the dictation, and fold it into the right activity. '
+                'Do NOT ask about these again:\n' + answered + '\n'
+            )
+
     try:
         # String concat, not an f-string: the transcript may contain { }.
         prompt = (
@@ -2479,7 +2533,61 @@ async def bulk_parse(request: BulkParseRequest):
             '10. general_notes: 1-2 sentence HIGH-LEVEL overview of the day '
             '(superintendent elevator pitch). Do NOT repeat station numbers, crew counts, '
             'or equipment details — those belong in the activity summaries.\n\n'
+
+            'ORDERING — THIS IS SPEECH, NOT WRITING:\n'
+            'The inspector talks through the day out loud and jumps around. They finish '
+            'describing one location, then remember something from hours earlier. Your job '
+            'is to make the finished report read in the order the day actually happened, '
+            'not the order it was spoken.\n'
+            'A. Work out WHEN each thing happened and order the bullets inside each '
+            'activity by time of day.\n'
+            'B. ONLY reorder when the speaker gave a time cue — a clock time ("7:00 AM"), '
+            'or wording like "first thing", "before lunch", "after that", "once they '
+            'finished", "at the end of the day", "when we got there". Anything with NO '
+            'time cue keeps the order it was spoken in. NEVER invent a sequence you were '
+            'not given.\n'
+            'C. Worked example: traffic control is mentioned LAST, but described as "set up '
+            'first thing in the morning and taken down at the end of the day". The setup '
+            'becomes one of the FIRST bullets for that location and the removal one of the '
+            'LAST. The words do not change — only where they sit.\n'
+            'D. Reordering moves what was said. It NEVER rewords, NEVER merges two details '
+            'into one, and NEVER adds a fact. Rule 3 still governs everything.\n\n'
+
+            'CONTINUITY — TRACK THE DAY AS YOU READ:\n'
+            'E. Keep track of every location, street name, station, crew, company and piece '
+            'of equipment as it is mentioned.\n'
+            'F. When the speaker returns to something already described — "back at Main '
+            'Street", "same crew as before", "over there", "that same excavator" — attach '
+            'it to the activity it belongs to. Do NOT create a second activity for a '
+            'location you have already opened.\n'
+            'G. One location described across three separate stretches of the recording is '
+            'ONE activity containing all three, in time order.\n'
+            'H. Resolve references like "they", "there" and "that" to whichever crew or '
+            'location was actually being discussed. If you genuinely cannot tell which one '
+            'is meant, ASK (below) rather than picking one.\n\n'
+
+            'WHEN YOU CANNOT TELL — ASK. DO NOT GUESS, DO NOT LEAVE A BLANK:\n'
+            'I. Two markers may appear in the transcript, both put there because the '
+            'transcriber refused to guess:\n'
+            '   • "_____" — a word the recording was too unclear to make out.\n'
+            '   • a line starting "[ASIDE]" — the inspector stopped dictating and spoke to '
+            'the assistant instead (asking what something is called, saying to look '
+            'something up).\n'
+            'For EITHER marker, and for anything else ambiguous or contradictory: do NOT '
+            'write it into the report, do NOT carry "_____" or "[ASIDE]" through into any '
+            'summary, and do NOT answer it yourself from your own knowledge. Add an entry '
+            'to the "questions" array instead. An [ASIDE] line is never work that happened '
+            'and never appears in an activity.\n'
+            'J. Each question needs a short stable "id" (q1, q2, ...), the "question" to '
+            'put to the inspector, and "context" quoting the words around it so they know '
+            'what you are referring to without replaying the audio.\n'
+            'K. Ask ONLY about things that block writing the report accurately. Do not ask '
+            'about detail that simply was never mentioned — something else handles that.\n'
+            'L. Still build activities from everything you DID understand. The questions '
+            'sit alongside the activities; they do not replace them.\n\n'
+
             'TRANSCRIPTION TO PARSE:\n---\n' + transcription + '\n---\n'
+            + answers_block
         )
 
         logger.info(f'[bulk-parse] Parsing {len(transcription)} chars of transcript')
@@ -2504,7 +2612,21 @@ async def bulk_parse(request: BulkParseRequest):
 
         data = _clean_json(raw_text)
         activities = data.get('activities', []) or []
-        logger.info(f'[bulk-parse] Parsed {len(activities)} activities')
+        questions = data.get('questions', []) or []
+
+        # An answered question must never come back a second time — the model is
+        # told not to re-ask, but a dropped id would strand the user in a loop
+        # they cannot clear, so enforce it here too.
+        if request.answers:
+            answered_ids = {
+                qid for qid, text in request.answers.items() if (text or '').strip()
+            }
+            questions = [q for q in questions if q.get('id') not in answered_ids]
+
+        logger.info(
+            f'[bulk-parse] Parsed {len(activities)} activities, '
+            f'{len(questions)} question(s) outstanding'
+        )
         for i, act in enumerate(activities):
             logger.info(
                 f'[bulk-parse] Activity {i}: work_area="{act.get("work_area", "")}", '
@@ -2517,6 +2639,7 @@ async def bulk_parse(request: BulkParseRequest):
             raw_transcription=transcription,
             locations=data.get('locations', ''),
             general_notes=data.get('general_notes', ''),
+            questions=questions,
         )
 
     except HTTPException:
@@ -2661,8 +2784,9 @@ CURRENT EQUIPMENT: {json.dumps(current_activity.get('equipment', []))}
 OUTPUT JSON:
 {{"summary_html": "Enhanced summary", "manpower": [], "equipment": [], "confidence": {{"visual": "high"}}, "merge_strategy_used": "{'enhanced' if merge_mode else 'replaced'}"}}"""
 
-            response = client.models.generate_content(
-                model=model_name,
+            response = _gemini_call_with_retry(
+                client,
+                model_name,
                 contents=[
                     genai_types.Content(role='user', parts=[
                         genai_types.Part.from_text(text=prompt),
@@ -2702,8 +2826,9 @@ CURRENT EQUIPMENT: {json.dumps(current_activity.get('equipment', []))}
 OUTPUT JSON:
 {{"summary_html": "...", "manpower": [], "equipment": [], "confidence": {{"audio": "high"}}, "merge_strategy_used": "{'enhanced' if merge_mode else 'replaced'}"}}"""
 
-            response = client.models.generate_content(
-                model=model_name,
+            response = _gemini_call_with_retry(
+                client,
+                model_name,
                 contents=[
                     genai_types.Content(role='user', parts=[
                         genai_types.Part.from_text(text=prompt),
@@ -2804,8 +2929,9 @@ OUTPUT JSON:
 
 Extract EVERYTHING — do not summarize or skip any activities."""
 
-            response = client.models.generate_content(
-                model=model_name,
+            response = _gemini_call_with_retry(
+                client,
+                model_name,
                 contents=[
                     genai_types.Content(role='user', parts=[
                         genai_types.Part.from_text(text='Parse this completed daily report into structured JSON.'),

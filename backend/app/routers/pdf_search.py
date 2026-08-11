@@ -27,6 +27,10 @@ from io import BytesIO
 
 from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_LEVEL
 from app.core.paths import specs_dir
+# Shared rather than a fourth copy of the same retry loop. Importing from ai is
+# safe in one direction only — ai does not import this module, so there is no
+# cycle. If a third module ever needs it, move it to app.core instead of copying.
+from app.routers.ai import _gemini_call_with_retry
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user
@@ -310,8 +314,9 @@ async def ask_question(
         logger.info(f"[pdf/ask] Exhaustive search across {len(doc_names)} docs "
                     f"({total_bytes:,} bytes total): {question[:100]}...")
 
-        response = client.models.generate_content(
-            model=model_name,
+        response = _gemini_call_with_retry(
+            client,
+            model_name,
             contents=content_parts,
             config=genai_types.GenerateContentConfig(
                 thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
