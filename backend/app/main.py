@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches, backfill
+from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches, backfill, interview
 
 # --- Logging ---
 logging.basicConfig(
@@ -81,6 +81,7 @@ app.include_router(pdf_search.router)
 app.include_router(schedule.router)
 app.include_router(dispatches.router)
 app.include_router(backfill.router)
+app.include_router(interview.router)
 
 
 @app.get("/api/health")
