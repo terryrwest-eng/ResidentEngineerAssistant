@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import time
+from datetime import date as date_type, datetime
 from typing import Any
 
 from fastapi import Depends, APIRouter, File, Form, HTTPException, UploadFile
@@ -435,6 +436,187 @@ def _aggregate_extra_work(raw: dict[str, Any]) -> dict[str, Any]:
 # ============================================
 # ENDPOINT: Scan Notes / Timesheet
 # ============================================
+
+
+# ============================================
+# Cross-day lookup — "bring the manpower from 8/14/2024"
+# WHY: every place the inspector can talk to the app, they may refer to a day
+# that is already written. Without this the model has no idea what was on that
+# report and either says it cannot help or invents a crew. The dates the
+# speaker names are resolved here and the real rows are put in the prompt, so
+# anything copied across is copied from the record rather than imagined.
+# ============================================
+
+_MONTHS = {
+    'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
+    'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
+    'august': 8, 'aug': 8, 'september': 9, 'sep': 9, 'sept': 9, 'october': 10,
+    'oct': 10, 'november': 11, 'nov': 11, 'december': 12, 'dec': 12,
+}
+
+# 8/14/2024, 8-14-24, 08.14.2024
+# A bare "M-D" is deliberately NOT a date here. Station ranges are written that
+# way ("Sta 10-12", "dug 10-12 feet") and would silently resolve to October 12,
+# pulling an unrelated day's crew into the prompt. With no year the separator
+# must be a slash, which stations never use.
+_NUMERIC_DATE = re.compile(
+    r'\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b'
+    r'|'
+    r'\b(\d{1,2})[-.](\d{1,2})[-.](\d{2,4})\b'
+)
+# August 14 2024, Aug 14th, august 14
+_WORD_DATE = re.compile(
+    r'\b(' + '|'.join(_MONTHS) + r')\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?\b',
+    re.IGNORECASE,
+)
+
+
+def _resolve_year(raw_year, fallback_year):
+    """A spoken year may be absent, two digits, or four."""
+    if not raw_year:
+        return fallback_year
+    year = int(raw_year)
+    if year < 100:
+        year += 2000
+    return year
+
+
+def _dates_in_text(text, reference_date=''):
+    """
+    Every date the speaker named, as YYYY-MM-DD, in the order mentioned.
+
+    A station number is the trap here: "Sta 10+50" is not a date, but
+    "10-50" would parse as one. Anything that is not a real calendar date is
+    dropped by the date() constructor below.
+    """
+    if not text:
+        return []
+
+    fallback_year = date_type.today().year
+    if reference_date:
+        try:
+            fallback_year = datetime.strptime(reference_date[:10], '%Y-%m-%d').year
+        except ValueError:
+            pass
+
+    found = []
+
+    for m in _NUMERIC_DATE.finditer(text):
+        if m.group(1):
+            month, day, raw_year = m.group(1), m.group(2), m.group(3)
+        else:
+            month, day, raw_year = m.group(4), m.group(5), m.group(6)
+        # No year given and it does not look like a date the speaker meant —
+        # "10-50" style station shorthand has no year and a day over 31.
+        try:
+            d = date_type(_resolve_year(raw_year, fallback_year), int(month), int(day))
+        except ValueError:
+            continue
+        found.append(d.isoformat())
+
+    for m in _WORD_DATE.finditer(text):
+        month = _MONTHS[m.group(1).lower().rstrip('.')]
+        try:
+            d = date_type(_resolve_year(m.group(3), fallback_year), month, int(m.group(2)))
+        except ValueError:
+            continue
+        found.append(d.isoformat())
+
+    seen = set()
+    return [d for d in found if not (d in seen or seen.add(d))]
+
+
+def _rows_for_prompt(rows, kind):
+    """One resource row per line, compact enough to sit in a prompt."""
+    out = []
+    for row in rows or []:
+        label = row.get('trade') or row.get('name') or ''
+        if not label:
+            continue
+        bits = [label]
+        if row.get('name') and kind == 'manpower' and row.get('trade'):
+            bits.append(row['name'])
+        for field, prefix in (('qty', 'qty '), ('hours', 'hrs '), ('ot_hours', 'OT ')):
+            value = row.get(field)
+            if value not in (None, '', 0, '0'):
+                bits.append(prefix + str(value))
+        if row.get('company'):
+            bits.append(row['company'])
+        out.append('    - ' + ', '.join(bits))
+    return out
+
+
+def _other_day_context(text, reference_date='', exclude_report_id=''):
+    """
+    Prompt block describing any OTHER day the speaker referred to.
+
+    Returns '' when no date was named or no report exists for it, so callers
+    can concatenate it unconditionally.
+    """
+    dates = _dates_in_text(text, reference_date)
+    dates = [d for d in dates if d != (reference_date or '')[:10]]
+    if not dates:
+        return ''
+
+    from app.services.database import get_report, list_reports
+
+    blocks = []
+    lookup_failed = False
+    for iso in dates[:3]:  # a sentence naming four past days is not a real request
+        try:
+            index_rows = list_reports(limit=5, date_from=iso, date_to=iso)
+        except Exception as exc:
+            # A failed lookup is NOT an absent report. Saying "there is no
+            # report for that day" when we never managed to look is how the
+            # model ends up confidently inventing a crew.
+            lookup_failed = True
+            logger.warning('[cross-day] lookup failed for %s: %s', iso, exc)
+            continue
+
+        for index_row in index_rows:
+            if index_row.get('id') == exclude_report_id:
+                continue
+            report = get_report(index_row['id'])
+            if not report:
+                continue
+
+            lines = ['REPORT FOR ' + iso + ':']
+            for act in report.get('activities', []) or []:
+                lines.append('  ACTIVITY: ' + (act.get('work_area') or 'unnamed'))
+                manpower = _rows_for_prompt(act.get('manpower'), 'manpower')
+                equipment = _rows_for_prompt(act.get('equipment'), 'equipment')
+                if manpower:
+                    lines.append('   MANPOWER:')
+                    lines.extend(manpower)
+                if equipment:
+                    lines.append('   EQUIPMENT:')
+                    lines.extend(equipment)
+            if len(lines) > 1:
+                blocks.append('\n'.join(lines))
+
+    if not blocks:
+        if lookup_failed:
+            return (
+                '\n\nOTHER DAYS THE SPEAKER MENTIONED: could not read the report for '
+                + ', '.join(dates)
+                + '. Tell the user the lookup failed and to try again. Do NOT say '
+                'the day has no report, and do NOT invent what was on it.\n'
+            )
+        return (
+            '\n\nOTHER DAYS THE SPEAKER MENTIONED: no report exists for '
+            + ', '.join(dates)
+            + '. Say so plainly. Do NOT invent what was on it.\n'
+        )
+
+    return (
+        '\n\nANOTHER DAY\'S REPORT — the speaker referred to this date. If they '
+        'asked to bring resources across, copy these rows EXACTLY as written: '
+        'same trades, same names, same quantities, same companies. Do not '
+        'round, rename or add anyone. Copy hours across only if they asked for '
+        'the hours too; otherwise leave hours blank for the new day.\n'
+        + '\n\n'.join(blocks)
+        + '\n'
+    )
 
 class ScanResponse(BaseModel):
     activities: list[dict[str, Any]]
@@ -980,6 +1162,10 @@ async def transcribe_smart(request: SmartDictationRequest):
             '- "equipment": array of objects, each with: name (string, specific unit), description (string, equipment type), company (string — MUST include if speaker mentioned it), qty (number), hours (number), start_time (string, AM/PM format), stop_time (string, AM/PM format), is_extra_work (boolean), is_3rd_party (boolean), is_rental (boolean)\n'
         )
 
+        # "Same crew as 8/14" spoken into an activity resolves to that day's
+        # real rows rather than a plausible-looking invention.
+        pass2_prompt += _other_day_context(raw_transcription, reference_date=report_date)
+
         logger.info('[transcribe-smart] Pass 2: Parsing into single activity JSON...')
         pass2_response = _gemini_call_with_retry(
             client,
@@ -1289,6 +1475,10 @@ OUTPUT SCHEMA:
   "modified_activities": null or [ { ...activity... }, ... ]
 }
 """
+
+        # Pull in any other day the user named, so "same crew as 8/14" copies
+        # the real rows instead of inventing a plausible crew.
+        system_prompt += _other_day_context(request.message)
 
         user_prompt = f"""CURRENT ACTIVITIES JSON:
 {json.dumps(request.activities, indent=2)}
@@ -1624,6 +1814,19 @@ OUTPUT JSON:
         for r in all_reports:
             reports_summary.append(f"ID: {r.get('id')} | Date: {r.get('report_date')} | Project: {r.get('project_name')}")
         reports_context = "\n".join(reports_summary)
+
+        # ─── Inject the actual contents of any OTHER day the user named ───
+        # The list above gives the model IDs and dates only. Asking it to
+        # "bring the manpower from 8/14" against that list would make it guess
+        # the crew, so the real rows for the dates mentioned go in below.
+        other_day = _other_day_context(
+            user_message,
+            reference_date=(request.report.get('general', {}) or {}).get('report_date', ''),
+            exclude_report_id=(request.report or {}).get('id', ''),
+        )
+        if other_day:
+            system_prompt += other_day
+            logger.info(f'[report-chat] Cross-day context injected ({len(other_day)} chars)')
 
         user_prompt = f"""AVAILABLE REPORTS (For cross-report moves):
 {reports_context}
@@ -2530,10 +2733,36 @@ async def bulk_parse(request: BulkParseRequest):
             'applies to. Never leave company blank if it was spoken.\n'
             '9. TIME FORMAT: 12-hour AM/PM (e.g. "7:00 AM", "3:30 PM"). '
             'NEVER military/24-hour time.\n'
-            '10. general_notes: 1-2 sentence HIGH-LEVEL overview of the day '
-            '(superintendent elevator pitch). Do NOT repeat station numbers, crew counts, '
-            'or equipment details — those belong in the activity summaries.\n\n'
+            '10. general_notes: ONE OR TWO SENTENCES PER ACTIVITY. Walk through '
+            'the day in order and give each activity a sentence or two saying what was '
+            'worked on and roughly where. Four activities means roughly four to eight '
+            'sentences. This is the reader getting the shape of the day before they '
+            'read the detail.\n'
+            '    - Also mention anything that affected the day: weather, a delay, a '
+            'utility conflict, an inspection, a visitor.\n'
+            '    - Do NOT repeat station numbers, crew counts or equipment details. '
+            'Those belong in the activity summaries. Naming a street or an area is fine.\n'
+            '    - Do NOT grade the day. Never "good", "productive", "solid progress", '
+            '"on track", "successful", "as expected", "went well". Say what happened, '
+            'not how it went.\n\n'
 
+            "PLAIN ENGLISH — THIS APPLIES TO EVERY WORD YOU WRITE:\n"
+            "Write the way a field inspector talks, not the way a model writes. Short, "
+            "flat, factual. If a plainer word exists, it is the right word.\n"
+            "    - NO AI TONE. Banned outright: delve, it is worth noting, showcasing, "
+            "seamless, robust, leverage, navigate the challenges, plays a crucial role, "
+            "stands as a testament, in the realm of, ensure, furthermore, moreover, and "
+            "additionally or overall opening a sentence.\n"
+            "    - NO CORPORATE WORDS: utilized -> used, commenced -> started, "
+            "implemented -> installed, facilitated -> helped, prior to -> before, "
+            "in order to -> to, at this time -> now, subsequently -> then.\n"
+            "    - NO FILLER ADJECTIVES: existing, current, designated, respective, "
+            "aforementioned, various.\n"
+            "    - NO OPINION about how the work went. Say what was done, never how well.\n"
+            "    - PAST TENSE, THIRD PERSON. Never we, I, our, us. Name the party - the "
+            "company, the crew, the trade.\n"
+            "    - Do NOT spell out an acronym the reader knows: BMP, never Best "
+            "Management Practice (BMP).\n\n"
             'ORDERING — THIS IS SPEECH, NOT WRITING:\n'
             'The inspector talks through the day out loud and jumps around. They finish '
             'describing one location, then remember something from hours earlier. Your job '
@@ -2588,6 +2817,9 @@ async def bulk_parse(request: BulkParseRequest):
 
             'TRANSCRIPTION TO PARSE:\n---\n' + transcription + '\n---\n'
             + answers_block
+            # Spoken references to a past day ("same crew as 8/14") resolve to
+            # that report's real rows, so they are copied rather than imagined.
+            + _other_day_context(transcription)
         )
 
         logger.info(f'[bulk-parse] Parsing {len(transcription)} chars of transcript')

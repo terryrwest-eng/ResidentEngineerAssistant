@@ -57,3 +57,4 @@ desktop/build/
 
 # Railway CLI local link state (project/service IDs, per machine)
 .railway/
+frontend/android/build_old/
