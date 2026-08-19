@@ -21,6 +21,9 @@ import { PMWebPreview } from '@/components/report/PMWebPreview';
 import { ReportChat } from '@/components/report/ReportChat';
 import { ScheduleSection } from '@/components/report/ScheduleSection';
 import { SectionNav, type NavSection } from '@/components/report/SectionNav';
+import { ProjectPicker, type WeatherSnapshot } from '@/components/report/ProjectPicker';
+import { GuidedInterview } from '@/components/report/GuidedInterview';
+import { getProfileKey, buildInterviewState } from '@/lib/reportFlow';
 import { Doc, DocHeader, DocStatus } from '@/components/ui/Doc';
 import { useToast } from '@/components/ui/ConfirmProvider';
 import { formatReportDate, formatQty } from '@/lib/formatters';
@@ -64,11 +67,27 @@ export function NewReportPage() {
     revision,
     newReport,
     loadReport,
+    updateGeneral,
+    setInterview,
+    setWeather,
     closeReport,
     saveReport,
     saveReportAs,
     submitReport,
   } = useReportStore();
+
+  // Guided flow. A NEW report starts at the project picker; an existing one
+  // opens straight in the editor, because a quick fix should never mean
+  // walking the whole format again.
+  const [flowStage, setFlowStage] = useState<'picking' | 'interview' | 'editor'>(
+    id ? 'editor' : 'picking'
+  );
+  const [profileKey, setProfileKey] = useState('');
+  // Only used when the device refuses coordinates, which happens indoors
+  // and on a phone that has denied location to the browser.
+  const [fallbackZip, setFallbackZip] = useState('');
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answerRows, setAnswerRows] = useState<Record<string, Record<string, unknown>[]>>({});
 
   const [showPMWeb, setShowPMWeb] = useState(false);
   const [showChat, setShowChat] = useState(false);
@@ -101,6 +120,7 @@ export function NewReportPage() {
           start: s.default_start_time,
           stop: s.default_stop_time,
         });
+        setFallbackZip((s as unknown as { default_zip_code?: string }).default_zip_code || '');
         newReport(buildReportDefaults(s));
       }).catch((err) => {
         console.warn('[NewReportPage] Settings fetch failed, creating blank report:', err);
@@ -159,6 +179,55 @@ export function NewReportPage() {
       setIsDownloading(false);
     }
   }, [report, toast]);
+
+  // ── Guided flow ──────────────────────────────────────────────────────────
+  // Runs BEFORE the loading guard on purpose: a brand-new report has nothing
+  // to load, and showing a spinner ahead of the first question would be a
+  // blank screen for no reason.
+  if (!id && flowStage === 'picking') {
+    return (
+      <ProjectPicker
+        reportDate={report?.general?.report_date || new Date().toISOString().slice(0, 10)}
+        fallbackZip={fallbackZip}
+        onPicked={(profile, weather: WeatherSnapshot | null) => {
+          setProfileKey(profile.key);
+          updateGeneral({ project_name: profile.project_name });
+          if (weather) setWeather(weather);
+          setFlowStage('interview');
+        }}
+      />
+    );
+  }
+
+  if (!id && flowStage === 'interview') {
+    return (
+      <GuidedInterview
+        profileKey={profileKey || getProfileKey(report)}
+        reportDate={report?.general?.report_date || ''}
+        answers={answers}
+        rows={answerRows}
+        onAnswer={(qid, value, rows) => {
+          // Committed on every answer rather than at the end. The interview is
+          // filled in on a phone in the field; a dropped connection or a locked
+          // screen must never cost the answers already given.
+          const nextAnswers = { ...answers, [qid]: value };
+          const nextRows = rows?.length ? { ...answerRows, [qid]: rows } : answerRows;
+          setAnswers(nextAnswers);
+          setAnswerRows(nextRows);
+          setInterview(buildInterviewState(
+            profileKey || getProfileKey(report), nextAnswers, nextRows, false,
+          ));
+        }}
+        onExit={() => setFlowStage('editor')}
+        onComplete={() => {
+          setInterview(buildInterviewState(
+            profileKey || getProfileKey(report), answers, answerRows, true,
+          ));
+          setFlowStage('editor');
+        }}
+      />
+    );
+  }
 
   // Loading state
   if (isLoading) {

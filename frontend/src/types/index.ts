@@ -12,6 +12,16 @@
 
 /** A single daily field report */
 export interface Report {
+  /** Weather captured when the report was opened, not asked for later. */
+  weather?: { summary: string; raw?: unknown };
+  /** Guided interview answers, kept raw so a later format change can
+   *  re-render an old report instead of losing what was said. */
+  interview?: {
+    profile: string;
+    answers: Record<string, string>;
+    rows: Record<string, Record<string, unknown>[]>;
+    completed: boolean;
+  };
   id: string;
   general: GeneralInfo;
   activities: Activity[];

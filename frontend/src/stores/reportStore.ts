@@ -88,6 +88,10 @@ interface ReportStoreState {
   /** Load an existing report from the server */
   loadReport: (id: string) => Promise<void>;
   /** Update the general info section */
+  /** Store the guided interview answers on the report. */
+  setInterview: (interview: unknown) => void;
+  /** Store the weather captured when the report was opened. */
+  setWeather: (weather: { summary: string; raw?: unknown }) => void;
   updateGeneral: (updates: Partial<GeneralInfo>) => void;
   /** Add a new activity */
   addActivity: (activity: Activity) => void;
@@ -198,6 +202,37 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       set({ isLoading: false, loadError: msg });
       console.error(`[ReportStore] Failed to load report ${id}:`, err);
     }
+  },
+
+  setWeather: (weather) => {
+    const { report } = get();
+    if (!report) return;
+    set({
+      report: { ...report, weather, updated_at: new Date().toISOString() } as typeof report,
+      isDirty: true,
+      saveError: null,
+    });
+    get()._scheduleAutoSave();
+  },
+
+  setInterview: (interview) => {
+    const { report } = get();
+    if (!report) return;
+
+    // Same dirty + auto-save path as every other edit. The interview is filled
+    // in on a phone in the field, so an answer that only lives in component
+    // state until some later action is an answer waiting to be lost.
+    set({
+      report: {
+        ...report,
+        interview,
+        updated_at: new Date().toISOString(),
+      } as typeof report,
+      isDirty: true,
+      saveError: null,
+    });
+
+    get()._scheduleAutoSave();
   },
 
   updateGeneral: (updates) => {
