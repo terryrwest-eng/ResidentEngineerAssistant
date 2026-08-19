@@ -23,8 +23,9 @@ import { ScheduleSection } from '@/components/report/ScheduleSection';
 import { SectionNav, type NavSection } from '@/components/report/SectionNav';
 import { ProjectPicker, type WeatherSnapshot } from '@/components/report/ProjectPicker';
 import { ResumeOrStart, type ExistingReport } from '@/components/report/ResumeOrStart';
+import { interviewApi } from '@/lib/interviewApi';
 import { GuidedInterview } from '@/components/report/GuidedInterview';
-import { getProfileKey, buildInterviewState } from '@/lib/reportFlow';
+import { getProfileKey, buildInterviewState, materializeActivities } from '@/lib/reportFlow';
 import { Doc, DocHeader, DocStatus } from '@/components/ui/Doc';
 import { useToast } from '@/components/ui/ConfirmProvider';
 import { formatReportDate, formatQty } from '@/lib/formatters';
@@ -70,6 +71,7 @@ export function NewReportPage() {
     revision,
     newReport,
     loadReport,
+    replaceActivities,
     updateGeneral,
     setInterview,
     setWeather,
@@ -276,10 +278,23 @@ export function NewReportPage() {
           ));
         }}
         onExit={() => setFlowStage('editor')}
-        onComplete={() => {
-          setInterview(buildInterviewState(
-            profileKey || getProfileKey(report), answers, answerRows, true,
-          ));
+        onComplete={async () => {
+          const key = profileKey || getProfileKey(report);
+          setInterview(buildInterviewState(key, answers, answerRows, true));
+          // Turn the answers into real activities so the Word export, PMWeb
+          // sync and the resource tables all read the data they always have.
+          // The interview is a better way to fill the report in, not a second
+          // parallel copy of it.
+          try {
+            const profile = await interviewApi.profile(key);
+            replaceActivities(materializeActivities(
+              profile.sections, answers, answerRows, report?.activities || [],
+            ));
+          } catch (err) {
+            // The answers are already saved on the report, so nothing is lost —
+            // they just have not been laid out as activities yet.
+            console.error('[NewReportPage] Could not build activities from answers:', err);
+          }
           setFlowStage('editor');
         }}
       />
