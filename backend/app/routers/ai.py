@@ -20,7 +20,7 @@ import logging
 import os
 import re
 import time
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, timedelta
 from typing import Any
 
 from fastapi import Depends, APIRouter, File, Form, HTTPException, UploadFile
@@ -447,6 +447,11 @@ def _aggregate_extra_work(raw: dict[str, Any]) -> dict[str, Any]:
 # anything copied across is copied from the record rather than imagined.
 # ============================================
 
+_WEEKDAYS = {
+    'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+    'friday': 4, 'saturday': 5, 'sunday': 6,
+}
+
 _MONTHS = {
     'january': 1, 'jan': 1, 'february': 2, 'feb': 2, 'march': 3, 'mar': 3,
     'april': 4, 'apr': 4, 'may': 5, 'june': 6, 'jun': 6, 'july': 7, 'jul': 7,
@@ -521,6 +526,52 @@ def _dates_in_text(text, reference_date=''):
         except ValueError:
             continue
         found.append(d.isoformat())
+
+    # ── Relative references ──────────────────────────────────────────────────
+    # Nobody says "bring the crew from 8/14/2024" out loud. They say yesterday,
+    # or last Friday, or the 14th. Without these the lookup found nothing, no
+    # context was attached, and the assistant correctly answered that it had no
+    # access to other days - which read as a missing feature rather than an
+    # unparsed date.
+    anchor = None
+    if reference_date:
+        try:
+            anchor = datetime.strptime(reference_date[:10], '%Y-%m-%d').date()
+        except ValueError:
+            anchor = None
+    if anchor is None:
+        anchor = date_type.today()
+
+    lowered = text.lower()
+
+    if re.search(r'\byesterday\b|\bthe day before\b|\bprevious day\b|\bday prior\b', lowered):
+        found.append((anchor - timedelta(days=1)).isoformat())
+
+    # "last Friday", "on Monday", "Monday's report" — the most recent one that
+    # has already happened. A weekday naming today resolves to a week ago,
+    # because the day being asked about is never the one being written.
+    for name, index in _WEEKDAYS.items():
+        if re.search(r'\b' + name + r'\b', lowered):
+            delta = (anchor.weekday() - index) % 7
+            found.append((anchor - timedelta(days=delta or 7)).isoformat())
+
+    # "the 14th" — this month if it has passed, otherwise the month before.
+    # The ordinal suffix is required: a bare number is a quantity far more often
+    # than it is a date.
+    for m in re.finditer(r'\bthe (\d{1,2})(?:st|nd|rd|th)\b', lowered):
+        day = int(m.group(1))
+        try:
+            candidate = anchor.replace(day=day)
+        except ValueError:
+            continue
+        if candidate >= anchor:
+            first = anchor.replace(day=1)
+            prev_month_end = first - timedelta(days=1)
+            try:
+                candidate = prev_month_end.replace(day=day)
+            except ValueError:
+                continue
+        found.append(candidate.isoformat())
 
     seen = set()
     return [d for d in found if not (d in seen or seen.add(d))]
@@ -1635,6 +1686,16 @@ async def report_chat(request: ReportChatRequest):
         system_prompt = """You are the 'Report Assistant', an expert AI embedded in a construction daily reporting app.
 Your job is to help the user build and modify their daily field report through natural conversation.
 
+YOU CAN READ OTHER DAYS. When the user names a day - a date, "yesterday",
+"last Friday", "the 14th" - that day's report is looked up and its real crew,
+equipment and activities are attached below under "ANOTHER DAY'S REPORT". Copy
+from it exactly: same trades, same names, same quantities, same companies.
+
+If they refer to another day WITHOUT naming which one ("the other day", "last
+time"), ask which date. Never answer that you cannot access other reports -
+you can, once you know the day. And never reconstruct a past day from memory
+or inference: if no report was attached, say so and ask.
+
 ═══════════════════════════════════════════════════════════
 FIRST — WHAT KIND OF MESSAGE IS THIS?
 ═══════════════════════════════════════════════════════════
@@ -1821,7 +1882,7 @@ OUTPUT JSON:
         # the crew, so the real rows for the dates mentioned go in below.
         other_day = _other_day_context(
             user_message,
-            reference_date=(request.report.get('general', {}) or {}).get('report_date', ''),
+            reference_date=((request.report or {}).get('general') or {}).get('report_date', ''),
             exclude_report_id=(request.report or {}).get('id', ''),
         )
         if other_day:
