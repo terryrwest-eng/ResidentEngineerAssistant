@@ -64,6 +64,7 @@ export function NewReportPage() {
     saveError,
     isLoading,
     loadError,
+    duplicateConflict,
     revision,
     newReport,
     loadReport,
@@ -184,6 +185,20 @@ export function NewReportPage() {
   // Runs BEFORE the loading guard on purpose: a brand-new report has nothing
   // to load, and showing a spinner ahead of the first question would be a
   // blank screen for no reason.
+  // A report already exists for this date and project, so nothing was written
+  // and auto-save has stopped. This decision has to be reachable from wherever
+  // the user is standing: the picker and the interview return early, so before
+  // this guard existed the warning rendered underneath them and could never be
+  // answered - the app simply stopped on the first question with a 409 in the
+  // console and no way forward.
+  if (!id && duplicateConflict) {
+    return (
+      <div style={{ maxWidth: 640, margin: '0 auto', padding: 'var(--space-lg)' }}>
+        <DuplicateDateWarning />
+      </div>
+    );
+  }
+
   if (!id && flowStage === 'picking') {
     return (
       <ProjectPicker
