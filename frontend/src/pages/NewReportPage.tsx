@@ -22,6 +22,7 @@ import { ReportChat } from '@/components/report/ReportChat';
 import { ScheduleSection } from '@/components/report/ScheduleSection';
 import { SectionNav, type NavSection } from '@/components/report/SectionNav';
 import { ProjectPicker, type WeatherSnapshot } from '@/components/report/ProjectPicker';
+import { ResumeOrStart, type ExistingReport } from '@/components/report/ResumeOrStart';
 import { GuidedInterview } from '@/components/report/GuidedInterview';
 import { getProfileKey, buildInterviewState } from '@/lib/reportFlow';
 import { Doc, DocHeader, DocStatus } from '@/components/ui/Doc';
@@ -48,6 +49,7 @@ import {
   AlertCircle,
   Clock,
   Sparkles,
+  Mic,
 } from 'lucide-react';
 
 export function NewReportPage() {
@@ -80,8 +82,8 @@ export function NewReportPage() {
   // Guided flow. A NEW report starts at the project picker; an existing one
   // opens straight in the editor, because a quick fix should never mean
   // walking the whole format again.
-  const [flowStage, setFlowStage] = useState<'picking' | 'interview' | 'editor'>(
-    id ? 'editor' : 'picking'
+  const [flowStage, setFlowStage] = useState<'checking' | 'picking' | 'interview' | 'editor'>(
+    id ? 'editor' : 'checking'
   );
   const [profileKey, setProfileKey] = useState('');
   // Only used when the device refuses coordinates, which happens indoors
@@ -129,6 +131,17 @@ export function NewReportPage() {
       });
     }
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Bring saved interview answers back into state when a report loads. Without
+  // this, walking the questions again on an existing report would start from a
+  // blank sheet and re-ask everything already answered.
+  useEffect(() => {
+    const saved = report?.interview;
+    if (!saved) return;
+    setAnswers((prev) => (Object.keys(prev).length ? prev : saved.answers || {}));
+    setAnswerRows((prev) => (Object.keys(prev).length ? prev : saved.rows || {}));
+    if (saved.profile) setProfileKey((prev) => prev || saved.profile);
+  }, [report?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = useCallback(async () => {
     const savedId = await saveReport();
@@ -185,6 +198,20 @@ export function NewReportPage() {
   // Runs BEFORE the loading guard on purpose: a brand-new report has nothing
   // to load, and showing a spinner ahead of the first question would be a
   // blank screen for no reason.
+  // Ask BEFORE choosing a project, not after the save is refused. A report is
+  // written most days, so on a day already started the old flow picked a
+  // project, auto-saved, hit the duplicate guard and only then said "one
+  // already exists" — answering a question it could have asked first.
+  if (!id && flowStage === 'checking') {
+    return (
+      <ResumeOrStart
+        reportDate={report?.general?.report_date || new Date().toISOString().slice(0, 10)}
+        onResume={(existing: ExistingReport) => navigate(`/report/${existing.id}`, { replace: true })}
+        onStartNew={() => setFlowStage('picking')}
+      />
+    );
+  }
+
   // A report already exists for this date and project, so nothing was written
   // and auto-save has stopped. This decision has to be reachable from wherever
   // the user is standing: the picker and the interview return early, so before
@@ -195,6 +222,21 @@ export function NewReportPage() {
     return (
       <div style={{ maxWidth: 640, margin: '0 auto', padding: 'var(--space-lg)' }}>
         <DuplicateDateWarning />
+
+      {/* Walk the format again on a report already started - the usual reason
+          is another location turning up after the first pass. Saved answers are
+          restored, so it continues rather than re-asking. */}
+      {report && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-sm)' }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => setFlowStage('interview')}
+            title="Answer the report's questions - add another location, or fill a gap"
+          >
+            <Mic size={14} /> Walk me through it
+          </button>
+        </div>
+      )}
       </div>
     );
   }
@@ -214,7 +256,7 @@ export function NewReportPage() {
     );
   }
 
-  if (!id && flowStage === 'interview') {
+  if (flowStage === 'interview') {
     return (
       <GuidedInterview
         profileKey={profileKey || getProfileKey(report)}
