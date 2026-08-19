@@ -35,6 +35,11 @@ export interface InterviewSection {
   number: number;
   title: string;
   empty_statement: string;
+  /** Asked once per thing it describes — Morena runs several locations a day
+   *  and each is its own activity with its own crew, stations and quantities. */
+  repeats: boolean;
+  /** Asked after each pass; yes runs the section again. */
+  repeat_prompt: string;
   questions: InterviewQuestion[];
 }
 

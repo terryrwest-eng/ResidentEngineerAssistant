@@ -42,6 +42,31 @@ interface GuidedInterviewProps {
   onComplete: () => void;
 }
 
+interface AskedItem {
+  section: InterviewSection;
+  question: InterviewQuestion;
+  /** Storage key for this question. Suffixed with the pass number inside a
+   *  repeating section, so location 2's stations do not overwrite location 1's. */
+  key: string;
+  pass?: number;
+}
+
+/**
+ * Guard against a runaway loop.
+ *
+ * A day genuinely has a handful of locations; 30 means something answered yes
+ * forever, and an interview that cannot end is worse than one that stops early.
+ */
+const MAX_PASSES = 30;
+
+const instanceKey = (questionId: string, pass: number) =>
+  pass <= 1 ? questionId : `${questionId}#${pass}`;
+
+const repeatKey = (sectionId: string, pass: number) => `__more__:${sectionId}:${pass}`;
+
+/** Strip the pass suffix — the server knows the question, not the instance. */
+const baseId = (key: string) => key.split('#')[0];
+
 /** A question is asked only when its gate was answered yes. */
 function isAsked(q: InterviewQuestion, answers: Record<string, string>): boolean {
   if (!q.gate) return true;
@@ -84,13 +109,53 @@ export function GuidedInterview({
     return () => { cancelled = true; };
   }, [profileKey]);
 
-  /** Every question that applies today, flattened with its section. */
+  /**
+   * Every question that applies today, flattened with its section.
+   *
+   * A repeating section is expanded once per pass. Each pass ends with its own
+   * "another one?" question, and answering yes adds the next pass — so the list
+   * grows as the inspector works rather than asking up front how many
+   * locations there will be, which is a number nobody has at the start.
+   */
   const asked = useMemo(() => {
-    if (!profile) return [] as { section: InterviewSection; question: InterviewQuestion }[];
-    const out: { section: InterviewSection; question: InterviewQuestion }[] = [];
+    if (!profile) return [] as AskedItem[];
+    const out: AskedItem[] = [];
+
     for (const section of profile.sections) {
-      for (const question of section.questions) {
-        if (isAsked(question, answers)) out.push({ section, question });
+      if (!section.repeats) {
+        for (const question of section.questions) {
+          if (isAsked(question, answers)) out.push({ section, question, key: question.id });
+        }
+        continue;
+      }
+
+      for (let pass = 1; pass <= MAX_PASSES; pass++) {
+        for (const question of section.questions) {
+          const key = instanceKey(question.id, pass);
+          // A gate inside a repeating section refers to its own pass.
+          if (question.gate && (answers[instanceKey(question.gate, pass)] || '').toLowerCase() !== 'yes') {
+            continue;
+          }
+          out.push({ section, question, key, pass });
+        }
+
+        const moreKey = repeatKey(section.id, pass);
+        out.push({
+          section,
+          question: {
+            id: moreKey,
+            prompt: section.repeat_prompt || 'Another one?',
+            kind: 'yesno',
+            help: '',
+            required: false,
+            gate: '',
+            example: '',
+          },
+          key: moreKey,
+          pass,
+        });
+
+        if ((answers[moreKey] || '').toLowerCase() !== 'yes') break;
       }
     }
     return out;
@@ -103,10 +168,10 @@ export function GuidedInterview({
   // a new question is how the wrong text gets accepted.
   useEffect(() => {
     setTranscript('');
-    setDraft(current ? (answers[current.question.id] || '') : '');
+    setDraft(current ? (answers[current.key] || '') : '');
     setMissing([]);
     setError(null);
-  }, [index, current?.question.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [index, current?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopRecording = useCallback(() => {
     if (recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -152,7 +217,7 @@ export function GuidedInterview({
           const result = await interviewApi.answer({
             profile: profileKey,
             section_id: current.section.id,
-            question_id: current.question.id,
+            question_id: baseId(current.key),
             audio_data: base64,
             mime_type: (recorder.mimeType || 'audio/webm').split(';')[0],
             duration_seconds: seconds,
@@ -171,7 +236,7 @@ export function GuidedInterview({
             return;
           }
           setDraft(result.value);
-          onAnswer(current.question.id, result.value, result.rows);
+          onAnswer(current.key, result.value, result.rows);
         } catch (err) {
           console.error('[Interview] Answer failed:', err);
           const httpErr = err as { response?: { data?: { detail?: string } } };
@@ -195,11 +260,11 @@ export function GuidedInterview({
 
   const commit = useCallback((value: string) => {
     if (!current) return;
-    onAnswer(current.question.id, value, rows[current.question.id] || []);
+    onAnswer(current.key, value, rows[current.key] || []);
   }, [current, onAnswer, rows]);
 
   const goNext = useCallback(() => {
-    if (draft !== (answers[current?.question.id ?? ''] || '')) commit(draft);
+    if (draft !== (answers[current?.key ?? ''] || '')) commit(draft);
     if (index + 1 >= asked.length) { onComplete(); return; }
     setIndex(index + 1);
   }, [draft, answers, current, commit, index, asked.length, onComplete]);
@@ -217,7 +282,7 @@ export function GuidedInterview({
     return <div style={box}><Loader2 size={18} className="spin" /> Loading the format…</div>;
   }
 
-  const answered = asked.filter(a => (answers[a.question.id] || '').trim()).length;
+  const answered = asked.filter(a => (answers[a.key] || '').trim()).length;
   const pct = Math.round((answered / Math.max(asked.length, 1)) * 100);
   const isYesNo = current.question.kind === 'yesno';
 
