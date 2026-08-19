@@ -1,0 +1,98 @@
+/**
+ * Daily Reporter V3 — Guided interview client
+ *
+ * One recording answers one question. The server transcribes it, pulls out the
+ * single field that question asks for, and hands back both the transcript and
+ * the cleaned answer — the transcript so a bad recording shows up as visibly
+ * wrong text instead of quietly becoming wrong report content.
+ */
+
+import api from '@/lib/api';
+
+export type QuestionKind =
+  | 'time'
+  | 'text'
+  | 'narrative'
+  | 'station_range'
+  | 'segments'
+  | 'crew'
+  | 'equipment'
+  | 'yesno';
+
+export interface InterviewQuestion {
+  id: string;
+  prompt: string;
+  kind: QuestionKind;
+  help: string;
+  required: boolean;
+  /** Only asked when this other question was answered yes. */
+  gate: string;
+  example: string;
+}
+
+export interface InterviewSection {
+  id: string;
+  number: number;
+  title: string;
+  empty_statement: string;
+  questions: InterviewQuestion[];
+}
+
+export interface InterviewProfile {
+  key: string;
+  project_name: string;
+  title: string;
+  contractor: string;
+  renderer: string;
+  question_count: number;
+  sections: InterviewSection[];
+}
+
+export interface ProfileSummary {
+  key: string;
+  project_name: string;
+  title: string;
+  contractor: string;
+  question_count: number;
+}
+
+export interface AnswerResult {
+  question_id: string;
+  /** What the model heard. Always shown, never hidden. */
+  transcript: string;
+  value: string;
+  rows: Record<string, unknown>[];
+  /** What the question wanted that the recording did not contain. */
+  missing: string[];
+  status: 'ok' | 'empty' | 'suspect' | 'failed';
+  reason: string;
+}
+
+export const interviewApi = {
+  /** Every project's format — drives the picker that opens a new report. */
+  profiles: async (): Promise<ProfileSummary[]> => {
+    const res = await api.get('/interview/profiles');
+    return res.data.profiles;
+  },
+
+  /** One format in full: sections, questions, prompts, empty statements. */
+  profile: async (key: string): Promise<InterviewProfile> => {
+    const res = await api.get(`/interview/profile/${key}`);
+    return res.data;
+  },
+
+  /** Answer one question by voice, or by typed text. */
+  answer: async (params: {
+    profile: string;
+    section_id: string;
+    question_id: string;
+    audio_data?: string;
+    mime_type?: string;
+    duration_seconds?: number;
+    text?: string;
+    report_date?: string;
+  }): Promise<AnswerResult> => {
+    const res = await api.post('/interview/answer', params, { timeout: 180000 });
+    return res.data;
+  },
+};
