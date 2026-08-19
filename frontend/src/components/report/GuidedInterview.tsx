@@ -204,6 +204,15 @@ export function GuidedInterview({
 
   const current = asked[index];
 
+  // The question list GROWS and SHRINKS as answers change - naming three
+  // locations adds passes, correcting it to one removes them. If the index is
+  // left pointing past the end there is no current question, and the screen
+  // sits on a spinner with no way forward. Clamp instead of stranding.
+  useEffect(() => {
+    if (asked.length > 0 && index >= asked.length) setIndex(asked.length - 1);
+  }, [asked.length, index]);
+
+
   // Moving to a new question clears the working state — the previous answer is
   // already committed upward, and leaving a stale transcript on screen next to
   // a new question is how the wrong text gets accepted.
@@ -319,8 +328,19 @@ export function GuidedInterview({
       </div>
     );
   }
-  if (!profile || !current) {
+  if (!profile) {
     return <div style={box}><Loader2 size={18} className="spin" /> Loading the format…</div>;
+  }
+  if (!current) {
+    // Loaded, but nothing left to ask. Never leave the inspector on a spinner
+    // with no way out of the interview.
+    return (
+      <div style={box}>
+        <Check size={20} style={{ color: 'var(--color-success)' }} />
+        <p style={{ margin: '8px 0' }}>All questions answered.</p>
+        <button className="btn btn-primary" onClick={onComplete}>Go to the report</button>
+      </div>
+    );
   }
 
   const answered = asked.filter(a => (answers[a.key] || '').trim()).length;

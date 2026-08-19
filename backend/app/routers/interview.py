@@ -153,6 +153,78 @@ def _schema_for(kind: str) -> str:
     return '{"value": "the answer, in the inspector\'s voice", "rows": [], "missing": []}'
 
 
+def _value_from_rows(kind: str, rows: list[dict[str, Any]]) -> str:
+    """
+    A readable line for rows the model returned without prose.
+
+    WHY THIS MATTERS: a structured answer used to come back with rows filled in
+    and "value" empty, so the box on screen went blank the moment the question
+    was answered and the progress counter still read zero. The answer was
+    captured correctly and looked completely lost, which is indistinguishable
+    from a broken app.
+    """
+    if not rows:
+        return ''
+
+    def qty(row):
+        n = row.get('qty')
+        try:
+            n = int(float(str(n)))
+        except (TypeError, ValueError):
+            n = 0
+        return n
+
+    if kind == 'list':
+        return '\n'.join(
+            str(r.get('item') or r.get('name') or '').strip()
+            for r in rows if (r.get('item') or r.get('name'))
+        )
+
+    if kind == 'segments':
+        out = []
+        for r in rows:
+            mark = str(r.get('mark', '') or '').strip()
+            frm = str(r.get('from', '') or '').strip()
+            to = str(r.get('to', '') or '').strip()
+            if mark and frm and to:
+                out.append(f'{mark}: {frm} to {to}')
+            elif mark:
+                out.append(mark)
+        return '\n'.join(out)
+
+    if kind == 'crew':
+        out = []
+        for r in rows:
+            trade = str(r.get('trade', '') or '').strip()
+            if not trade:
+                continue
+            n = qty(r)
+            note = str(r.get('note', '') or '').strip()
+            line = f'{n} {trade}' if n else trade
+            if r.get('name'):
+                line += f" ({r['name']})"
+            elif note:
+                line += f' ({note})'
+            out.append(line)
+        return ', '.join(out)
+
+    if kind == 'equipment':
+        out = []
+        for r in rows:
+            name = str(r.get('name', '') or '').strip()
+            if not name:
+                continue
+            n = qty(r)
+            note = str(r.get('note', '') or '').strip()
+            line = f'{n} {name}' if n else name
+            if note:
+                line += f' ({note})'
+            out.append(line)
+        return ', '.join(out)
+
+    return ''
+
+
 @router.post('/answer', response_model=AnswerResponse)
 async def answer_question(request: AnswerRequest, _user=Depends(require_user)):
     """
@@ -255,6 +327,11 @@ async def answer_question(request: AnswerRequest, _user=Depends(require_user)):
 
     if value.lower() in ('none', 'nothing', 'n/a', 'na'):
         value = ''
+
+    # Structured kinds routinely come back as rows with no prose. Render them so
+    # the answer is visible on screen instead of leaving the box empty.
+    if not value and rows:
+        value = _value_from_rows(question.kind, rows)
 
     logger.info(
         f'[interview] {profile.key}/{question.id}: '
