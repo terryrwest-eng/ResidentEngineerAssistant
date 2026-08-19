@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, AlertCircle, Cloud, Check } from 'lucide-react';
 import { interviewApi, type ProfileSummary } from '@/lib/interviewApi';
+import { weatherApi } from '@/lib/api';
 
 interface ProjectPickerProps {
   reportDate: string;
@@ -156,8 +157,11 @@ export function ProjectPicker({ reportDate, fallbackZip, onPicked }: ProjectPick
  * is not the same place as the project's ZIP centroid.
  */
 async function fetchWeather(reportDate: string, fallbackZip?: string): Promise<WeatherSnapshot> {
-  const { weatherApi } = await import('@/lib/api');
-
+  // Imported statically. A dynamic import of a module that is ALSO statically
+  // imported everywhere else re-chunks the bundle, and it put a shared helper
+  // in a chunk that loads AFTER authClient - so axios initialised against an
+  // undefined helper and the whole app died with 'e is not a function'
+  // before anything rendered.
   const coords = await new Promise<{ lat: number; lon: number } | null>((resolve) => {
     if (!navigator.geolocation) { resolve(null); return; }
     navigator.geolocation.getCurrentPosition(
