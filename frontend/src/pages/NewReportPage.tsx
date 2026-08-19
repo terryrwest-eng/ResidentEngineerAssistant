@@ -138,11 +138,27 @@ export function NewReportPage() {
   // this, walking the questions again on an existing report would start from a
   // blank sheet and re-ask everything already answered.
   useEffect(() => {
-    const saved = report?.interview;
-    if (!saved) return;
-    setAnswers((prev) => (Object.keys(prev).length ? prev : saved.answers || {}));
-    setAnswerRows((prev) => (Object.keys(prev).length ? prev : saved.rows || {}));
-    if (saved.profile) setProfileKey((prev) => prev || saved.profile);
+    if (!report) return;
+    const saved = report.interview;
+    if (saved) {
+      setAnswers((prev) => (Object.keys(prev).length ? prev : saved.answers || {}));
+      setAnswerRows((prev) => (Object.keys(prev).length ? prev : saved.rows || {}));
+      if (saved.profile) setProfileKey((prev) => prev || saved.profile);
+      return;
+    }
+
+    // A report written before the interview existed, or filled in by dictation
+    // or Quick Create. Seed the locations question from the activities already
+    // on it, so walking the questions shows what is there and adds to it -
+    // rather than starting blank and asking for locations the report covers.
+    const covered = (report.activities || [])
+      .map((a) => String(a.work_area || '').trim())
+      .filter(Boolean);
+    if (!covered.length) return;
+    setAnswers((prev) => (Object.keys(prev).length ? prev : { locations: covered.join('\n') }));
+    setAnswerRows((prev) => (
+      Object.keys(prev).length ? prev : { locations: covered.map((item) => ({ item })) }
+    ));
   }, [report?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = useCallback(async () => {
@@ -225,20 +241,6 @@ export function NewReportPage() {
       <div style={{ maxWidth: 640, margin: '0 auto', padding: 'var(--space-lg)' }}>
         <DuplicateDateWarning />
 
-      {/* Walk the format again on a report already started - the usual reason
-          is another location turning up after the first pass. Saved answers are
-          restored, so it continues rather than re-asking. */}
-      {report && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-sm)' }}>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => setFlowStage('interview')}
-            title="Answer the report's questions - add another location, or fill a gap"
-          >
-            <Mic size={14} /> Walk me through it
-          </button>
-        </div>
-      )}
       </div>
     );
   }
@@ -350,6 +352,22 @@ export function NewReportPage() {
       {/* Shown only when a report already exists for this date — nothing has
           been saved or overwritten; the user chooses what happens. */}
       <DuplicateDateWarning />
+
+      {/* Walk the format again on a report already started - the usual reason
+          is another location turning up after the first pass. Saved answers are
+          restored, so it continues rather than re-asking. */}
+      {report && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-sm)' }}>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => setFlowStage('interview')}
+            title="Answer the report's questions - add another location, or fill a gap"
+          >
+            <Mic size={14} /> Walk me through it
+          </button>
+        </div>
+      )}
+
 
       {/* PMWeb Combined Preview panel */}
       {report?.id && (

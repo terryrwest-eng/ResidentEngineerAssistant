@@ -157,8 +157,14 @@ export function materializeActivities(
   );
 
   // Keep everything the interview did not create, in its original order.
-  const manual = existing.filter((a) => !String(a.work_area || '').startsWith(INTERVIEW_TAG)
-    && !(a as unknown as { interview_pass?: number }).interview_pass);
+  const claimed = new Set(locations.map((l) => l.trim().toLowerCase()));
+  const manual = existing.filter((a) => {
+    if ((a as unknown as { interview_pass?: number }).interview_pass) return false;
+    if (String(a.work_area || '').startsWith(INTERVIEW_TAG)) return false;
+    // An activity the interview just rebuilt under the same work area must not
+    // also survive here, or the report ends up with the location twice.
+    return !claimed.has(String(a.work_area || '').trim().toLowerCase());
+  });
 
   const built: Activity[] = locations.map((location, i) => {
     const pass = i + 1;
@@ -178,18 +184,31 @@ export function materializeActivities(
       ...toBullets(at('anything_missed')),
     ];
 
+    // Match by pass first, then by work area. The second case is the one that
+    // matters on a report that already had activities: naming a location the
+    // report already covers must UPDATE that activity, not add a second one
+    // for the same place.
+    const norm = (v: string) => v.trim().toLowerCase();
     const prior = existing.find(
       (a) => (a as unknown as { interview_pass?: number }).interview_pass === pass,
-    );
+    ) || existing.find((a) => norm(String(a.work_area || '')) === norm(location));
+
+    // Keep what is already there whenever the interview has no answer for it.
+    // The questions fill gaps and add locations; they never blank a field that
+    // was filled in some other way - by dictation, Quick Create, or by hand.
+    const keep = <T,>(answer: T, existingValue: T, isEmpty: (v: T) => boolean): T =>
+      isEmpty(answer) ? existingValue : answer;
+    const emptyStr = (v: string) => !v.trim();
+    const emptyArr = (v: unknown[]) => v.length === 0;
 
     return {
       // Keep the original id so photos, ordering and anything else pointing at
       // this activity survive a re-run of the questions.
       id: prior?.id || newId(),
-      work_area: location,
-      stations: at('stations'),
-      summary: lines.join('\n'),
-      manpower: (rows[passKey('crew', pass)] || []).map((r) => ({
+      work_area: location || prior?.work_area || '',
+      stations: keep(at('stations'), prior?.stations || '', emptyStr),
+      summary: keep(lines.join('\n'), prior?.summary || '', emptyStr),
+      manpower: keep((rows[passKey('crew', pass)] || []).map((r) => ({
         id: newId(),
         trade: String(r.trade ?? r.name ?? '').trim(),
         name: String(r.person ?? '').trim(),
@@ -204,8 +223,8 @@ export function materializeActivities(
         is_consultant: false,
         locked: false,
         apply_end_time: true,
-      })).filter((r) => r.trade),
-      equipment: (rows[passKey('equipment', pass)] || []).map((r) => ({
+      })).filter((r) => r.trade), prior?.manpower || [], emptyArr),
+      equipment: keep((rows[passKey('equipment', pass)] || []).map((r) => ({
         id: newId(),
         name: String(r.name ?? r.trade ?? '').trim(),
         description: String(r.note ?? '').trim(),
@@ -220,7 +239,7 @@ export function materializeActivities(
         is_rental: false,
         locked: false,
         apply_end_time: true,
-      })).filter((r) => r.name),
+      })).filter((r) => r.name), prior?.equipment || [], emptyArr),
       extra_work_manpower: prior?.extra_work_manpower || [],
       extra_work_equipment: prior?.extra_work_equipment || [],
       consultant_manpower: prior?.consultant_manpower || [],
