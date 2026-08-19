@@ -136,6 +136,11 @@ def _schema_for(kind: str) -> str:
             '{"rows": [{"name": "CAT 335 Excavator", "qty": 2, "note": "active"}], '
             '"value": "", "missing": []}'
         )
+    if kind == 'list':
+        return (
+            '{"rows": [{"item": "Main St and 2nd Ave"}, {"item": "Sta 10+50"}], '
+            '"value": "", "missing": []}'
+        )
     if kind == 'time':
         return '{"value": "7:30 AM", "rows": [], "missing": []}'
     if kind == 'station_range':

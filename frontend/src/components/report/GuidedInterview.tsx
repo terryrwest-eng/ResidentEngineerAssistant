@@ -49,6 +49,9 @@ interface AskedItem {
    *  repeating section, so location 2's stations do not overwrite location 1's. */
   key: string;
   pass?: number;
+  /** Which location this pass is about, shown in the header so it is always
+   *  obvious which one is being answered. */
+  label?: string;
 }
 
 /**
@@ -66,6 +69,32 @@ const repeatKey = (sectionId: string, pass: number) => `__more__:${sectionId}:${
 
 /** Strip the pass suffix — the server knows the question, not the instance. */
 const baseId = (key: string) => key.split('#')[0];
+
+/**
+ * The items a list answer produced.
+ *
+ * Prefers the structured rows the extractor returned; falls back to splitting
+ * the text so a typed answer works exactly like a spoken one, and so a list
+ * still drives its section when the model returned prose instead of rows.
+ */
+function listItems(
+  rowsForQuestion: Record<string, unknown>[] | undefined,
+  value: string | undefined,
+): string[] {
+  const fromRows = (rowsForQuestion || [])
+    .map((r) => String(r.item ?? r.name ?? r.value ?? '').trim())
+    .filter(Boolean);
+  if (fromRows.length) return fromRows;
+
+  // Newline or semicolon only - NOT comma. Location names contain commas
+  // ("Morena Blvd, northbound"), and splitting on them turns one location into
+  // two, which then asks a whole extra round of questions about a place that
+  // does not exist.
+  return (value || '')
+    .split(/\r?\n|;/)
+    .map((part) => part.replace(/^[-•\d.)\s]+/, '').trim())
+    .filter(Boolean);
+}
 
 /** A question is asked only when its gate was answered yes. */
 function isAsked(q: InterviewQuestion, answers: Record<string, string>): boolean {
@@ -129,15 +158,27 @@ export function GuidedInterview({
         continue;
       }
 
-      for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      // Driven by a list answer: the things named earlier ARE the passes, so
+      // the inspector is never asked "another one?" after each location. They
+      // already said where they worked.
+      const labels = section.repeat_from ? listItems(rows[section.repeat_from], answers[section.repeat_from]) : [];
+      const passCount = section.repeat_from
+        ? Math.min(labels.length, MAX_PASSES)
+        : MAX_PASSES;
+
+      for (let pass = 1; pass <= passCount; pass++) {
+        const label = labels[pass - 1] || '';
         for (const question of section.questions) {
           const key = instanceKey(question.id, pass);
           // A gate inside a repeating section refers to its own pass.
           if (question.gate && (answers[instanceKey(question.gate, pass)] || '').toLowerCase() !== 'yes') {
             continue;
           }
-          out.push({ section, question, key, pass });
+          out.push({ section, question, key, pass, label });
         }
+
+        // Only sections that ask their way forward get a "another one?" step.
+        if (section.repeat_from) continue;
 
         const moreKey = repeatKey(section.id, pass);
         out.push({
@@ -159,7 +200,7 @@ export function GuidedInterview({
       }
     }
     return out;
-  }, [profile, answers]);
+  }, [profile, answers, rows]);
 
   const current = asked[index];
 
@@ -293,6 +334,7 @@ export function GuidedInterview({
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
           <span style={{ fontWeight: 600 }}>
             {current.section.number}. {current.section.title}
+            {current.label ? ` — ${current.label}` : ''}
           </span>
           <span style={{ color: 'var(--color-text-tertiary)' }}>
             {answered} of {asked.length} answered

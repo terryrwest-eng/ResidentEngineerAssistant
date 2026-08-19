@@ -103,6 +103,8 @@ class Section:
         empty_statement: str = 'Nothing to report for this section.',
         repeats: bool = False,
         repeat_prompt: str = '',
+        repeat_from: str = '',
+        repeat_label: str = '',
     ):
         self.id = id
         self.number = number
@@ -116,6 +118,14 @@ class Section:
         self.repeats = repeats
         # Asked after each pass: yes runs the section again.
         self.repeat_prompt = repeat_prompt
+        # Better than asking "another?" every pass: name them all once, and the
+        # count of passes IS the answer. The inspector knows where they worked
+        # today; being asked to confirm it eight separate times is friction, and
+        # a list read back is far easier to check than a decision repeated.
+        self.repeat_from = repeat_from
+        # Which field each item pre-fills — the location becomes the first part
+        # of that activity's title, so it is never typed twice.
+        self.repeat_label = repeat_label
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -125,6 +135,8 @@ class Section:
             'empty_statement': self.empty_statement,
             'repeats': self.repeats,
             'repeat_prompt': self.repeat_prompt,
+            'repeat_from': self.repeat_from,
+            'repeat_label': self.repeat_label,
             'questions': [q.to_dict() for q in self.questions],
         }
 
@@ -395,164 +407,149 @@ TECOLOTE_EQUIPMENT_GROUPS = [
 
 MORENA_SECTIONS = [
     Section(
-        'arrival', 1, 'Shift',
+        'day', 1, 'The Day',
         [
             Question(
-                'start_time', 'What time did you get on site?', 'time', required=True,
-            ),
-            Question(
-                'stop_time', 'What time did work stop?', 'time',
-            ),
-        ],
-        empty_statement='Shift times were not recorded.',
-    ),
-    # Asked once per location. "Walk me through the day" was what this used to
-    # be, and it is just dictation with a prompt on it — the inspector still has
-    # to remember what the report wants, which is the thing the interview exists
-    # to stop.
-    Section(
-        'activity', 2, 'Work Performed',
-        [
-            Question(
-                'work_area',
-                'Where was this crew working — location, company, and what they were doing?',
-                'text', required=True,
-                example='Sta 10+50 - OHL - Pipe Installation',
+                'locations',
+                'What locations had work activity today?',
+                'list', required=True,
+                help='Name them all in one go — the report walks through them one at a time.',
+                example='Main St and 2nd Ave, Sta 10+50, the Genesee tie-in',
                 extract_hint=(
-                    'Format as "Location - Company - Task". Keep the location exactly '
-                    'as spoken, including street names and station numbers.'
-                ),
-            ),
-            Question(
-                'stations',
-                'What stations did they work between?',
-                'station_range',
-                example='Sta 10+00 to Sta 12+50',
-            ),
-            Question(
-                'work_done',
-                'What did they actually do there?',
-                'narrative', required=True,
-                extract_hint=(
-                    'One bullet per distinct piece of work, in the order it happened. '
-                    'Keep every station, quantity and measurement exactly as spoken.'
-                ),
-            ),
-            Question(
-                'quantities',
-                'Any quantities or materials — footage, tons, loads, pipe sizes?',
-                'text',
-                example='200 LF of 12-inch DIP, 580 tons AC',
-                extract_hint=(
-                    'Keep every figure and unit exactly. If none were stated, leave '
-                    'this empty rather than estimating from the work described.'
-                ),
-            ),
-            Question(
-                'crew',
-                'Who was on this crew — trades and how many?',
-                'crew',
-                help='Names too if you have them.',
-            ),
-            Question(
-                'equipment',
-                'What equipment was on this activity?',
-                'equipment',
-            ),
-            Question(
-                'tests',
-                'Any testing, inspection or survey on this one?',
-                'narrative',
-                example='Compaction testing at Sta 11+00; density passed',
-                extract_hint=(
-                    'Record what was tested and the result as stated. Naming the spec '
-                    'or standard the result was measured against is expected here.'
-                ),
-            ),
-            Question(
-                'delays',
-                'Anything hold this crew up?',
-                'narrative',
-                extract_hint=(
-                    'State the delay and its cause as fact. Do not characterise fault '
-                    'or entitlement — that is the contractor\'s claim, not the RE\'s '
-                    'finding.'
+                    'One entry per distinct location or work area named. Keep each '
+                    'exactly as spoken, including street names and station numbers. '
+                    'Do NOT invent a location that was not named, and do not split '
+                    'one location into two because it has several parts to its name.'
                 ),
             ),
         ],
         empty_statement='No work was performed this shift.',
-        repeats=True,
-        repeat_prompt='Was there work at another location today?',
     ),
+
+    # Asked once per location named above. The count of passes IS the answer to
+    # question 1, and each location pre-fills the first part of that activity's
+    # title, so it is never typed twice.
     Section(
-        'extra_work', 3, 'Extra Work',
+        'activity', 2, 'Work Performed',
         [
-            Question('extra_occurred', 'Was any extra work or T&M done today?', 'yesno'),
             Question(
-                'extra_detail', 'What was it, and who directed it?',
+                'start_time',
+                'What time did the crew start?',
+                'time', required=True,
+            ),
+            Question(
+                'stop_time',
+                'What time did they stop, or plan to stop?',
+                'time', required=True,
+            ),
+            Question(
+                'lunch_deducted',
+                'Take a half hour off for lunch?',
+                'yesno',
+                help='Yes deducts 0.5 from every crew member on this activity.',
+            ),
+            Question(
+                'stations',
+                'Is there any stationing to attach?',
+                'station_range',
+                example='Sta 10+00 to Sta 12+50',
+                extract_hint=(
+                    'Keep the figures exactly as spoken. If no stationing was given, '
+                    'leave this empty rather than deriving one from the location name.'
+                ),
+            ),
+            Question(
+                'traffic_control',
+                'Was traffic control involved?',
+                'yesno',
+            ),
+            Question(
+                'traffic_control_detail',
+                'What area was it in, which direction of travel, and which lanes were closed?',
+                'narrative', gate='traffic_control',
+                example='Morena Blvd northbound, number 2 lane and the bike lane closed',
+                extract_hint=(
+                    'Capture all three: the area, the direction of travel, and which '
+                    'lanes were closed. If one of the three was not stated, say so in '
+                    '"missing" rather than filling it in.'
+                ),
+            ),
+            Question(
+                'summary',
+                'Summary of work at this location.',
+                'narrative', required=True,
+                extract_hint=(
+                    'One bullet per distinct piece of work, in the order it happened. '
+                    'Keep every station, quantity, measurement and material exactly as '
+                    'spoken.'
+                ),
+            ),
+            Question(
+                'crew',
+                'How many of each craft were on this activity?',
+                'crew', required=True,
+                example='1 foreman, 2 operators, 4 laborers',
+                extract_hint=(
+                    'One row per craft with a count. Names too if they were given. '
+                    'Never round a headcount or add a craft that was not named.'
+                ),
+            ),
+            Question(
+                'equipment',
+                'How many of each equipment type?',
+                'equipment', required=True,
+                example='2 excavators, 1 loader, 3 dump trucks',
+                extract_hint=(
+                    'One row per equipment type with a count. Keep makes and model '
+                    'numbers exactly as spoken.'
+                ),
+            ),
+            Question(
+                'anything_missed',
+                'Anything else at this location?',
+                'narrative',
+                help='Deliveries, testing, a delay, a visitor, something that went sideways.',
+                extract_hint=(
+                    "Whatever was said, in the inspector's voice. This is the catch-all "
+                    'for things the earlier questions did not ask about.'
+                ),
+            ),
+        ],
+        empty_statement='No work was performed at this location.',
+        repeats=True,
+        repeat_from='locations',
+        repeat_label='work_area',
+    ),
+
+    Section(
+        'day_close', 3, 'Anything Else',
+        [
+            Question(
+                'extra_occurred',
+                'Was any extra work or T&M done today?',
+                'yesno',
+            ),
+            Question(
+                'extra_detail',
+                'What was it, and who directed it?',
                 'narrative', gate='extra_occurred',
                 extract_hint=(
                     'State what was done and who directed it. Report a delay or a '
-                    'condition as a fact; never repeat the contractor\'s claim that it '
+                    "condition as a fact; never repeat the contractor's claim that it "
                     'is compensable.'
                 ),
             ),
             Question(
-                'extra_resources',
-                'Which crew and equipment were on the extra work, and for how long?',
-                'crew', gate='extra_occurred',
-                help='This is what gets billed, so hours matter here.',
-            ),
-        ],
-        empty_statement='No extra work was performed this shift.',
-    ),
-    Section(
-        'third_party', 4, 'Subs, Consultants & Visitors',
-        [
-            Question('subs_present', 'Were any subcontractors on site?', 'yesno'),
-            Question(
-                'subs_detail', 'Which subs, and what did they do?',
-                'narrative', gate='subs_present',
-                extract_hint='Keep company names exactly as spoken.',
-            ),
-            Question('consultants_present', 'Any consultants or agency reps on site?', 'yesno'),
-            Question(
-                'consultants_detail', 'Who, from which firm, and how long were they here?',
-                'narrative', gate='consultants_present',
-            ),
-            Question(
-                'visitors', 'Any other visitors, or deliveries?', 'narrative',
-            ),
-        ],
-        empty_statement='No subcontractors, consultants or visitors were on site this shift.',
-    ),
-    Section(
-        'site_conditions', 5, 'Conditions, Safety & Instructions',
-        [
-            Question(
-                'weather_impact', 'Did weather affect the work at all?', 'narrative',
-                extract_hint='Only what actually affected the work. If it did not, leave empty.',
-            ),
-            Question('safety_event', 'Any safety incidents, near misses or stop-work?', 'yesno'),
-            Question(
-                'safety_detail', 'What happened, and what was done about it?',
-                'narrative', gate='safety_event',
-            ),
-            Question(
-                'instructions',
-                'Did you give the contractor any direction or instruction today?',
+                'visitors',
+                'Any visitors, inspections, deliveries or consultants on site?',
                 'narrative',
-                extract_hint=(
-                    'These are the RE\'s own directions, stated as given: "the '
-                    'contractor was instructed to...". Naming the contract or spec '
-                    'requirement behind an instruction is correct and expected.'
-                ),
+                extract_hint='Keep names and firms exactly as spoken.',
             ),
             Question(
-                'anything_else',
-                'Anything else worth having in the record?',
+                'day_missed',
+                'Anything about today we have not covered?',
                 'narrative',
-                help='The thing you would tell someone if they asked how the day went.',
+                help='The thing you would mention if someone asked how the day went.',
             ),
         ],
         empty_statement='Nothing further to report.',

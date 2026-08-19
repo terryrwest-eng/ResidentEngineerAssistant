@@ -17,7 +17,8 @@ export type QuestionKind =
   | 'segments'
   | 'crew'
   | 'equipment'
-  | 'yesno';
+  | 'yesno'
+  | 'list';
 
 export interface InterviewQuestion {
   id: string;
@@ -40,6 +41,10 @@ export interface InterviewSection {
   repeats: boolean;
   /** Asked after each pass; yes runs the section again. */
   repeat_prompt: string;
+  /** Question id whose list answer decides how many passes this section runs. */
+  repeat_from: string;
+  /** Field each item pre-fills, so the location is never typed twice. */
+  repeat_label: string;
   questions: InterviewQuestion[];
 }
 
