@@ -823,3 +823,27 @@ def aggregate_for_pmweb(report: dict) -> list:
 
     return rows
 
+
+
+def generate_report_document(report: dict) -> io.BytesIO:
+    """
+    Build the right document for whichever project the report belongs to.
+
+    Every caller should use this rather than a specific renderer. The format is
+    a property of the project, not of the call site, so adding a third job
+    means adding a profile and a renderer - not hunting down export routes.
+
+    An unknown project falls through to the classic layout, so a report written
+    before profiles existed prints exactly as it always did.
+    """
+    from app.services.report_profiles import get_profile
+
+    project = ((report.get("general") or {}).get("project_name") or "")
+    profile = get_profile(project)
+
+    if profile.renderer == "tecolote":
+        from app.services.word_tecolote import generate_tecolote_document
+        logger.info(f"[word] {project!r} -> Tecolote format")
+        return generate_tecolote_document(report)
+
+    return generate_word_document(report)

@@ -1624,7 +1624,7 @@ async def export_batch(batch_id: str):
         raise HTTPException(status_code=404, detail="No generated reports in this batch yet.")
 
     from app.services.database import get_report
-    from app.services.word import generate_word_document, build_report_filename
+    from app.services.word import generate_report_document, build_report_filename
     from app.routers.settings import _load as _load_settings
 
     try:
@@ -1644,7 +1644,7 @@ async def export_batch(batch_id: str):
                 )
                 continue
             try:
-                stream = generate_word_document(report)
+                stream = generate_report_document(report)
             except Exception as exc:
                 logger.error(f"[backfill/export] {entry['date']} failed to render: {exc}")
                 continue

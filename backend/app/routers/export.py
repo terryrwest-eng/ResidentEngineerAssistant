@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from datetime import datetime
 from app.services.word import (
-    generate_word_document,
+    generate_report_document,
     aggregate_for_pmweb,
     generate_notes_html,
     build_report_filename,
@@ -51,7 +51,7 @@ async def download_word_report(report_id: str):
         raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
 
     try:
-        doc_bytes = generate_word_document(report)
+        doc_bytes = generate_report_document(report)
     except Exception as exc:
         logger.exception(f"Word generation failed for report {report_id}")
         raise HTTPException(status_code=500, detail="Failed to generate Word document")
