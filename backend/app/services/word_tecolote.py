@@ -151,7 +151,9 @@ def _group_equipment(report: dict) -> list[tuple[str, list[str]]]:
             notes[name] = str(row['note'])
 
     grouped: dict[str, list[str]] = {label: [] for label, _ in TECOLOTE_EQUIPMENT_GROUPS}
-    for name in sorted(totals):
+    # Entry order, NOT alphabetical. The inspector lists the yard the way they
+    # walked it, and re-sorting it is the app overruling them for no reason.
+    for name in totals:
         lowered = name.lower()
         placed = False
         for label, keywords in TECOLOTE_EQUIPMENT_GROUPS:
@@ -170,7 +172,11 @@ def _group_equipment(report: dict) -> list[tuple[str, list[str]]]:
 
 
 def _equipment_line(name: str, qty: int, note: str) -> str:
-    text = f'{qty} {name}' if qty else name
+    # "4 Dump Trucks", not "4 Dump Truck". Same rule the crew section follows —
+    # a count and a singular noun reads as a typo in a document that gets sent
+    # to the owner.
+    label = _plural(name, qty)
+    text = f'{qty} {label}' if qty else label
     return f'{text} ({note})' if note else text
 
 
