@@ -232,7 +232,25 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
       saveError: null,
     });
 
-    get()._scheduleAutoSave();
+    // Written NOW, not on the 2-second debounce.
+    //
+    // An interview answer is spoken once and is expensive to reproduce - the
+    // inspector has moved on by the time they find out it did not stick. Two
+    // ways they were being lost: the tab closing inside the debounce window,
+    // and _scheduleAutoSave refusing to run at all while a duplicate-date
+    // conflict is unresolved, which held a whole interview in memory and then
+    // dropped it.
+    //
+    // saveReport is single-flight, so answering quickly folds into one request
+    // rather than queueing one per answer.
+    const { report: current, duplicateConflict } = get();
+    if (current?.id && !duplicateConflict) {
+      get().saveReport().catch((err) => {
+        console.error('[ReportStore] Could not save interview answers:', err);
+      });
+    } else {
+      get()._scheduleAutoSave();
+    }
   },
 
   updateGeneral: (updates) => {
