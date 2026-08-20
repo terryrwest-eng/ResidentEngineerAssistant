@@ -251,9 +251,15 @@ def _section_body(report: dict, section) -> list[str]:
 
 
 def generate_tecolote_document(report: dict) -> io.BytesIO:
-    """Build the Construction Daily Progress Report. Returns a stream to send."""
-    gen = report.get('general', {}) or {}
-    profile = get_profile(gen.get('project_name', ''))
+    """
+    Build the Construction Daily Progress Report. Returns a stream to send.
+
+    Content comes from build_tecolote_content, the same function the on-screen
+    preview reads. This function only decides how it LOOKS. Keeping two copies
+    of the content logic is how a header field ends up on one and not the other,
+    which is exactly what happened to the weather line.
+    """
+    content = build_tecolote_content(report)
 
     doc = Document()
     for s in doc.sections:
@@ -266,83 +272,53 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
     style.font.name = 'Calibri'
     style.font.size = Pt(11)
 
-    # ── Title ──
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run('Construction Daily Progress Report')
+    run = title.add_run(content['title'])
     run.bold = True
     run.font.size = Pt(16)
 
-    # ── Header block ──
-    answers = _answers(report)
-    header = [
-        ('Report Date', _fmt_date(gen.get('report_date', ''))),
-        ('Resident Engineer (RE) Arrival Time',
-         answers.get('start_time') or gen.get('start_time', '')),
-        ('Contractor', gen.get('contractor') or profile.contractor),
-    ]
-    weather = (report.get('weather') or {}).get('summary', '')
-    if weather:
-        header.append(('Weather', weather))
-
-    for label, value in header:
+    for field in content['header']:
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(2)
-        p.add_run(f'{label}: ').bold = True
-        p.add_run(str(value or ''))
+        p.add_run(f"{field['label']}: ").bold = True
+        p.add_run(field['value'])
 
     doc.add_paragraph()
 
-    # ── Numbered sections ──
-    for section in profile.sections:
+    for section in content['sections']:
         heading = doc.add_paragraph()
         heading.paragraph_format.space_before = Pt(10)
         heading.paragraph_format.space_after = Pt(4)
-        run = heading.add_run(f'{section.number}. {section.title}')
+        run = heading.add_run(f"{section['number']}. {section['title']}")
         run.bold = True
         run.font.size = Pt(12)
 
-        if section.id == 'labor':
-            crew = _aggregate_crew(report)
-            if crew:
-                for trade, qty, note in crew:
-                    p = doc.add_paragraph(style='List Bullet')
-                    p.paragraph_format.space_after = Pt(2)
-                    p.add_run(f'{trade}: ').bold = True
-                    p.add_run(f'{qty}' + (f' ({note})' if note else ''))
-            else:
-                doc.add_paragraph(section.empty_statement)
+        if section['is_empty']:
+            # The heading plus a plain sentence: the topic was considered and
+            # had nothing, which is not the same as nobody filling it in.
+            for line in section['lines']:
+                doc.add_paragraph(line)
             continue
 
-        if section.id == 'equipment':
-            groups = _group_equipment(report)
-            if groups:
-                for label, lines in groups:
-                    p = doc.add_paragraph(style='List Bullet')
-                    p.paragraph_format.space_after = Pt(2)
-                    p.add_run(f'{label}: ').bold = True
-                    p.add_run(', '.join(lines))
+        for line in section['lines']:
+            p = doc.add_paragraph(style='List Bullet')
+            p.paragraph_format.space_after = Pt(2)
+            # An indented continuation line keeps its indent rather than
+            # becoming a bullet of its own.
+            if line.startswith('    '):
+                p.style = doc.styles['Normal']
+                p.paragraph_format.left_indent = Inches(0.5)
+                p.add_run(line.strip())
             else:
-                doc.add_paragraph(section.empty_statement)
-            continue
-
-        body = _section_body(report, section)
-        if body:
-            for line in body:
-                p = doc.add_paragraph(style='List Bullet')
-                p.paragraph_format.space_after = Pt(2)
                 p.add_run(line)
-        else:
-            # Print the heading and say plainly that there was nothing, rather
-            # than leaving a bare heading that reads as an oversight.
-            doc.add_paragraph(section.empty_statement)
 
     stream = io.BytesIO()
     doc.save(stream)
     stream.seek(0)
     logger.info(
-        f'[tecolote] Built report for {gen.get("report_date", "")} '
-        f'({len(profile.sections)} sections)'
+        f"[tecolote] Built report for {(report.get('general') or {}).get('report_date', '')} "
+        f"({len(content['sections'])} sections)"
     )
     return stream
 

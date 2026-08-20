@@ -173,19 +173,21 @@ TECOLOTE_SECTIONS = [
         [
             # ── START ────────────────────────────────────────────────────────
             Question(
-                'excavation_start', 'What station did excavation begin at?',
-                'text', phase='start', required=True,
-                example='Sta 143+98.80',
-                extract_hint='One station, exactly as spoken. Format "Sta XX+XX.XX".',
-                print_label='Trench excavation began at',
+                'starting_stations',
+                'Starting stations — where did excavation, pipe and backfill begin?',
+                'segments', phase='start', required=True,
+                help='All three in one answer. Name only the ones that ran today.',
+                example='Excavation Sta 143+98.80, pipe Sta 143+98.31, backfill Sta 144+20',
+                extract_hint=(
+                    'One row per operation the speaker named, each as '
+                    '{"item": "Excavation: Sta 143+98.80"}. Keep every figure exactly as '
+                    'spoken. Include ONLY the operations they mentioned — an operation '
+                    'that did not run today must never appear with a blank or a guessed '
+                    'station.'
+                ),
+                print_label='Starting stations',
             ),
-            Question(
-                'pipe_start', 'What station did pipe installation begin at, and what size and type of pipe?',
-                'text', phase='start',
-                example='Sta 143+98.31',
-                extract_hint='One station, exactly as spoken. Empty if no pipe went in today.',
-                print_label='Pipe installation began at',
-            ),
+
 
             Question(
                 'shoring_start', 'What shoring is in, and from what station?',
@@ -341,18 +343,19 @@ TECOLOTE_SECTIONS = [
 
             # ── END ──────────────────────────────────────────────────────────
             Question(
-                'excavation_end', 'What station did excavation end at?',
-                'text', phase='end', required=True,
-                example='Sta 142+39.77',
-                extract_hint='One station, exactly as spoken.',
-                print_label='Trench excavation ended at',
+                'ending_stations',
+                'Ending stations — where did excavation, pipe and backfill end?',
+                'segments', phase='end', required=True,
+                help='All three in one answer. Name only the ones that ran today.',
+                example='Excavation Sta 142+39.77, pipe Sta 142+39.77, backfill Sta 143+98.34',
+                extract_hint=(
+                    'One row per operation the speaker named, each as '
+                    '{"item": "Excavation: Sta 142+39.77"}. Keep every figure exactly as '
+                    'spoken. Include ONLY the operations they mentioned.'
+                ),
+                print_label='Ending stations',
             ),
-            Question(
-                'pipe_end', 'What station did pipe installation end at?',
-                'text', phase='end',
-                example='Sta 142+39.77',
-                print_label='Pipe installation ended at',
-            ),
+
             Question(
                 'joints_count', 'Day totals — how many joints laid, welds made, welds grouted, and patches?',
                 'text', phase='end',
@@ -415,12 +418,7 @@ TECOLOTE_SECTIONS = [
     Section(
         'backfill', 3, 'Backfilling & Bedding',
         [
-            Question(
-                'backfill_start', 'What station did backfill begin at?',
-                'text', phase='start',
-                example='Sta 144+20',
-                print_label='Backfill began at',
-            ),
+
             Question(
                 'backfill_material',
                 'What material is being placed, in what lifts, and how was it compacted?',
@@ -429,12 +427,7 @@ TECOLOTE_SECTIONS = [
                 print_label='Backfill material',
             ),
 
-            Question(
-                'backfill_end', 'What station did backfill end at?',
-                'text', phase='end',
-                example='Sta 143+98.34',
-                print_label='Backfill ended at',
-            ),
+
         ],
         empty_statement='No backfilling or bedding was performed this shift.',
     ),
@@ -577,20 +570,18 @@ TECOLOTE_SECTIONS = [
                 extract_hint='Record how the excavation was left and what secured it.',
             ),
 
-            Question(
-                'planned_tomorrow',
-                'What is planned for tomorrow?',
-                'narrative', phase='end',
-                extract_hint=(
-                    'What the contractor said they intend to do. Report it as their stated '
-                    'plan, not as a commitment or a schedule finding.'
-                ),
-            ),
+
             Question(
                 'anything_else',
-                'Anything else worth having in the record?',
+                'What is planned for tomorrow, and anything else for the record?',
                 'narrative', phase='end',
-                help='The thing you would tell someone if they asked how the day went.',
+                help="Tomorrow's plan, plus whatever you would mention if asked how the day went.",
+                print_label='Looking ahead',
+                extract_hint=(
+                    'Report the plan as what the contractor stated they intend to do, '
+                    'not as a commitment or a schedule finding. Keep anything else said '
+                    'as a separate line.'
+                ),
             ),
         ],
         empty_statement='Nothing further to report.',

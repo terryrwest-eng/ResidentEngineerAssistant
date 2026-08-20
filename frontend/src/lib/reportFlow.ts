@@ -354,8 +354,13 @@ function buildDayActivity(
   const stop = at('shift_end') || at('stop_time');
   const hours = shiftHours(start, stop, false);
 
-  const from = at('excavation_start') || at('pipe_start') || at('backfill_start');
-  const to = at('excavation_end') || at('pipe_end') || at('backfill_end');
+  // The starting and ending stations are now one answer each, listing whichever
+  // operations ran. Take the first line of each for the activity's range and
+  // keep the full detail in the summary, where every operation is listed.
+  const firstLine = (id: string) => (at(id).split('
+')[0] || '').trim();
+  const from = firstLine('starting_stations') || firstLine('excavation_start');
+  const to = firstLine('ending_stations') || firstLine('excavation_end');
   const stations = from && to ? `${from} to ${to}` : (from || to || '');
 
   const prior = existing.find(
