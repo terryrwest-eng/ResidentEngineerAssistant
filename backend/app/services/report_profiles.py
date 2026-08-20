@@ -256,21 +256,27 @@ TECOLOTE_SECTIONS = [
             ),
             Question(
                 'patching_done',
-                'Was any patching needed — grout that cracked or came up deficient?',
+                'Was any patching done — any concrete or mortar repair?',
                 'yesno', phase='during',
             ),
             Question(
                 'patching_detail',
                 'What was patched, where, and what was wrong with it?',
                 'segments', gate='patching_done', phase='during',
+                help='Weld grout, pipe lining or coating, a structure — anything concrete.',
                 example='W-116 at Sta 144+38 — cracked grout, interior, repaired',
                 extract_hint=(
-                    'Patching is a REPAIR of grout that cracked or was deficient - it is '
-                    'not a step every weld gets. One entry per patch: what was patched '
-                    '(weld number or location), the station, and the defect that caused '
-                    'it. Record the defect as observed. Do not attribute cause or fault.'
+                    'Patching is a REPAIR of concrete or mortar that cracked, spalled or '
+                    'came up deficient. It covers grout at a weld, the pipe lining or '
+                    'exterior coating, and cast structures such as thrust blocks, vaults '
+                    'and encasement. It is a repair, not a scheduled step, so never '
+                    'record it for a weld simply because that weld was grouted. '
+                    'One entry per patch: WHAT was patched (weld number, pipe joint, or '
+                    'the structure), WHERE (station or structure), and the defect that '
+                    'caused it. Note interior or exterior if it was said. Record the '
+                    'defect as observed and do not attribute cause or fault.'
                 ),
-                print_label='Patching',
+                print_label='Concrete and mortar patching',
             ),
             Question(
                 'bedding_placed',
