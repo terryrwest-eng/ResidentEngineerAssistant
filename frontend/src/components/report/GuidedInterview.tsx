@@ -62,6 +62,12 @@ interface AskedItem {
  */
 const MAX_PASSES = 30;
 
+const PHASE_LABEL: Record<string, string> = {
+  start: 'Start of shift',
+  during: 'During the shift',
+  end: 'End of shift',
+};
+
 const instanceKey = (questionId: string, pass: number) =>
   pass <= 1 ? questionId : `${questionId}#${pass}`;
 
@@ -191,6 +197,9 @@ export function GuidedInterview({
             required: false,
             gate: '',
             example: '',
+            // Inherits the pass it closes, so it stays with that location
+            // instead of being sorted into another part of the shift.
+            phase: section.questions[0]?.phase || '',
           },
           key: moreKey,
           pass,
@@ -199,7 +208,23 @@ export function GuidedInterview({
         if ((answers[moreKey] || '').toLowerCase() !== 'yes') break;
       }
     }
-    return out;
+    // Ask in the order the shift runs, not the order the report prints.
+    //
+    // The printed sections are a layout for the reader; the phases are the
+    // sequence of the day. Asking every starting station together, then the
+    // work as it progressed, then every ending station and count, is both how
+    // the inspector experienced it and how a missed measurement becomes
+    // obvious - an end station with no start reads as wrong immediately.
+    // Stable, so a format with no phases keeps its declaration order.
+    const rank: Record<string, number> = { start: 0, during: 1, end: 2 };
+    return out
+      .map((item, i) => ({ item, i }))
+      .sort((a, b) => {
+        const pa = rank[a.item.question.phase] ?? 0;
+        const pb = rank[b.item.question.phase] ?? 0;
+        return pa !== pb ? pa - pb : a.i - b.i;
+      })
+      .map(({ item }) => item);
   }, [profile, answers, rows]);
 
   const current = asked[index];
@@ -353,7 +378,7 @@ export function GuidedInterview({
       <div style={{ marginBottom: 'var(--space-md)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
           <span style={{ fontWeight: 600 }}>
-            {current.section.number}. {current.section.title}
+            {PHASE_LABEL[current.question.phase] || `${current.section.number}. ${current.section.title}`}
             {current.label ? ` — ${current.label}` : ''}
           </span>
           <span style={{ color: 'var(--color-text-tertiary)' }}>

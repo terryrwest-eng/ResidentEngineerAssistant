@@ -57,6 +57,8 @@ class Question:
         gate: str = '',
         example: str = '',
         extract_hint: str = '',
+        phase: str = '',
+        print_label: str = '',
     ):
         self.id = id
         self.prompt = prompt
@@ -70,6 +72,23 @@ class Question:
         # Handed to the model along with the transcript. Narrow, per-field
         # instructions beat one giant parsing prompt.
         self.extract_hint = extract_hint
+        # WHEN it is asked: 'start', 'during' or 'end'.
+        #
+        # The interview runs in the order the shift runs - every starting
+        # station, then the work as it progressed, then every ending station
+        # and count. The PRINTED report keeps its own section order, because
+        # the two are answering different needs: one is the sequence of the
+        # day, the other is the layout the owner reads. A question therefore
+        # belongs to a printed section AND to a phase, and the two are
+        # independent.
+        self.phase = phase
+        # How the answer reads in the printed report.
+        #
+        # A short answer is a bare value - "Sta 143+98.80" - and a column of
+        # those under a heading tells the reader nothing about which station is
+        # which. The label turns it into a sentence. Narrative answers already
+        # read as sentences and take no label.
+        self.print_label = print_label
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +99,8 @@ class Question:
             'required': self.required,
             'gate': self.gate,
             'example': self.example,
+            'phase': self.phase,
+            'print_label': self.print_label,
         }
 
 
@@ -150,26 +171,130 @@ TECOLOTE_SECTIONS = [
     Section(
         'work_summary', 1, 'Work Summary & Pipe Installation',
         [
+            # ── START ────────────────────────────────────────────────────────
             Question(
-                'excavation_range',
-                'Where did trench excavation run today — from what station to what station?',
-                'station_range', required=True,
-                example='Sta 143+98.80 to Sta 142+39.77',
+                'excavation_start', 'What station did excavation begin at?',
+                'text', phase='start', required=True,
+                example='Sta 143+98.80',
+                extract_hint='One station, exactly as spoken. Format "Sta XX+XX.XX".',
+                print_label='Trench excavation began at',
+            ),
+            Question(
+                'pipe_start', 'What station did pipe installation begin at?',
+                'text', phase='start',
+                example='Sta 143+98.31',
+                extract_hint='One station, exactly as spoken. Empty if no pipe went in today.',
+                print_label='Pipe installation began at',
+            ),
+            Question(
+                'pipe_size', 'What size and type of pipe is going in?',
+                'text', phase='start',
+                example='36-inch welded steel',
+                print_label='Pipe',
+            ),
+            Question(
+                'shoring_start', 'What shoring is in, and from what station?',
+                'narrative', phase='start',
+                example='Shoring boxes set from Sta 143+98, guardrails installed',
+            ),
+            Question(
+                'dewatering_start', 'Was dewatering running at the start of the shift?',
+                'yesno', phase='start',
+            ),
+            Question(
+                'dewatering_detail',
+                'What is pumping, from where, and where is it discharging?',
+                'narrative', gate='dewatering_start', phase='start',
+                example='Submersible pump at Sta 143+80, discharging to the water truck',
+            ),
+
+            # ── DURING ───────────────────────────────────────────────────────
+            Question(
+                'joints_installed',
+                'Which joints went in? Give each joint number with its start and end station.',
+                'segments', phase='during',
+                help='Say them one after another — "MK-119, 143+98.31 to 143+59.06, next one..."',
+                example='MK-119: Sta 143+98.31 to Sta 143+59.06',
                 extract_hint=(
-                    'Two stations, a start and an end. Keep the exact figures spoken, '
-                    'including decimals. Format each as "Sta XX+XX.XX".'
+                    'One entry per joint: the joint or mark number, its start station and '
+                    'its end station. Keep every figure exactly as spoken. Never '
+                    'interpolate a joint that was not named, and never infer a station '
+                    'from the one before it.'
                 ),
+                print_label='Joints installed',
+            ),
+            Question(
+                'welds_made',
+                'Where were welds made, and which two joints did each one tie together?',
+                'segments', phase='during',
+                example='Sta 143+59.06 — MK-119 to MK-120, interior and exterior',
+                extract_hint=(
+                    'One entry per weld: the station, and the two joints it joined. Note '
+                    'interior or exterior if it was said. Do not assume a weld between '
+                    'two joints just because they are adjacent.'
+                ),
+                print_label='Welds made',
+            ),
+            Question(
+                'joints_patched',
+                'Which joints were patched or mortared, and at what stations?',
+                'segments', phase='during',
+                example='MK-118 at Sta 144+38 — interior mortar',
+                extract_hint='One entry per joint patched: joint number, station, interior or exterior.',
+                print_label='Joints patched',
+            ),
+            Question(
+                'joints_grouted',
+                'Which joints were grouted, and at what stations?',
+                'segments', phase='during',
+                extract_hint='One entry per joint grouted: joint number and station.',
+                print_label='Joints grouted',
+            ),
+            Question(
+                'bedding_placed',
+                'What bedding went in, between which stations, and was it brought to grade?',
+                'narrative', phase='during',
+                example='SE-30 sand bedding placed to grade from Sta 143+98 to Sta 143+59',
+            ),
+            Question(
+                'fittings_installed',
+                'Any valves, fittings, blowoffs or air-vacs installed?',
+                'narrative', phase='during',
+                example='16-inch blowoff assembly set at Sta 143+20',
+                extract_hint='Keep sizes, types and stations exactly as spoken.',
+            ),
+            Question(
+                'testing_done',
+                'Any testing today — density, hydrotest, pressure, vacuum, CCTV?',
+                'yesno', phase='during',
+            ),
+            Question(
+                'testing_detail',
+                'What was tested, where, and what was the result?',
+                'narrative', gate='testing_done', phase='during',
+                example='Density test at Sta 143+70, 95 percent, passed',
+                extract_hint=(
+                    'Record what was tested, the station, the value and the result as '
+                    'stated. Naming the spec the result was measured against is expected. '
+                    'Never state a pass or a fail that was not said.'
+                ),
+            ),
+            Question(
+                'survey_done',
+                'Any survey or line-and-grade checks?',
+                'narrative', phase='during',
+                example='Line and grade checked on MK-119 and MK-120 before backfill',
             ),
             Question(
                 'unforeseen_conditions',
                 'Did you hit anything unforeseen — water, utilities, bad soil?',
-                'yesno',
+                'yesno', phase='during',
                 help='Perched water, an unmarked utility, unsuitable material.',
             ),
             Question(
                 'unforeseen_detail',
                 'What was it, and between which stations?',
-                'narrative', gate='unforeseen_conditions',
+                'narrative', gate='unforeseen_conditions', phase='during',
                 example='Perched water from Sta 143+98.31 to Sta 143+59.06',
                 extract_hint=(
                     'State the condition and the station limits it was found between. '
@@ -177,48 +302,65 @@ TECOLOTE_SECTIONS = [
                 ),
             ),
             Question(
-                'shoring',
-                'What went in for shoring, and were the guardrails installed?',
-                'narrative',
-                example='Shoring boxes installed progressively as excavation advanced; guardrails installed',
-            ),
-            Question(
-                'bedding_material',
-                'What bedding went in, and was it brought to grade?',
-                'text',
-                example='SE-30 sand bedding placed to grade',
-            ),
-            Question(
-                'pipe_segments',
-                'Which pipe segments were installed? Give the mark number and the stations for each.',
-                'segments',
-                help='Say them one after another — "MK-119, 143+98.31 to 143+59.06, next one..."',
-                example='MK-119: Sta 143+98.31 to Sta 143+59.06',
-                extract_hint=(
-                    'One entry per segment: mark number, start station, end station. '
-                    'Keep every figure exactly as spoken. Never merge or interpolate '
-                    'segments the speaker did not name.'
-                ),
-            ),
-            Question(
-                'pipe_size',
-                'What size and type of pipe?',
-                'text', example='36-inch water main',
+                'deliveries',
+                'Any material deliveries?',
+                'narrative', phase='during',
+                example='12 joints of 36-inch pipe delivered, staged at the north end',
+                extract_hint='Keep quantities and material descriptions exactly as spoken.',
             ),
             Question(
                 'highline_flushing',
-                'Was there any highline flushing today?',
-                'yesno',
+                'Was there any highline flushing or temporary water work?',
+                'yesno', phase='during',
             ),
             Question(
                 'highline_detail',
-                'Where, between what times, and why — and when was the temperature last verified?',
-                'narrative', gate='highline_flushing',
+                'Where, between what times, why, and when was the temperature last verified?',
+                'narrative', gate='highline_flushing', phase='during',
                 example=(
                     'Morena Blvd. and Paul Jones Ave., 3:00 PM to 4:00 PM, to mitigate '
                     'elevated afternoon water temperatures; verified normal at 11:00 AM'
                 ),
                 extract_hint='Keep both clock times and the locations exactly as spoken.',
+            ),
+
+            # ── END ──────────────────────────────────────────────────────────
+            Question(
+                'excavation_end', 'What station did excavation end at?',
+                'text', phase='end', required=True,
+                example='Sta 142+39.77',
+                extract_hint='One station, exactly as spoken.',
+                print_label='Trench excavation ended at',
+            ),
+            Question(
+                'pipe_end', 'What station did pipe installation end at?',
+                'text', phase='end',
+                example='Sta 142+39.77',
+                print_label='Pipe installation ended at',
+            ),
+            Question(
+                'joints_count', 'How many joints were installed today?',
+                'text', phase='end',
+                extract_hint='A number only. If it was not stated, leave it empty rather than counting for them.',
+                print_label='Total joints installed',
+            ),
+            Question(
+                'welds_count', 'How many welds were made?',
+                'text', phase='end',
+                extract_hint='A number only. Do not derive it from the weld list.',
+                print_label='Total welds made',
+            ),
+            Question(
+                'grouted_count', 'How many joints were grouted?',
+                'text', phase='end',
+                print_label='Total joints grouted',
+            ),
+            Question(
+                'footage_installed', 'How much pipe went in today, in linear feet?',
+                'text', phase='end',
+                example='160 LF',
+                extract_hint='Keep the figure and unit exactly. Never compute it from stations.',
+                print_label='Pipe installed today',
             ),
         ],
         empty_statement='No pipe installation or trench excavation was performed this shift.',
@@ -227,30 +369,24 @@ TECOLOTE_SECTIONS = [
     Section(
         'tm_tracking', 2, 'Time & Material (T&M) Tracking',
         [
+            Question('tm_occurred', 'Was any time and material work done today?', 'yesno', phase='during'),
             Question(
-                'tm_occurred',
-                'Was any time and material work done today?',
-                'yesno',
-            ),
-            Question(
-                'tm_work',
-                'What was done on T&M, and what drove it?',
-                'narrative', gate='tm_occurred',
+                'tm_work', 'What was done on T&M, and what drove it?',
+                'narrative', gate='tm_occurred', phase='during',
                 example=(
                     'Pumped perched water into a water truck with a submersible pump and '
                     'placed 3/4-inch gravel bedding'
                 ),
                 extract_hint=(
                     'Report what was done and the condition that caused it. If a delay '
-                    'occurred, state the delay as a fact. Do not characterise it as '
-                    'the contractor\'s fault or as entitlement to extra payment — that '
-                    'is a claim, not an observation.'
+                    'occurred, state the delay as a fact. Do not characterise it as the '
+                    "contractor's fault or as entitlement to extra payment - that is a "
+                    'claim, not an observation.'
                 ),
             ),
             Question(
-                'tm_window',
-                'What time window did it cover, and what was completed in it?',
-                'narrative', gate='tm_occurred',
+                'tm_window', 'What time window did it cover, and what was completed in it?',
+                'narrative', gate='tm_occurred', phase='end',
                 example='7:30 AM to 1:30 PM — excavation, gravel sub-bedding, MK-119 installed',
                 extract_hint=(
                     'Keep the clock times exactly. If the window mixes contract work with '
@@ -265,18 +401,33 @@ TECOLOTE_SECTIONS = [
         'backfill', 3, 'Backfilling & Bedding',
         [
             Question(
-                'backfill_occurred',
-                'Did a second crew run backfill or bedding today?',
-                'yesno',
+                'backfill_start', 'What station did backfill begin at?',
+                'text', phase='start',
+                example='Sta 144+20',
+                print_label='Backfill began at',
             ),
             Question(
-                'backfill_detail',
-                'What material, up to what station, and was it inspected?',
-                'narrative', gate='backfill_occurred',
-                example='SE-30 sand bedding placed and graded up to Sta 143+98.34 under inspection',
+                'backfill_material',
+                'What material is being placed, and in what lifts?',
+                'text', phase='during',
+                example='SE-30 sand in 12-inch lifts',
+                print_label='Backfill material',
+            ),
+            Question(
+                'backfill_compaction',
+                'How was it compacted, and was it tested?',
+                'narrative', phase='during',
+                example='Compacted with a plate compactor; density tested at Sta 144+00',
+                extract_hint='Record the method and any test result as stated. Never state a pass that was not said.',
+            ),
+            Question(
+                'backfill_end', 'What station did backfill end at?',
+                'text', phase='end',
+                example='Sta 143+98.34',
+                print_label='Backfill ended at',
             ),
         ],
-        empty_statement='No separate backfilling or bedding crew worked this shift.',
+        empty_statement='No backfilling or bedding was performed this shift.',
     ),
 
     Section(
@@ -285,18 +436,17 @@ TECOLOTE_SECTIONS = [
             Question(
                 'instructions_given',
                 'Did you give the contractor any instructions or recommendations?',
-                'yesno',
+                'yesno', phase='end',
             ),
             Question(
-                'instructions_detail',
-                'What did you tell them, and why?',
-                'narrative', gate='instructions_given',
+                'instructions_detail', 'What did you tell them, and why?',
+                'narrative', gate='instructions_given', phase='end',
                 example=(
                     'Instructed to keep larger dewatering pumps on site; reminded of the '
                     'obligation to notify the RE on encountering unforeseen conditions'
                 ),
                 extract_hint=(
-                    'These are the RE\'s own directions, so they are stated as given: '
+                    "These are the RE's own directions, so they are stated as given: "
                     '"the contractor was instructed to...", "the contractor was reminded '
                     'that...". Naming the contract obligation behind an instruction is '
                     'correct and expected here.'
@@ -312,14 +462,27 @@ TECOLOTE_SECTIONS = [
             Question(
                 'monitors_present',
                 'Were any monitors, inspectors or agency reps on site?',
-                'yesno',
+                'yesno', phase='during',
             ),
             Question(
                 'monitors_detail',
                 'Who was here, from which firm, and what were they observing?',
-                'narrative', gate='monitors_present',
+                'narrative', gate='monitors_present', phase='during',
                 example='Environmental monitors from Redtail and Stantec present throughout the shift',
                 extract_hint='Keep firm names exactly as spoken.',
+            ),
+            Question(
+                'safety_event', 'Any safety incidents, near misses or stop-work?',
+                'yesno', phase='during',
+            ),
+            Question(
+                'safety_detail', 'What happened, and what was done about it?',
+                'narrative', gate='safety_event', phase='during',
+            ),
+            Question(
+                'confined_space', 'Any confined space entry today?',
+                'narrative', phase='during',
+                help='Who entered, where, and what permit or attendant was in place.',
             ),
         ],
         empty_statement='No outside inspectors or monitors were on site this shift.',
@@ -329,16 +492,21 @@ TECOLOTE_SECTIONS = [
         'bmps', 6, 'Best Management Practices (BMPs)',
         [
             Question(
+                'traffic_control', 'What traffic control was set, and where?',
+                'narrative', phase='start',
+                example='Morena Blvd northbound, number 2 lane closed, flaggers at both ends',
+                extract_hint='Capture the street, the direction of travel and which lanes were closed.',
+            ),
+            Question(
                 'bmp_measures',
                 'What BMP work happened — dust control, sweeping, sandbags?',
-                'narrative',
+                'narrative', phase='during',
                 example='Water truck sprinkled the work area for dust control; roadway swept with a skid steer',
                 extract_hint='Write BMP as the acronym. Never expand it.',
             ),
             Question(
-                'bmp_directives',
-                'Did you direct any BMP maintenance or repairs?',
-                'narrative',
+                'bmp_directives', 'Did you direct any BMP maintenance or repairs?',
+                'narrative', phase='end',
                 example='Directed replacement of damaged sandbags and covering of exposed highlines on Morena Blvd.',
             ),
         ],
@@ -349,9 +517,14 @@ TECOLOTE_SECTIONS = [
         'labor', 7, 'Labor Force Tracking',
         [
             Question(
+                'shift_start', 'What time did the crew start?',
+                'time', phase='start', required=True,
+                print_label='Crew start time',
+            ),
+            Question(
                 'crew',
                 'Who was on site today — how many foremen, operators and laborers?',
-                'crew', required=True,
+                'crew', required=True, phase='start',
                 help='Say part-time as you would write it, e.g. "one foreman, half time".',
                 example='Foreman: 1 (Half-Time), Operators: 2, Laborers: 5',
                 extract_hint=(
@@ -359,6 +532,11 @@ TECOLOTE_SECTIONS = [
                     'the trade it belongs to. Never round a headcount or invent a trade '
                     'that was not named.'
                 ),
+            ),
+            Question(
+                'shift_end', 'What time did the crew stop?',
+                'time', phase='end',
+                print_label='Crew stop time',
             ),
         ],
         empty_statement='No contractor labor force was on site this shift.',
@@ -368,9 +546,8 @@ TECOLOTE_SECTIONS = [
         'equipment', 8, 'Equipment Log',
         [
             Question(
-                'equipment',
-                'What equipment was on site?',
-                'equipment', required=True,
+                'equipment', 'What equipment was on site?',
+                'equipment', required=True, phase='start',
                 help='Machines, trucks and support units — makes and models if you have them.',
                 example='2 CAT 335 Excavators, 1 CAT 950 Wheel Loader, 4 Dump Trucks, 1 Water Truck',
                 extract_hint=(
@@ -379,8 +556,51 @@ TECOLOTE_SECTIONS = [
                     'active or idle.'
                 ),
             ),
+            Question(
+                'equipment_idle',
+                'Was anything sitting idle or broken down?',
+                'narrative', phase='during',
+                extract_hint=(
+                    'State which machine and for how long if it was said. Report standby '
+                    'as a fact; do not characterise who is responsible for it.'
+                ),
+            ),
         ],
         empty_statement='No contractor equipment was on site this shift.',
+    ),
+
+    Section(
+        'close_out', 9, 'End of Shift',
+        [
+            Question(
+                'trench_secured',
+                'How was the trench left — open, plated, backfilled, fenced?',
+                'narrative', phase='end', required=True,
+                example='Trench plated from Sta 143+59 to Sta 142+40; K-rail left in place',
+                extract_hint='Record how the excavation was left and what secured it.',
+            ),
+            Question(
+                'dewatering_overnight',
+                'Is dewatering running overnight?',
+                'yesno', phase='end',
+            ),
+            Question(
+                'planned_tomorrow',
+                'What is planned for tomorrow?',
+                'narrative', phase='end',
+                extract_hint=(
+                    'What the contractor said they intend to do. Report it as their stated '
+                    'plan, not as a commitment or a schedule finding.'
+                ),
+            ),
+            Question(
+                'anything_else',
+                'Anything else worth having in the record?',
+                'narrative', phase='end',
+                help='The thing you would tell someone if they asked how the day went.',
+            ),
+        ],
+        empty_statement='Nothing further to report.',
     ),
 ]
 

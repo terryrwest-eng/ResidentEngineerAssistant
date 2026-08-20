@@ -195,8 +195,24 @@ def _section_body(report: dict, section) -> list[str]:
         if question.kind == 'yesno':
             continue  # a gate, not content
         value = str(answers.get(question.id, '') or '').strip()
-        if value:
-            lines.extend(part.strip() for part in value.split('\n') if part.strip())
+        if not value:
+            continue
+
+        parts = [part.strip() for part in value.split('\n') if part.strip()]
+        label = getattr(question, 'print_label', '')
+        if not label:
+            # Narrative answers already read as sentences.
+            lines.extend(parts)
+            continue
+
+        # A short answer is a bare value — "Sta 143+98.80" — and a column of
+        # those under a heading tells the reader nothing about which station is
+        # which. The label turns it into a statement.
+        if len(parts) == 1:
+            lines.append(f'{label}: {parts[0]}')
+        else:
+            lines.append(f'{label}:')
+            lines.extend(f'    {part}' for part in parts)
 
     return lines
 
