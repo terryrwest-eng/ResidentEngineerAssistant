@@ -29,6 +29,9 @@ export interface InterviewQuestion {
   /** When in the shift it is asked: 'start' | 'during' | 'end'. Empty means
    *  the format has no phases and declaration order is used. */
   phase: string;
+  /** How the answer reads in the printed report. Empty for narrative answers,
+   *  which already read as sentences. */
+  print_label: string;
   /** Only asked when this other question was answered yes. */
   gate: string;
   example: string;

@@ -32,6 +32,9 @@ import {
 
 interface GuidedInterviewProps {
   profileKey: string;
+  /** Open on this question rather than the first — used when a line in the
+   *  summary is tapped to correct one answer without walking the format. */
+  startAt?: string;
   reportDate: string;
   /** Answers so far, keyed by question id. Owned by the caller so a reload
    *  or a jump to the editor never loses what was already said. */
@@ -121,6 +124,7 @@ function isAsked(q: InterviewQuestion, answers: Record<string, string>): boolean
 
 export function GuidedInterview({
   profileKey,
+  startAt,
   reportDate,
   answers,
   rows,
@@ -212,6 +216,8 @@ export function GuidedInterview({
             // Inherits the pass it closes, so it stays with that location
             // instead of being sorted into another part of the shift.
             phase: section.questions[0]?.phase || '',
+            // Synthetic: never printed, so it carries no label.
+            print_label: '',
           },
           key: moreKey,
           pass,
@@ -238,6 +244,14 @@ export function GuidedInterview({
       })
       .map(({ item }) => item);
   }, [profile, answers, rows]);
+
+  // Jump straight to a requested question once the list exists. Runs only when
+  // startAt changes, so it never fights the inspector's own navigation.
+  useEffect(() => {
+    if (!startAt || !asked.length) return;
+    const at = asked.findIndex((a) => a.key === startAt || baseId(a.key) === startAt);
+    if (at >= 0) setIndex(at);
+  }, [startAt, asked.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = asked[index];
 

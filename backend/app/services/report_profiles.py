@@ -180,33 +180,25 @@ TECOLOTE_SECTIONS = [
                 print_label='Trench excavation began at',
             ),
             Question(
-                'pipe_start', 'What station did pipe installation begin at?',
+                'pipe_start', 'What station did pipe installation begin at, and what size and type of pipe?',
                 'text', phase='start',
                 example='Sta 143+98.31',
                 extract_hint='One station, exactly as spoken. Empty if no pipe went in today.',
                 print_label='Pipe installation began at',
             ),
-            Question(
-                'pipe_size', 'What size and type of pipe is going in?',
-                'text', phase='start',
-                example='36-inch welded steel',
-                print_label='Pipe',
-            ),
+
             Question(
                 'shoring_start', 'What shoring is in, and from what station?',
                 'narrative', phase='start',
                 example='Shoring boxes set from Sta 143+98, guardrails installed',
             ),
             Question(
-                'dewatering_start', 'Was dewatering running at the start of the shift?',
-                'yesno', phase='start',
+                'dewatering_start',
+                'Was dewatering running at the start — and if so, what is pumping and where is it discharging?',
+                'narrative', phase='start',
+                print_label='Dewatering',
             ),
-            Question(
-                'dewatering_detail',
-                'What is pumping, from where, and where is it discharging?',
-                'narrative', gate='dewatering_start', phase='start',
-                example='Submersible pump at Sta 143+80, discharging to the water truck',
-            ),
+
 
             # ── DURING ───────────────────────────────────────────────────────
             Question(
@@ -293,7 +285,7 @@ TECOLOTE_SECTIONS = [
             ),
             Question(
                 'testing_done',
-                'Any testing today — density, hydrotest, pressure, vacuum, CCTV?',
+                'Any testing or survey today — density, hydrotest, pressure, vacuum, CCTV, line and grade?',
                 'yesno', phase='during',
             ),
             Question(
@@ -307,12 +299,7 @@ TECOLOTE_SECTIONS = [
                     'Never state a pass or a fail that was not said.'
                 ),
             ),
-            Question(
-                'survey_done',
-                'Any survey or line-and-grade checks?',
-                'narrative', phase='during',
-                example='Line and grade checked on MK-119 and MK-120 before backfill',
-            ),
+
             Question(
                 'unforeseen_conditions',
                 'Did you hit anything unforeseen — water, utilities, bad soil?',
@@ -367,28 +354,22 @@ TECOLOTE_SECTIONS = [
                 print_label='Pipe installation ended at',
             ),
             Question(
-                'joints_count', 'How many joints of pipe were laid today?',
+                'joints_count', 'Day totals — how many joints laid, welds made, welds grouted, and patches?',
                 'text', phase='end',
-                extract_hint='A number only. If it was not stated, leave it empty rather than counting for them.',
-                print_label='Total joints of pipe laid',
+                help='One line is fine — "4 joints, 3 welds, 3 grouted, 1 patch".',
+                example='4 joints laid, 3 welds, 3 grouted, 1 patch',
+                extract_hint=(
+                    'The counts the inspector states, in their words. Leave out anything '
+                    'they did not say. NEVER derive a count from the lists answered '
+                    'earlier - the two disagree the moment something was described '
+                    'without being enumerated, and the stated number is the one that '
+                    'belongs in the record.'
+                ),
+                print_label='Day totals',
             ),
-            Question(
-                'welds_count', 'How many welds were made?',
-                'text', phase='end',
-                extract_hint='A number only. Do not derive it from the weld list.',
-                print_label='Total welds made',
-            ),
-            Question(
-                'grouted_count', 'How many welds were grouted?',
-                'text', phase='end',
-                print_label='Total welds grouted',
-            ),
-            Question(
-                'patches_count', 'How many patches were made?',
-                'text', phase='end',
-                print_label='Total patches made',
-                extract_hint='A number only. Leave empty if it was not stated.',
-            ),
+
+
+
             Question(
                 'footage_installed', 'How much pipe went in today, in linear feet?',
                 'text', phase='end',
@@ -442,18 +423,12 @@ TECOLOTE_SECTIONS = [
             ),
             Question(
                 'backfill_material',
-                'What material is being placed, and in what lifts?',
+                'What material is being placed, in what lifts, and how was it compacted?',
                 'text', phase='during',
                 example='SE-30 sand in 12-inch lifts',
                 print_label='Backfill material',
             ),
-            Question(
-                'backfill_compaction',
-                'How was it compacted, and was it tested?',
-                'narrative', phase='during',
-                example='Compacted with a plate compactor; density tested at Sta 144+00',
-                extract_hint='Record the method and any test result as stated. Never state a pass that was not said.',
-            ),
+
             Question(
                 'backfill_end', 'What station did backfill end at?',
                 'text', phase='end',
@@ -506,18 +481,14 @@ TECOLOTE_SECTIONS = [
                 extract_hint='Keep firm names exactly as spoken.',
             ),
             Question(
-                'safety_event', 'Any safety incidents, near misses or stop-work?',
+                'safety_event', 'Any safety incidents, near misses, stop-work or confined space entry?',
                 'yesno', phase='during',
             ),
             Question(
                 'safety_detail', 'What happened, and what was done about it?',
                 'narrative', gate='safety_event', phase='during',
             ),
-            Question(
-                'confined_space', 'Any confined space entry today?',
-                'narrative', phase='during',
-                help='Who entered, where, and what permit or attendant was in place.',
-            ),
+
         ],
         empty_statement='No outside inspectors or monitors were on site this shift.',
     ),
@@ -580,7 +551,7 @@ TECOLOTE_SECTIONS = [
         'equipment', 8, 'Equipment Log',
         [
             Question(
-                'equipment', 'What equipment was on site?',
+                'equipment', 'What equipment was on site, and was anything idle or broken down?',
                 'equipment', required=True, phase='start',
                 help='Machines, trucks and support units — makes and models if you have them.',
                 example='2 CAT 335 Excavators, 1 CAT 950 Wheel Loader, 4 Dump Trucks, 1 Water Truck',
@@ -590,15 +561,7 @@ TECOLOTE_SECTIONS = [
                     'active or idle.'
                 ),
             ),
-            Question(
-                'equipment_idle',
-                'Was anything sitting idle or broken down?',
-                'narrative', phase='during',
-                extract_hint=(
-                    'State which machine and for how long if it was said. Report standby '
-                    'as a fact; do not characterise who is responsible for it.'
-                ),
-            ),
+
         ],
         empty_statement='No contractor equipment was on site this shift.',
     ),
@@ -608,16 +571,12 @@ TECOLOTE_SECTIONS = [
         [
             Question(
                 'trench_secured',
-                'How was the trench left — open, plated, backfilled, fenced?',
+                'How was the trench left, and is dewatering running overnight?',
                 'narrative', phase='end', required=True,
                 example='Trench plated from Sta 143+59 to Sta 142+40; K-rail left in place',
                 extract_hint='Record how the excavation was left and what secured it.',
             ),
-            Question(
-                'dewatering_overnight',
-                'Is dewatering running overnight?',
-                'yesno', phase='end',
-            ),
+
             Question(
                 'planned_tomorrow',
                 'What is planned for tomorrow?',

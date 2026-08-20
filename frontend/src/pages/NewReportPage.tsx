@@ -23,6 +23,7 @@ import { ScheduleSection } from '@/components/report/ScheduleSection';
 import { SectionNav, type NavSection } from '@/components/report/SectionNav';
 import { ProjectPicker, type WeatherSnapshot } from '@/components/report/ProjectPicker';
 import { ResumeOrStart, type ExistingReport } from '@/components/report/ResumeOrStart';
+import { InterviewSummary } from '@/components/report/InterviewSummary';
 import { interviewApi } from '@/lib/interviewApi';
 import { GuidedInterview } from '@/components/report/GuidedInterview';
 import { getProfileKey, buildInterviewState, materializeActivities } from '@/lib/reportFlow';
@@ -91,6 +92,8 @@ export function NewReportPage() {
   // Only used when the device refuses coordinates, which happens indoors
   // and on a phone that has denied location to the browser.
   const [fallbackZip, setFallbackZip] = useState('');
+  /** Question to open the interview on, when a summary line is tapped. */
+  const [jumpTo, setJumpTo] = useState('');
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [answerRows, setAnswerRows] = useState<Record<string, Record<string, unknown>[]>>({});
 
@@ -264,6 +267,7 @@ export function NewReportPage() {
     return (
       <GuidedInterview
         profileKey={profileKey || getProfileKey(report)}
+        startAt={jumpTo}
         reportDate={report?.general?.report_date || ''}
         answers={answers}
         rows={answerRows}
@@ -352,6 +356,17 @@ export function NewReportPage() {
       {/* Shown only when a report already exists for this date — nothing has
           been saved or overwritten; the user chooses what happens. */}
       <DuplicateDateWarning />
+
+      {/* What the questions captured. On a format with no repeating section the
+          answers ARE the report, and the editor would otherwise show an empty
+          screen after the whole interview was answered. */}
+      {report && Object.keys(answers).length > 0 && (
+        <InterviewSummary
+          profileKey={profileKey || getProfileKey(report)}
+          answers={answers}
+          onEdit={(questionId) => { setJumpTo(questionId); setFlowStage('interview'); }}
+        />
+      )}
 
       {/* Walk the format again on a report already started - the usual reason
           is another location turning up after the first pass. Saved answers are
