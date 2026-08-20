@@ -142,14 +142,33 @@ function toBullets(text: string): string[] {
  *    was never worked. Anything typed by hand under it survives, since that
  *    activity is not interview-owned.
  */
+export interface ProfileQuestion {
+  id: string;
+  kind?: string;
+  print_label?: string;
+}
+
+export interface ProfileSection {
+  id: string;
+  number?: number;
+  title?: string;
+  repeats?: boolean;
+  repeat_from?: string;
+  empty_statement?: string;
+  questions: ProfileQuestion[];
+}
+
 export function materializeActivities(
-  sections: { id: string; repeats?: boolean; repeat_from?: string; questions: { id: string }[] }[],
+  sections: ProfileSection[],
   answers: Record<string, string>,
   rows: Record<string, Record<string, unknown>[]>,
   existing: Activity[],
 ): Activity[] {
   const repeating = sections.find((s) => s.repeats && s.repeat_from);
-  if (!repeating) return existing;
+  // A format with no repeating section describes ONE day, not several
+  // locations — so it becomes one activity carrying everything answered.
+  // Returning early here is what left Tecolote with no activity at all.
+  if (!repeating) return buildDayActivity(sections, answers, rows, existing);
 
   const locations = splitList(
     rows[repeating.repeat_from as string],
@@ -274,4 +293,121 @@ function splitList(
     .split(/\r?\n|;/)
     .map((p) => p.replace(/^[-•\d.)\s]+/, '').trim())
     .filter(Boolean);
+}
+
+/**
+ * One activity carrying the whole day, for a format with no repeating section.
+ *
+ * Tecolote is eight numbered sections describing a single day's work, not
+ * several locations. Its answers still have to land in the report as real
+ * activity data — with crew and equipment as rows — so the editor shows it, the
+ * resource tables count it, and the export prints it from the same place every
+ * other report is printed from.
+ *
+ * The summary is laid out the way the format reads: each numbered heading, then
+ * its lines beneath. A section with nothing gets its plain statement, exactly as
+ * the printed report does, so what is on screen and what is in the document say
+ * the same thing.
+ */
+function buildDayActivity(
+  sections: ProfileSection[],
+  answers: Record<string, string>,
+  rows: Record<string, Record<string, unknown>[]>,
+  existing: Activity[],
+): Activity[] {
+  const at = (id: string) => (answers[id] || '').trim();
+
+  const lines: string[] = [];
+  for (const section of sections) {
+    // Crew and equipment become ROWS, not prose — they belong in the resource
+    // tables where they can be counted, not buried in a summary.
+    if (section.id === 'labor' || section.id === 'equipment') continue;
+
+    const body: string[] = [];
+    for (const q of section.questions) {
+      if (q.kind === 'yesno') continue;      // a gate, not content
+      const value = at(q.id);
+      if (!value) continue;
+      const parts = value.split('\n').map((v) => v.trim()).filter(Boolean);
+      if (q.print_label) {
+        if (parts.length === 1) body.push(`${q.print_label}: ${parts[0]}`);
+        else { body.push(`${q.print_label}:`); body.push(...parts.map((v) => `    ${v}`)); }
+      } else {
+        body.push(...parts);
+      }
+    }
+
+    const heading = section.number ? `${section.number}. ${section.title}` : section.title;
+    lines.push(heading || '');
+    lines.push(...(body.length ? body : [section.empty_statement || 'Nothing to report.']));
+    lines.push('');
+  }
+
+  const summary = lines.join('\n').trim();
+
+  // Nothing was answered — do not replace the report with an empty shell.
+  if (!summary && !(rows.crew || []).length && !(rows.equipment || []).length) {
+    return existing;
+  }
+
+  const start = at('shift_start') || at('start_time');
+  const stop = at('shift_end') || at('stop_time');
+  const hours = shiftHours(start, stop, false);
+
+  const from = at('excavation_start') || at('pipe_start') || at('backfill_start');
+  const to = at('excavation_end') || at('pipe_end') || at('backfill_end');
+  const stations = from && to ? `${from} to ${to}` : (from || to || '');
+
+  const prior = existing.find(
+    (a) => (a as unknown as { interview_pass?: number }).interview_pass === 1,
+  );
+  const manual = existing.filter(
+    (a) => !(a as unknown as { interview_pass?: number }).interview_pass,
+  );
+
+  const dayActivity = {
+    // Keep the id so photos and ordering survive answering the questions again.
+    id: prior?.id || newId(),
+    work_area: at('work_area') || prior?.work_area || 'Daily Progress',
+    stations,
+    summary,
+    manpower: (rows.crew || []).map((r) => ({
+      id: newId(),
+      trade: String(r.trade ?? r.name ?? '').trim(),
+      name: '',
+      qty: num(r.qty, 1),
+      hours,
+      start_time: start,
+      stop_time: stop,
+      company: String(r.company ?? '').trim(),
+      classification: String(r.note ?? '').trim(),
+      is_3rd_party: false,
+      is_extra_work: false,
+      is_consultant: false,
+      locked: false,
+      apply_end_time: true,
+    })).filter((r) => r.trade),
+    equipment: (rows.equipment || []).map((r) => ({
+      id: newId(),
+      name: String(r.name ?? r.trade ?? '').trim(),
+      description: String(r.note ?? '').trim(),
+      qty: num(r.qty, 1),
+      hours,
+      start_time: start,
+      stop_time: stop,
+      company: String(r.company ?? '').trim(),
+      is_3rd_party: false,
+      is_extra_work: false,
+      is_consultant: false,
+      is_rental: false,
+      locked: false,
+      apply_end_time: true,
+    })).filter((r) => r.name),
+    extra_work_manpower: prior?.extra_work_manpower || [],
+    extra_work_equipment: prior?.extra_work_equipment || [],
+    consultant_manpower: prior?.consultant_manpower || [],
+    interview_pass: 1,
+  } as unknown as Activity;
+
+  return [dayActivity, ...manual];
 }
