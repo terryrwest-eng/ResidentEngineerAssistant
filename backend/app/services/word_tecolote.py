@@ -30,6 +30,39 @@ from app.services.report_profiles import TECOLOTE_EQUIPMENT_GROUPS, get_profile
 logger = logging.getLogger(__name__)
 
 
+
+def _weather_line(report: dict) -> str:
+    """
+    The weather, from general info first and the captured summary second.
+
+    General info is where every other view reads it and where the inspector can
+    correct it, so a hand-edited temperature must win over the reading captured
+    when the report was opened.
+    """
+    gen = report.get('general') or {}
+    high = str(gen.get('temperature_high') or '').strip()
+    low = str(gen.get('temperature_low') or '').strip()
+    wind = str(gen.get('wind_info') or '').strip()
+    sky = gen.get('sky_conditions') or []
+    condition = ''
+    if isinstance(sky, list) and sky:
+        first = sky[0]
+        condition = str((first or {}).get('label') or '').strip() if isinstance(first, dict) else str(first)
+
+    bits = []
+    if condition:
+        bits.append(condition)
+    if high and low:
+        bits.append(f'{low}-{high}F')
+    elif high:
+        bits.append(f'{high}F')
+    if wind:
+        bits.append(wind)
+
+    if bits:
+        return ' - '.join(bits)
+    return str((report.get('weather') or {}).get('summary') or '').strip()
+
 def _fmt_date(raw: str) -> str:
     try:
         return datetime.strptime(raw, '%Y-%m-%d').strftime('%m-%d-%Y') if raw else ''
@@ -334,7 +367,7 @@ def build_tecolote_content(report: dict) -> dict[str, Any]:
          answers.get('shift_start') or answers.get('start_time') or gen.get('start_time', '')),
         ('Contractor', gen.get('contractor') or profile.contractor),
     ]
-    weather = (report.get('weather') or {}).get('summary', '')
+    weather = _weather_line(report)
     if weather:
         header.append(('Weather', weather))
 

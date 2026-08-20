@@ -144,12 +144,16 @@ export function NewReportPage() {
   // this, walking the questions again on an existing report would start from a
   // blank sheet and re-ask everything already answered.
   useEffect(() => {
-    if (!report) return;
+    if (!report?.id) return;
     const saved = report.interview;
-    if (saved) {
-      setAnswers((prev) => (Object.keys(prev).length ? prev : saved.answers || {}));
-      setAnswerRows((prev) => (Object.keys(prev).length ? prev : saved.rows || {}));
-      if (saved.profile) setProfileKey((prev) => prev || saved.profile);
+    if (saved?.answers) {
+      // Overwrite, do not merge. These are THIS report's answers, and the
+      // report just changed - keeping whatever was in state is how another
+      // report's answers leak in, and how a report answered on the phone opens
+      // blank on the computer because stale empty state won the guard.
+      setAnswers(saved.answers);
+      setAnswerRows(saved.rows || {});
+      if (saved.profile) setProfileKey(saved.profile);
       return;
     }
 
@@ -259,7 +263,28 @@ export function NewReportPage() {
         onPicked={(profile, weather: WeatherSnapshot | null) => {
           setProfileKey(profile.key);
           updateGeneral({ project_name: profile.project_name });
-          if (weather) setWeather(weather);
+          if (weather) {
+            setWeather(weather);
+            // ALSO write it into general info. The General Info panel, the
+            // classic export and the resource views all read temperature, wind
+            // and sky from there — storing only the summary blob meant the
+            // weather was captured and then invisible everywhere except the
+            // Tecolote header.
+            const w = (weather.raw || {}) as Record<string, unknown>;
+            const sky = w.sky_condition_id
+              ? [{
+                  id: String(w.sky_condition_id),
+                  label: String(w.condition || ''),
+                  emoji: String(w.emoji || ''),
+                }]
+              : [];
+            updateGeneral({
+              temperature_high: String(w.temperature_high || ''),
+              temperature_low: String(w.temperature_low || ''),
+              wind_info: String(w.wind_info || ''),
+              ...(sky.length ? { sky_conditions: sky } : {}),
+            });
+          }
           setFlowStage('interview');
         }}
       />

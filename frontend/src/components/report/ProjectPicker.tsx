@@ -177,10 +177,21 @@ async function fetchWeather(reportDate: string, fallbackZip?: string): Promise<W
       ? await weatherApi.fetchByZip(fallbackZip, reportDate)
       : (() => { throw new Error('no device location and no ZIP in Settings'); })();
 
+  // Built from the fields the weather API actually returns. It was reading
+  // "temperature" and "conditions", which do not exist in the response, so the
+  // line always fell through to the placeholder and no number ever reached the
+  // report.
   const w = data as unknown as Record<string, unknown>;
-  const bits = [w.temperature, w.conditions, w.summary]
-    .filter((v) => typeof v === 'string' || typeof v === 'number')
-    .map(String);
+  const high = String(w.temperature_high ?? '').trim();
+  const low = String(w.temperature_low ?? '').trim();
+  const condition = String(w.condition ?? '').trim();
+  const wind = String(w.wind_info ?? '').trim();
+
+  const bits: string[] = [];
+  if (condition) bits.push(condition);
+  if (high && low) bits.push(`${low}–${high}°F`);
+  else if (high) bits.push(`${high}°F`);
+  if (wind) bits.push(wind);
 
   return { summary: bits.join(' · ') || 'Weather captured', raw: data };
 }
