@@ -211,44 +211,66 @@ TECOLOTE_SECTIONS = [
             # ── DURING ───────────────────────────────────────────────────────
             Question(
                 'joints_installed',
-                'Which joints went in? Give each joint number with its start and end station.',
+                'Which joints of pipe were laid? Give each joint number with its start and end station.',
                 'segments', phase='during',
-                help='Say them one after another — "MK-119, 143+98.31 to 143+59.06, next one..."',
+                help='A joint is one piece of pipe. Say them one after another.',
                 example='MK-119: Sta 143+98.31 to Sta 143+59.06',
                 extract_hint=(
-                    'One entry per joint: the joint or mark number, its start station and '
-                    'its end station. Keep every figure exactly as spoken. Never '
-                    'interpolate a joint that was not named, and never infer a station '
-                    'from the one before it.'
+                    'A JOINT here is one piece of pipe, and the joint number is that '
+                    'piece\'s number. One entry per joint: the joint number, its start '
+                    'station and its end station. Keep every figure exactly as spoken. '
+                    'Never interpolate a joint that was not named, and never infer a '
+                    'station from the one before it. Do NOT put welds in this answer - '
+                    'welds are numbered separately and asked about next.'
                 ),
-                print_label='Joints installed',
+                print_label='Joints of pipe laid',
             ),
             Question(
                 'welds_made',
-                'Where were welds made, and which two joints did each one tie together?',
+                'Which welds were made? Give each weld number, its station, and the two joints it ties together.',
                 'segments', phase='during',
-                example='Sta 143+59.06 — MK-119 to MK-120, interior and exterior',
+                help='Welds carry their own numbers — not the joint numbers.',
+                example='W-118: Sta 143+59.06, joins MK-119 to MK-120, interior and exterior',
                 extract_hint=(
-                    'One entry per weld: the station, and the two joints it joined. Note '
-                    'interior or exterior if it was said. Do not assume a weld between '
-                    'two joints just because they are adjacent.'
+                    'A WELD has its OWN number, which is NOT a joint number. One entry '
+                    'per weld: the weld number, the station, and the two pipe joints it '
+                    'connects. Note interior or exterior if it was said. Never label a '
+                    'weld with a joint number, and never assume two joints were welded '
+                    'just because they are adjacent.'
                 ),
                 print_label='Welds made',
             ),
             Question(
-                'joints_patched',
-                'Which joints were patched or mortared, and at what stations?',
+                'welds_grouted',
+                'Which welds were grouted?',
                 'segments', phase='during',
-                example='MK-118 at Sta 144+38 — interior mortar',
-                extract_hint='One entry per joint patched: joint number, station, interior or exterior.',
-                print_label='Joints patched',
+                help='Grouting is what follows a weld.',
+                example='W-118 at Sta 143+59.06',
+                extract_hint=(
+                    'Grouting is done AFTER a weld, at the joint the weld connected. One '
+                    'entry per weld grouted: the weld number and the station. If the '
+                    'speaker identified it by the joints rather than a weld number, keep '
+                    'exactly what they said rather than converting it.'
+                ),
+                print_label='Welds grouted',
             ),
             Question(
-                'joints_grouted',
-                'Which joints were grouted, and at what stations?',
-                'segments', phase='during',
-                extract_hint='One entry per joint grouted: joint number and station.',
-                print_label='Joints grouted',
+                'patching_done',
+                'Was any patching needed — grout that cracked or came up deficient?',
+                'yesno', phase='during',
+            ),
+            Question(
+                'patching_detail',
+                'What was patched, where, and what was wrong with it?',
+                'segments', gate='patching_done', phase='during',
+                example='W-116 at Sta 144+38 — cracked grout, interior, repaired',
+                extract_hint=(
+                    'Patching is a REPAIR of grout that cracked or was deficient - it is '
+                    'not a step every weld gets. One entry per patch: what was patched '
+                    '(weld number or location), the station, and the defect that caused '
+                    'it. Record the defect as observed. Do not attribute cause or fault.'
+                ),
+                print_label='Patching',
             ),
             Question(
                 'bedding_placed',
@@ -339,10 +361,10 @@ TECOLOTE_SECTIONS = [
                 print_label='Pipe installation ended at',
             ),
             Question(
-                'joints_count', 'How many joints were installed today?',
+                'joints_count', 'How many joints of pipe were laid today?',
                 'text', phase='end',
                 extract_hint='A number only. If it was not stated, leave it empty rather than counting for them.',
-                print_label='Total joints installed',
+                print_label='Total joints of pipe laid',
             ),
             Question(
                 'welds_count', 'How many welds were made?',
@@ -351,9 +373,15 @@ TECOLOTE_SECTIONS = [
                 print_label='Total welds made',
             ),
             Question(
-                'grouted_count', 'How many joints were grouted?',
+                'grouted_count', 'How many welds were grouted?',
                 'text', phase='end',
-                print_label='Total joints grouted',
+                print_label='Total welds grouted',
+            ),
+            Question(
+                'patches_count', 'How many patches were made?',
+                'text', phase='end',
+                print_label='Total patches made',
+                extract_hint='A number only. Leave empty if it was not stated.',
             ),
             Question(
                 'footage_installed', 'How much pipe went in today, in linear feet?',
