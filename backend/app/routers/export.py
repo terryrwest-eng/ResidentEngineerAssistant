@@ -292,3 +292,23 @@ async def get_pmweb_full(report_id: str):
         "resources": resources,
         "activities": activities_rows,
     }
+
+
+@router.get("/{report_id}/preview")
+async def get_report_preview(report_id: str):
+    """
+    What the Word document will say, before it is generated.
+
+    Built by the SAME code that builds the document, so the inspector reviews
+    the real content rather than a second rendering that can drift from it.
+    """
+    report = await get_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+
+    try:
+        from app.services.word import build_report_preview
+        return build_report_preview(report)
+    except Exception:
+        logger.exception(f"Preview generation failed for report {report_id}")
+        raise HTTPException(status_code=500, detail="Failed to build the preview")

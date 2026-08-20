@@ -312,3 +312,55 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
         f'({len(profile.sections)} sections)'
     )
     return stream
+
+
+def build_tecolote_content(report: dict) -> dict[str, Any]:
+    """
+    The report's content, before any Word formatting.
+
+    Both the document and the on-screen preview read this, so what the
+    inspector checks is what the owner receives. A preview built separately
+    drifts from the document the first time either is edited, and the drift is
+    invisible until someone compares a printed report against the screen it was
+    approved on.
+    """
+    gen = report.get('general', {}) or {}
+    profile = get_profile(gen.get('project_name', ''))
+    answers = _answers(report)
+
+    header = [
+        ('Report Date', _fmt_date(gen.get('report_date', ''))),
+        ('Resident Engineer (RE) Arrival Time',
+         answers.get('shift_start') or answers.get('start_time') or gen.get('start_time', '')),
+        ('Contractor', gen.get('contractor') or profile.contractor),
+    ]
+    weather = (report.get('weather') or {}).get('summary', '')
+    if weather:
+        header.append(('Weather', weather))
+
+    sections: list[dict[str, Any]] = []
+    for section in profile.sections:
+        if section.id == 'labor':
+            lines = [
+                f'{trade}: {qty}' + (f' ({note})' if note else '')
+                for trade, qty, note in _aggregate_crew(report)
+            ]
+        elif section.id == 'equipment':
+            lines = [f'{label}: {", ".join(items)}' for label, items in _group_equipment(report)]
+        else:
+            lines = _section_body(report, section)
+
+        sections.append({
+            'number': section.number,
+            'title': section.title,
+            'lines': lines or [section.empty_statement],
+            # The preview marks these differently so a section that genuinely
+            # had nothing is not mistaken for one the inspector forgot.
+            'is_empty': not lines,
+        })
+
+    return {
+        'title': profile.title,
+        'header': [{'label': k, 'value': str(v or '')} for k, v in header],
+        'sections': sections,
+    }

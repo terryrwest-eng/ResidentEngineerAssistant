@@ -847,3 +847,83 @@ def generate_report_document(report: dict) -> io.BytesIO:
         return generate_tecolote_document(report)
 
     return generate_word_document(report)
+
+
+def build_report_preview(report: dict) -> dict:
+    """
+    Exactly what the document will contain, before Word formatting.
+
+    Read by the on-screen preview so the inspector checks the real content
+    rather than a second rendering of it. A preview built independently drifts
+    from the document the first time either changes, and the drift stays
+    invisible until someone compares a printed report against the screen it was
+    approved on.
+    """
+    from app.services.report_profiles import get_profile
+
+    gen = report.get("general") or {}
+    profile = get_profile(gen.get("project_name") or "")
+
+    if profile.renderer == "tecolote":
+        from app.services.word_tecolote import build_tecolote_content
+        return build_tecolote_content(report)
+
+    # ── Classic per-activity layout ──
+    header = [
+        {"label": "Report Date", "value": gen.get("report_date", "")},
+        {"label": "Project", "value": gen.get("project_name", "")},
+        {"label": "Resident Engineer", "value": gen.get("resident_engineer", "")},
+        {"label": "Inspector", "value": gen.get("inspector_name", "")},
+        {"label": "Shift", "value": f"{gen.get('start_time', '')} to {gen.get('end_time', '')}".strip(" to")},
+    ]
+
+    sections = []
+    if (gen.get("notes") or "").strip():
+        sections.append({
+            "number": 0, "title": "General Notes",
+            "lines": [l.strip() for l in gen["notes"].split("\n") if l.strip()],
+            "is_empty": False,
+        })
+
+    activities = report.get("activities") or []
+    for i, act in enumerate(activities, 1):
+        lines = []
+        if act.get("stations"):
+            lines.append(f"Stations: {act['stations']}")
+        lines.extend(
+            line.strip() for line in str(act.get("summary") or "").split("\n") if line.strip()
+        )
+        for label, key, field in (
+            ("Manpower", "manpower", "trade"),
+            ("Equipment", "equipment", "name"),
+        ):
+            rows = act.get(key) or []
+            parts = []
+            for row in rows:
+                name = str(row.get(field) or "").strip()
+                if not name:
+                    continue
+                qty = row.get("qty") or ""
+                hours = row.get("hours") or ""
+                bit = f"{qty} {name}".strip()
+                if hours:
+                    bit += f" @ {hours}h"
+                parts.append(bit)
+            if parts:
+                lines.append(f"{label}: {', '.join(parts)}")
+
+        sections.append({
+            "number": i,
+            "title": act.get("work_area") or f"Activity {i}",
+            "lines": lines or ["Nothing recorded for this activity."],
+            "is_empty": not lines,
+        })
+
+    if not activities:
+        sections.append({
+            "number": 1, "title": "Work Performed",
+            "lines": ["No activities have been added to this report yet."],
+            "is_empty": True,
+        })
+
+    return {"title": "Daily Inspection Report", "header": header, "sections": sections}

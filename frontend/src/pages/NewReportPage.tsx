@@ -24,6 +24,7 @@ import { SectionNav, type NavSection } from '@/components/report/SectionNav';
 import { ProjectPicker, type WeatherSnapshot } from '@/components/report/ProjectPicker';
 import { ResumeOrStart, type ExistingReport } from '@/components/report/ResumeOrStart';
 import { InterviewSummary } from '@/components/report/InterviewSummary';
+import { ReportPreview } from '@/components/report/ReportPreview';
 import { interviewApi } from '@/lib/interviewApi';
 import { GuidedInterview } from '@/components/report/GuidedInterview';
 import { getProfileKey, buildInterviewState, materializeActivities } from '@/lib/reportFlow';
@@ -52,6 +53,7 @@ import {
   Clock,
   Sparkles,
   Mic,
+  FileText,
 } from 'lucide-react';
 
 export function NewReportPage() {
@@ -94,6 +96,7 @@ export function NewReportPage() {
   const [fallbackZip, setFallbackZip] = useState('');
   /** Question to open the interview on, when a summary line is tapped. */
   const [jumpTo, setJumpTo] = useState('');
+  const [showPreview, setShowPreview] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [answerRows, setAnswerRows] = useState<Record<string, Record<string, unknown>[]>>({});
 
@@ -368,11 +371,22 @@ export function NewReportPage() {
         />
       )}
 
+      {showPreview && report?.id && (
+        <ReportPreview
+          reportId={report.id}
+          // Save first: the preview is built from the SAVED report, so without
+          // this it would show the last thing written to disk rather than what
+          // is on screen — and read as though an edit had been lost.
+          onBeforeOpen={() => saveReport()}
+          onClose={() => setShowPreview(false)}
+        />
+      )}
+
       {/* Walk the format again on a report already started - the usual reason
           is another location turning up after the first pass. Saved answers are
           restored, so it continues rather than re-asking. */}
       {report && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-sm)' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 'var(--space-sm)' }}>
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => setFlowStage('interview')}
@@ -380,6 +394,15 @@ export function NewReportPage() {
           >
             <Mic size={14} /> Walk me through it
           </button>
+          {report?.id && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowPreview(true)}
+              title="Read the report exactly as it will print, before making the Word file"
+            >
+              <FileText size={14} /> Preview report
+            </button>
+          )}
         </div>
       )}
 
