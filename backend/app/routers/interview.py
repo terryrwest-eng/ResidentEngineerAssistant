@@ -128,12 +128,12 @@ def _schema_for(kind: str) -> str:
         )
     if kind == 'crew':
         return (
-            '{"rows": [{"trade": "Operator", "qty": 2, "note": ""}], '
+            '{"rows": [{"trade": "Operator", "qty": 2, "hours": 10, "note": ""}], '
             '"value": "", "missing": []}'
         )
     if kind == 'equipment':
         return (
-            '{"rows": [{"name": "CAT 335 Excavator", "qty": 2, "note": "active"}], '
+            '{"rows": [{"name": "CAT 335 Excavator", "qty": 2, "hours": 10, "note": "active"}], '
             '"value": "", "missing": []}'
         )
     if kind == 'list':
@@ -201,6 +201,9 @@ def _value_from_rows(kind: str, rows: list[dict[str, Any]]) -> str:
             n = qty(r)
             note = str(r.get('note', '') or '').strip()
             line = f'{n} {trade}' if n else trade
+            hours = str(r.get('hours') or '').strip()
+            if hours and hours not in ('0', '0.0'):
+                line += f' @ {hours}h'
             if r.get('name'):
                 line += f" ({r['name']})"
             elif note:

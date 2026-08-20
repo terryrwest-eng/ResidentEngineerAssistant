@@ -237,7 +237,7 @@ export function materializeActivities(
         trade: String(r.trade ?? r.name ?? '').trim(),
         name: String(r.person ?? '').trim(),
         qty: num(r.qty, 1),
-        hours,
+        hours: num(r.hours, hours),
         start_time: start,
         stop_time: stop,
         company: String(r.company ?? '').trim(),
@@ -253,7 +253,7 @@ export function materializeActivities(
         name: String(r.name ?? r.trade ?? '').trim(),
         description: String(r.note ?? '').trim(),
         qty: num(r.qty, 1),
-        hours,
+        hours: num(r.hours, hours),
         start_time: start,
         stop_time: stop,
         company: String(r.company ?? '').trim(),
@@ -405,7 +405,10 @@ function buildDayActivity(
       trade: String(r.trade ?? r.name ?? '').trim(),
       name: '',
       qty: num(r.qty, 1),
-      hours,
+      // Hours stated for THAT craft win. A crew rarely all works the same
+      // hours, and stamping the shift length on every row makes up numbers for
+      // the ones who did not.
+      hours: num(r.hours, hours),
       start_time: start,
       stop_time: stop,
       company: String(r.company ?? '').trim(),
@@ -421,7 +424,7 @@ function buildDayActivity(
       name: String(r.name ?? r.trade ?? '').trim(),
       description: String(r.note ?? '').trim(),
       qty: num(r.qty, 1),
-      hours,
+      hours: num(r.hours, hours),
       start_time: start,
       stop_time: stop,
       company: String(r.company ?? '').trim(),

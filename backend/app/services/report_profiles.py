@@ -521,14 +521,18 @@ TECOLOTE_SECTIONS = [
             ),
             Question(
                 'crew',
-                'Who was on site today — how many foremen, operators and laborers?',
+                'Who was on site, how many of each craft, and what hours did they work?',
                 'crew', required=True, phase='start',
-                help='Say part-time as you would write it, e.g. "one foreman, half time".',
-                example='Foreman: 1 (Half-Time), Operators: 2, Laborers: 5',
+                help='Say hours per craft if they differ. One set of hours is fine if they match.',
+                example='1 foreman 10 hours, 2 operators 10 hours, 5 laborers 8 hours',
                 extract_hint=(
-                    'One row per trade with a count. Keep any part-time note attached to '
-                    'the trade it belongs to. Never round a headcount or invent a trade '
-                    'that was not named.'
+                    'One row per craft: the craft, the count, and the hours for THAT '
+                    'craft when hours were given. If one set of hours was stated for '
+                    'everyone, put it on every row. If hours were not stated at all, '
+                    'leave hours out - never carry a number across from another craft '
+                    'and never invent one. '
+                    'Add a note ONLY when the speaker actually described one, such as '
+                    'half time or a partial shift. Never add a note they did not say.'
                 ),
             ),
             Question(
