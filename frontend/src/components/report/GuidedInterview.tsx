@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Mic, Square, Check, X, ChevronRight, ChevronLeft, Loader2,
-  AlertCircle, SkipForward,
+  AlertCircle, SkipForward, List,
 } from 'lucide-react';
 import { useMicLevel } from '@/hooks/useMicLevel';
 import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
@@ -87,10 +87,21 @@ function listItems(
   rowsForQuestion: Record<string, unknown>[] | undefined,
   value: string | undefined,
 ): string[] {
-  const fromRows = (rowsForQuestion || [])
-    .map((r) => String(r.item ?? r.name ?? r.value ?? '').trim())
-    .filter(Boolean);
-  if (fromRows.length) return fromRows;
+  // The TEXT wins when there is any, and the rows are only a fallback.
+  //
+  // Rows are captured once from a recording; the text is what the inspector can
+  // see and edit. Preferring rows meant correcting a location on screen changed
+  // nothing - the interview carried on asking about the place that had been
+  // typed over, because the stale rows still drove the labels. Since every
+  // structured answer now renders its rows back into the text, the two agree
+  // after a recording, and disagree only when a human has edited it - in which
+  // case the human is right.
+  const typed = (value || '').trim();
+  if (!typed) {
+    return (rowsForQuestion || [])
+      .map((r) => String(r.item ?? r.name ?? r.value ?? '').trim())
+      .filter(Boolean);
+  }
 
   // Newline or semicolon only - NOT comma. Location names contain commas
   // ("Morena Blvd, northbound"), and splitting on them turns one location into
@@ -127,6 +138,7 @@ export function GuidedInterview({
   const [draft, setDraft] = useState('');
   const [missing, setMissing] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showJump, setShowJump] = useState(false);
 
   const mic = useMicLevel('interview');
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -374,6 +386,42 @@ export function GuidedInterview({
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: 'var(--space-md)' }}>
+      {/* Jump anywhere. Back and Skip move one step; this moves to any question
+          in either direction, which is what an inspector actually needs when
+          something is remembered three questions later. Answered ones are
+          ticked, so it doubles as the list of what is still open. */}
+      {showJump && (
+        <div style={{
+          maxHeight: 320, overflowY: 'auto', marginBottom: 'var(--space-md)',
+          border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)',
+        }}>
+          {asked.map((item, i) => {
+            const done = (answers[item.key] || '').trim();
+            return (
+              <button
+                key={item.key}
+                onClick={() => { setIndex(i); setShowJump(false); }}
+                style={{
+                  display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%',
+                  padding: '7px 10px', textAlign: 'left', border: 'none',
+                  borderTop: i ? '1px solid var(--color-border)' : 'none',
+                  background: i === index ? 'var(--color-surface-active)' : 'transparent',
+                  cursor: 'pointer', fontSize: '0.75rem',
+                }}
+              >
+                <span style={{ width: 14, flexShrink: 0, color: 'var(--color-success)' }}>
+                  {done ? <Check size={12} /> : null}
+                </span>
+                <span style={{ flex: 1, opacity: done ? 0.65 : 1 }}>
+                  {item.question.prompt}
+                  {item.label ? <em style={{ opacity: 0.7 }}> — {item.label}</em> : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Progress — how much of the format is covered, not how many taps remain */}
       <div style={{ marginBottom: 'var(--space-md)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
@@ -381,9 +429,17 @@ export function GuidedInterview({
             {PHASE_LABEL[current.question.phase] || `${current.section.number}. ${current.section.title}`}
             {current.label ? ` — ${current.label}` : ''}
           </span>
-          <span style={{ color: 'var(--color-text-tertiary)' }}>
-            {answered} of {asked.length} answered
-          </span>
+          <button
+            onClick={() => setShowJump((v) => !v)}
+            title="Jump to any question"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4, border: 'none',
+              background: 'transparent', cursor: 'pointer', padding: 0,
+              color: 'var(--color-text-tertiary)', fontSize: '0.75rem',
+            }}
+          >
+            <List size={12} /> {answered} of {asked.length} answered
+          </button>
         </div>
         <div style={{ height: 4, background: 'var(--color-surface-active)', borderRadius: 999 }}>
           <div style={{

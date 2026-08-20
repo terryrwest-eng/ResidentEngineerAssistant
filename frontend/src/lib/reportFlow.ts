@@ -255,10 +255,21 @@ function splitList(
   rowsForQuestion: Record<string, unknown>[] | undefined,
   value: string | undefined,
 ): string[] {
-  const fromRows = (rowsForQuestion || [])
-    .map((r) => String(r.item ?? r.name ?? r.value ?? '').trim())
-    .filter(Boolean);
-  if (fromRows.length) return fromRows;
+  // The TEXT wins when there is any, and the rows are only a fallback.
+  //
+  // Rows are captured once from a recording; the text is what the inspector can
+  // see and edit. Preferring rows meant correcting a location on screen changed
+  // nothing - the interview carried on asking about the place that had been
+  // typed over, because the stale rows still drove the labels. Since every
+  // structured answer now renders its rows back into the text, the two agree
+  // after a recording, and disagree only when a human has edited it - in which
+  // case the human is right.
+  const typed = (value || '').trim();
+  if (!typed) {
+    return (rowsForQuestion || [])
+      .map((r) => String(r.item ?? r.name ?? r.value ?? '').trim())
+      .filter(Boolean);
+  }
   return (value || '')
     .split(/\r?\n|;/)
     .map((p) => p.replace(/^[-•\d.)\s]+/, '').trim())
