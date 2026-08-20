@@ -213,6 +213,20 @@ def _equipment_line(name: str, qty: int, note: str) -> str:
     return f'{text} ({note})' if note else text
 
 
+def _composed(report: dict) -> dict[str, str]:
+    """
+    The written sections, keyed by section id.
+
+    Present once the interview has been composed. The report is these words -
+    the raw answers are kept only so the wording can be rebuilt later.
+    """
+    sections = (report.get('interview') or {}).get('composed') or []
+    return {
+        str(s.get('id', '')): str(s.get('body', '') or '').strip()
+        for s in sections if isinstance(s, dict)
+    }
+
+
 def _section_body(report: dict, section) -> list[str]:
     """
     The lines printed under one section heading.
@@ -221,6 +235,12 @@ def _section_body(report: dict, section) -> list[str]:
     the questions were asked, so the printed report follows the format rather
     than the order things happened to be entered.
     """
+    # Written prose wins over the answers. Printing "Label: answer" for each
+    # question is a question-and-answer display, not a report.
+    written = _composed(report).get(section.id, '')
+    if written:
+        return [line.rstrip() for line in written.split('\n') if line.strip()]
+
     answers = _answers(report)
     lines: list[str] = []
 

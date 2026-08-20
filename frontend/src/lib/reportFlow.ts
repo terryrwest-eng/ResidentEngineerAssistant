@@ -44,6 +44,9 @@ export interface InterviewState {
   profile: string;
   answers: Record<string, string>;
   rows: Record<string, Record<string, unknown>[]>;
+  /** The written report, composed from the answers. Kept alongside the raw
+   *  answers so the wording can be rebuilt if the format changes. */
+  composed?: { id: string; number: number; title: string; body: string }[];
   /** Marked once the inspector reaches the end, so an abandoned run is
    *  distinguishable from a finished one that genuinely had little in it. */
   completed: boolean;
@@ -54,8 +57,9 @@ export function buildInterviewState(
   answers: Record<string, string>,
   rows: Record<string, Record<string, unknown>[]>,
   completed: boolean,
+  composed?: { id: string; number: number; title: string; body: string }[],
 ): InterviewState {
-  return { profile, answers, rows, completed };
+  return { profile, answers, rows, completed, ...(composed ? { composed } : {}) };
 }
 
 // ============================================
@@ -163,12 +167,13 @@ export function materializeActivities(
   answers: Record<string, string>,
   rows: Record<string, Record<string, unknown>[]>,
   existing: Activity[],
+  composed?: { id: string; number: number; title: string; body: string }[],
 ): Activity[] {
   const repeating = sections.find((s) => s.repeats && s.repeat_from);
   // A format with no repeating section describes ONE day, not several
   // locations — so it becomes one activity carrying everything answered.
   // Returning early here is what left Tecolote with no activity at all.
-  if (!repeating) return buildDayActivity(sections, answers, rows, existing);
+  if (!repeating) return buildDayActivity(sections, answers, rows, existing, composed);
 
   const locations = splitList(
     rows[repeating.repeat_from as string],
@@ -314,11 +319,24 @@ function buildDayActivity(
   answers: Record<string, string>,
   rows: Record<string, Record<string, unknown>[]>,
   existing: Activity[],
+  composed?: { id: string; number: number; title: string; body: string }[],
 ): Activity[] {
   const at = (id: string) => (answers[id] || '').trim();
 
+  // Composed prose wins. The answers laid out with a label in front of each one
+  // is a question-and-answer display, not a report; the composed version is the
+  // day written up. Falling back to the labelled answers means a failed compose
+  // still produces something readable rather than nothing.
   const lines: string[] = [];
-  for (const section of sections) {
+  if (composed?.length) {
+    for (const section of composed) {
+      lines.push(`${section.number}. ${section.title}`);
+      lines.push(...section.body.split('\n').map((l) => l.replace(/\s+$/, '')).filter(Boolean));
+      lines.push('');
+    }
+  }
+
+  for (const section of composed?.length ? [] : sections) {
     // Crew and equipment become ROWS, not prose — they belong in the resource
     // tables where they can be counted, not buried in a summary.
     if (section.id === 'labor' || section.id === 'equipment') continue;

@@ -84,6 +84,14 @@ export interface AnswerResult {
   reason: string;
 }
 
+export interface ComposedSection {
+  id: string;
+  number: number;
+  title: string;
+  /** The written section — prose, not the answers echoed back. */
+  body: string;
+}
+
 export const interviewApi = {
   /** Every project's format — drives the picker that opens a new report. */
   profiles: async (): Promise<ProfileSummary[]> => {
@@ -94,6 +102,21 @@ export const interviewApi = {
   /** One format in full: sections, questions, prompts, empty statements. */
   profile: async (key: string): Promise<InterviewProfile> => {
     const res = await api.get(`/interview/profile/${key}`);
+    return res.data;
+  },
+
+  /**
+   * Write the report from the answers.
+   *
+   * The step between answering and having a document: the answers are notes,
+   * this composes them into labelled sub-topics in the inspector's voice.
+   */
+  compose: async (params: {
+    profile: string;
+    answers: Record<string, string>;
+    report_date?: string;
+  }): Promise<{ sections: ComposedSection[]; status: string; reason: string }> => {
+    const res = await api.post('/interview/compose', params, { timeout: 180000 });
     return res.data;
   },
 

@@ -347,3 +347,184 @@ async def answer_question(request: AnswerRequest, _user=Depends(require_user)):
         status='ok' if (value or rows) else 'empty',
         reason='' if (value or rows) else 'Nothing in that recording answered this question.',
     )
+
+
+# ============================================
+# Compose — answers in, a written report out
+# ============================================
+
+COMPOSE_PROMPT = """You are the Resident Engineer writing today's daily report.
+
+You are given the answers to the questions the app asked during the shift. Your
+job is to WRITE THE REPORT from them. This is composition, not transcription:
+the answers are your notes, and the report is the document that goes to the
+owner.
+
+HOW EACH SECTION READS
+Group what happened into labelled sub-topics and write each as prose. This is
+the shape:
+
+  Trench Excavation: Continued trench excavation and advanced the trench line
+  from Sta 143+98.80 to Sta 142+39.77. Perched water was encountered from Sta
+  143+98.31 to Sta 143+59.06.
+  Shoring Installation: Trench shoring boxes were installed progressively as
+  excavation advanced. Guardrails were installed on the boxes.
+  Pipe Installation: Placed SE-30 sand bedding to grade and installed four
+  36-inch water main segments:
+  MK-119: Sta 143+98.31 to Sta 143+59.06
+  MK-120: Sta 143+59.08 to Sta 143+19.32
+
+Note what that is doing:
+- A short label, then complete sentences. NOT "Question: answer".
+- Related answers are merged into one sub-topic. Starting station, ending
+  station and what was dug are ONE paragraph about excavation, not three lines.
+- Lists of numbered items - pipe joints, welds - stay as their own lines under
+  the sub-topic that introduces them.
+- The label is the work, not the question that was asked.
+
+VOICE - THIS IS THE PART THAT MATTERS MOST
+The answers were spoken quickly in the field and read like it. The report does
+not. Rewrite every one of them:
+- Third person, past tense. NEVER "I", "we", "my" or "our".
+  "i wasnt on site when welding finished" becomes "Welding was not complete at
+  the end of the inspection period."
+  "backfill didnt take place while i was on site" becomes "No backfilling was
+  observed during the inspection period."
+- Fix spelling and grammar. "there trucks" is "their trucks", "didnt" is
+  "did not". Never change a technical term, a proper noun or an abbreviation.
+- Plain English. No "delve", "it is worth noting", "seamless", "robust",
+  "leverage", "furthermore", "moreover", and never open with "additionally" or
+  "overall". No "utilized" for used, "commenced" for started, "prior to" for
+  before.
+- Do NOT grade the work. Never "properly", "successfully", "good", "adequate".
+  Stating that work conformed to a named plan, spec or submittal IS the
+  inspection finding and is expected - "installed per the approved plan" is
+  correct and must be kept.
+- Stations as "Sta XX+XX" keeping every decimal. Times 12-hour with AM/PM.
+  Acronyms stay acronyms - BMP, never Best Management Practice.
+
+WHAT YOU MUST NOT DO
+- Do NOT invent. Every station, quantity, count, name, time and material must
+  come from the answers. If something was not answered, it does not appear.
+- Do NOT report an absence as an event. If an answer says something did not
+  happen, or was not observed, say so plainly in one sentence - do not build a
+  paragraph around it.
+- Do NOT repeat a contractor's claim as your finding. Report the fact - a crew
+  stood by, a conflict was hit - and leave out the argument.
+- Do NOT pad. A section with two facts is two sentences. Length is not quality.
+
+EMPTY SECTIONS
+If a section has no answers, or every answer says nothing happened, return the
+empty statement given for it, exactly as provided. Do not write around it.
+
+Return JSON ONLY:
+{"sections": [{"id": "section_id", "body": "the written section"}]}
+
+Use "\n" between lines inside a body. Every section you were given must appear
+exactly once.
+"""
+
+
+class ComposeRequest(BaseModel):
+    profile: str = ''
+    answers: dict[str, Any] = {}
+    report_date: str = ''
+
+
+class ComposedSection(BaseModel):
+    id: str = ''
+    number: int = 0
+    title: str = ''
+    body: str = ''
+
+
+class ComposeResponse(BaseModel):
+    sections: list[ComposedSection] = []
+    status: str = 'ok'
+    reason: str = ''
+
+
+@router.post('/compose', response_model=ComposeResponse)
+async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
+    """
+    Turn the interview answers into a written report.
+
+    The step that was missing. Without it the report was the answers echoed
+    back with a label in front of each one - a question-and-answer display,
+    not a document. The answers are notes; this writes from them.
+
+    Crew and equipment are excluded here: they are rows, printed as counts by
+    the export, and prose about them would duplicate the tables.
+    """
+    profile = get_profile(request.profile)
+    answers = request.answers or {}
+
+    blocks: list[str] = []
+    wanted: list[Any] = []
+    for section in profile.sections:
+        if section.id in ('labor', 'equipment'):
+            continue
+        lines = []
+        for question in section.questions:
+            if question.kind == 'yesno':
+                continue
+            value = str(answers.get(question.id, '') or '').strip()
+            if value:
+                lines.append(f'- {question.prompt}\n  ANSWER: {value}')
+        wanted.append(section)
+        blocks.append(
+            f'SECTION {section.id} — "{section.number}. {section.title}"\n'
+            + (('\n'.join(lines)) if lines
+               else f'(no answers — use exactly: "{section.empty_statement}")')
+            + f'\nEMPTY STATEMENT IF NOTHING HAPPENED: "{section.empty_statement}"'
+        )
+
+    if not blocks:
+        return ComposeResponse(sections=[], status='empty', reason='Nothing was answered.')
+
+    client, model_name = _get_gemini_client()
+    from google.genai import types as genai_types
+
+    prompt = (
+        COMPOSE_PROMPT
+        + f'\n\nREPORT DATE: {request.report_date}\n\nTHE ANSWERS:\n'
+        + '\n\n'.join(blocks)
+    )
+
+    response = _gemini_call_with_retry(
+        client, model_name,
+        contents=[prompt],
+        config=genai_types.GenerateContentConfig(
+            temperature=0.0,
+            thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+            response_mime_type='application/json',
+            max_output_tokens=16384,
+        ),
+    )
+
+    raw = (getattr(response, 'text', None) or '').strip()
+    if not raw:
+        problem = _finish_reason_problem(response)
+        logger.warning(f'[compose] Empty response: {problem}')
+        return ComposeResponse(
+            sections=[], status='failed',
+            reason=problem or 'The report could not be written. Your answers are saved.',
+        )
+
+    data = _clean_json(raw)
+    by_id = {
+        str(item.get('id', '')): str(item.get('body', '') or '').strip()
+        for item in (data.get('sections') or []) if isinstance(item, dict)
+    }
+
+    out = []
+    for section in wanted:
+        # A section the model dropped falls back to its empty statement rather
+        # than vanishing from the report.
+        body = by_id.get(section.id) or section.empty_statement
+        out.append(ComposedSection(
+            id=section.id, number=section.number, title=section.title, body=body,
+        ))
+
+    logger.info(f'[compose] Wrote {len(out)} sections for {request.report_date}')
+    return ComposeResponse(sections=out)

@@ -94,8 +94,17 @@ export function cleanSummaryBullets(text: string | null | undefined): string {
   const cleanedLines: string[] = [];
 
   for (const line of rawLines) {
+    // "1. Work Summary & Pipe Installation" is a section heading, not a list
+    // item. The old strip pattern was a character class matching ONE character,
+    // so it removed the digit and left the dot — printing as ". Work Summary" —
+    // and then bulleted it.
+    if (/^\d+\.\s+\S/.test(line)) {
+      cleanedLines.push(line);
+      continue;
+    }
+
     // Strip leading bullet chars/symbols/numbers if present
-    const content = line.replace(/^[•\-\*\–\d+\.]\s*/, '').trim();
+    const content = line.replace(/^[•\-\*\–]\s*/, '').replace(/^\d+[.)]\s+/, '').trim();
     if (content) {
       cleanedLines.push(`• ${content}`);
     }

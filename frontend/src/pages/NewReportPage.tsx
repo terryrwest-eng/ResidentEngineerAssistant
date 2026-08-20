@@ -315,6 +315,26 @@ export function NewReportPage() {
         onComplete={async () => {
           const key = profileKey || getProfileKey(report);
           setInterview(buildInterviewState(key, answers, answerRows, true));
+
+          // Write the report from the answers. Without this the activity is the
+          // answers echoed back with a label in front of each one - a
+          // question-and-answer display rather than a document.
+          let composed;
+          try {
+            const written = await interviewApi.compose({
+              profile: key,
+              answers,
+              report_date: report?.general?.report_date || '',
+            });
+            if (written.sections?.length) {
+              composed = written.sections;
+              setInterview(buildInterviewState(key, answers, answerRows, true, composed));
+            }
+          } catch (err) {
+            // The answers are saved either way, so nothing is lost - the report
+            // just falls back to the labelled answers until it is rewritten.
+            console.error('[NewReportPage] Could not write the report:', err);
+          }
           // Turn the answers into real activities so the Word export, PMWeb
           // sync and the resource tables all read the data they always have.
           // The interview is a better way to fill the report in, not a second
@@ -322,7 +342,7 @@ export function NewReportPage() {
           try {
             const profile = await interviewApi.profile(key);
             replaceActivities(materializeActivities(
-              profile.sections, answers, answerRows, report?.activities || [],
+              profile.sections, answers, answerRows, report?.activities || [], composed,
             ));
           } catch (err) {
             // The answers are already saved on the report, so nothing is lost —
