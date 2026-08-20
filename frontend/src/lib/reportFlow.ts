@@ -357,8 +357,14 @@ function buildDayActivity(
   // The starting and ending stations are now one answer each, listing whichever
   // operations ran. Take the first line of each for the activity's range and
   // keep the full detail in the summary, where every operation is listed.
-  const firstLine = (id: string) => (at(id).split('
-')[0] || '').trim();
+  // First line, with its operation label stripped. The answer reads
+  // "Excavation: Sta 143+98.80", and the activity wants the station itself —
+  // otherwise the range comes out as "Excavation: Sta X to Excavation: Sta Y".
+  const firstLine = (id: string) => {
+    const line = (at(id).split('\n')[0] || '').trim();
+    const colon = line.indexOf(':');
+    return colon >= 0 ? line.slice(colon + 1).trim() : line;
+  };
   const from = firstLine('starting_stations') || firstLine('excavation_start');
   const to = firstLine('ending_stations') || firstLine('excavation_end');
   const stations = from && to ? `${from} to ${to}` : (from || to || '');
