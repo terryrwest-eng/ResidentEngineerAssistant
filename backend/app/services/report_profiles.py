@@ -380,6 +380,25 @@ TECOLOTE_SECTIONS = [
                 extract_hint='Keep the figure and unit exactly. Never compute it from stations.',
                 print_label='Pipe installed today',
             ),
+            Question(
+                'trench_secured',
+                'How was the trench left, and is dewatering running overnight?',
+                'narrative', phase='end', required=True,
+                example='Trench plated from Sta 143+59 to Sta 142+40; K-rail left in place',
+                extract_hint='Record how the excavation was left and what secured it.',
+            ),
+            Question(
+                'anything_else',
+                'What is planned for tomorrow, and anything else for the record?',
+                'narrative', phase='end',
+                help="Tomorrow's plan, plus whatever you would mention if asked how the day went.",
+                print_label='Looking ahead',
+                extract_hint=(
+                    'Report the plan as what the contractor stated they intend to do, '
+                    'not as a commitment or a schedule finding. Keep anything else said '
+                    'as a separate line.'
+                ),
+            ),
         ],
         empty_statement='No pipe installation or trench excavation was performed this shift.',
     ),
@@ -563,33 +582,7 @@ TECOLOTE_SECTIONS = [
         empty_statement='No contractor equipment was on site this shift.',
     ),
 
-    Section(
-        'close_out', 9, 'End of Shift',
-        [
-            Question(
-                'trench_secured',
-                'How was the trench left, and is dewatering running overnight?',
-                'narrative', phase='end', required=True,
-                example='Trench plated from Sta 143+59 to Sta 142+40; K-rail left in place',
-                extract_hint='Record how the excavation was left and what secured it.',
-            ),
 
-
-            Question(
-                'anything_else',
-                'What is planned for tomorrow, and anything else for the record?',
-                'narrative', phase='end',
-                help="Tomorrow's plan, plus whatever you would mention if asked how the day went.",
-                print_label='Looking ahead',
-                extract_hint=(
-                    'Report the plan as what the contractor stated they intend to do, '
-                    'not as a commitment or a schedule finding. Keep anything else said '
-                    'as a separate line.'
-                ),
-            ),
-        ],
-        empty_statement='Nothing further to report.',
-    ),
 ]
 
 

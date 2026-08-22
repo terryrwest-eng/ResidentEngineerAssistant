@@ -416,6 +416,31 @@ WHAT YOU MUST NOT DO
   stood by, a conflict was hit - and leave out the argument.
 - Do NOT pad. A section with two facts is two sentences. Length is not quality.
 
+IT MUST READ LIKE A REPORT, NOT LIKE THE NOTES
+What you produce is the finished document, and it has to flow:
+- Join related facts into a sentence that reads. "Silt was cleared from the
+  trench floor from Sta 45+14 to Sta 44+72, and trench boxes were installed
+  from Sta 45+28 to Sta 44+58." NOT two stubs on two lines.
+- Complete sentences with real verbs. "backfill - none" is not a sentence.
+  "No backfilling was performed during the inspection period." is.
+- Vary how sentences open. Four in a row starting the same way reads as a form.
+- Say it once. A station that appears in two answers appears once in the
+  writing.
+- Every sentence carries a fact. None exists to introduce, summarise or
+  transition into another one.
+
+DO NOT MIMIC THE SHAPE FOR ITS OWN SAKE
+The sub-topic labels exist because the work has natural groupings, not because
+every line needs a label. If a section holds one thing, write the sentence and
+stop - do not invent a label to make it match the other sections. A short
+section is correct when the day was short on that topic.
+
+PUT EACH FACT IN THE SECTION IT BELONGS TO
+Some questions collect several operations at once - the starting and ending
+stations name excavation, pipe AND backfill together. Route each fact to the
+section that covers it, not the section whose question happened to collect it.
+Backfill stations belong in the backfilling section. A fact appears ONCE.
+
 EMPTY SECTIONS
 If a section has no answers, or every answer says nothing happened, return the
 empty statement given for it, exactly as provided. Do not write around it.
@@ -488,9 +513,19 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     client, model_name = _get_gemini_client()
     from google.genai import types as genai_types
 
+    # Every answer, so a fact collected by one section's question can be routed
+    # to the section that actually covers it — backfill stations arrive in the
+    # combined stations answer but belong in the backfilling section.
+    everything = '\n'.join(
+        f'- {k}: {v}' for k, v in answers.items() if str(v or '').strip()
+    )
+
     prompt = (
         COMPOSE_PROMPT
-        + f'\n\nREPORT DATE: {request.report_date}\n\nTHE ANSWERS:\n'
+        + f'\n\nREPORT DATE: {request.report_date}\n\n'
+        + 'EVERY ANSWER GIVEN TODAY (for routing — never state a fact twice):\n'
+        + everything
+        + '\n\nTHE SECTIONS TO WRITE:\n'
         + '\n\n'.join(blocks)
     )
 
