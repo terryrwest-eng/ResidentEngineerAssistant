@@ -42,7 +42,9 @@ interface GuidedInterviewProps {
   rows: Record<string, Record<string, unknown>[]>;
   onAnswer: (questionId: string, value: string, rows: Record<string, unknown>[]) => void;
   onExit: () => void;
-  onComplete: () => void;
+  /** May be slow — the report is written from the answers here. Awaited so
+   *  the button can show it is working instead of looking dead. */
+  onComplete: () => void | Promise<void>;
 }
 
 interface AskedItem {
@@ -143,6 +145,9 @@ export function GuidedInterview({
   const [missing, setMissing] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showJump, setShowJump] = useState(false);
+  /** Finishing writes the report, which takes a Gemini call. Without this
+   *  the button sat there doing nothing visible for up to a minute. */
+  const [finishing, setFinishing] = useState(false);
 
   const mic = useMicLevel('interview');
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -364,10 +369,25 @@ export function GuidedInterview({
     onAnswer(current.key, value, rows[current.key] || []);
   }, [current, onAnswer, rows]);
 
-  const goNext = useCallback(() => {
+  const goNext = useCallback(async () => {
     if (draft !== (answers[current?.key ?? ''] || '')) commit(draft);
-    if (index + 1 >= asked.length) { onComplete(); return; }
-    setIndex(index + 1);
+    if (index + 1 < asked.length) { setIndex(index + 1); return; }
+
+    // Last question: write the report. Awaited and flagged, so the button
+    // shows it is working and a failure is visible instead of silent.
+    setFinishing(true);
+    setError(null);
+    try {
+      await onComplete();
+    } catch (err) {
+      console.error('[Interview] Finishing failed:', err);
+      setError(
+        'Could not write the report. Your answers are saved — try Finish again, '
+        + 'or use Skip to the editor.'
+      );
+    } finally {
+      setFinishing(false);
+    }
   }, [draft, answers, current, commit, index, asked.length, onComplete]);
 
   if (loadError) {
@@ -557,8 +577,12 @@ export function GuidedInterview({
         <button className="btn btn-ghost btn-sm" onClick={goNext} title="Leave this one blank for now">
           <SkipForward size={14} /> Skip
         </button>
-        <button className="btn btn-primary" onClick={goNext}>
-          {index + 1 >= asked.length ? <><Check size={15} /> Finish</> : <>Next <ChevronRight size={15} /></>}
+        <button className="btn btn-primary" onClick={goNext} disabled={finishing}>
+          {finishing
+            ? <><Loader2 size={15} className="spin" /> Writing the report…</>
+            : index + 1 >= asked.length
+              ? <><Check size={15} /> Finish</>
+              : <>Next <ChevronRight size={15} /></>}
         </button>
       </div>
 

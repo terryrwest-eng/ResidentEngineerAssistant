@@ -331,9 +331,11 @@ export function NewReportPage() {
               setInterview(buildInterviewState(key, answers, answerRows, true, composed));
             }
           } catch (err) {
-            // The answers are saved either way, so nothing is lost - the report
-            // just falls back to the labelled answers until it is rewritten.
+            // Rethrown so the Finish button can say it failed. The answers are
+            // saved either way, so nothing is lost - but silently landing in an
+            // empty-looking report is what made this look broken before.
             console.error('[NewReportPage] Could not write the report:', err);
+            throw err;
           }
           // Turn the answers into real activities so the Word export, PMWeb
           // sync and the resource tables all read the data they always have.
