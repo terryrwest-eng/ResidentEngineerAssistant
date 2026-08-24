@@ -64,12 +64,49 @@ def _weather_line(report: dict) -> str:
         return ' - '.join(bits)
     return str((report.get('weather') or {}).get('summary') or '').strip()
 
+
+def _display_name(raw: str) -> str:
+    """
+    A resource name as a person reads it.
+
+    Trades and equipment are stored with their PMWeb resource code - "LL-04-
+    Operators", "LE-109- Excavator" - because that is what the PMWeb sync needs
+    to match against. The daily report is read by the owner, not by PMWeb, and a
+    code in front of every line is noise to them.
+
+    The code is stripped for printing only; the stored row keeps it, so the
+    PMWeb export is unaffected.
+    """
+    return re.sub(r'^[A-Za-z]{1,3}-\d+\s*-\s*', '', str(raw or '').strip()).strip()
+
 def _fmt_date(raw: str) -> str:
     try:
         return datetime.strptime(raw, '%Y-%m-%d').strftime('%m-%d-%Y') if raw else ''
     except ValueError:
         return raw
 
+
+
+def _fmt_time(raw: str) -> str:
+    """
+    A clock time as the report writes them: 12-hour with AM/PM.
+
+    The arrival time printed as "06:30" because it comes from the settings
+    default, which is stored 24-hour. Every other time in this document is
+    12-hour, and one that is not reads as a different kind of value.
+    """
+    text = str(raw or '').strip()
+    if not text:
+        return ''
+    for fmt in ('%H:%M', '%I:%M %p', '%I:%M%p'):
+        try:
+            return datetime.strptime(text.upper(), fmt).strftime('%-I:%M %p')
+        except (ValueError, TypeError):
+            try:
+                return datetime.strptime(text.upper(), fmt).strftime('%I:%M %p').lstrip('0')
+            except (ValueError, TypeError):
+                continue
+    return text
 
 def _as_int(value: Any) -> int:
     """Counts arrive as int, str or blank depending on where the row came from."""
@@ -133,7 +170,7 @@ def _aggregate_crew(report: dict) -> list[tuple[str, int, str]]:
         return (len(rank), lowered)
 
     return [
-        (_plural(t, totals[t]), totals[t], notes.get(t, ''))
+        (_plural(_display_name(t), totals[t]), totals[t], notes.get(t, ''))
         for t in sorted(totals, key=sort_key)
     ]
 
@@ -206,6 +243,11 @@ def _group_equipment(report: dict) -> list[tuple[str, list[str]]]:
 
 
 def _equipment_line(name: str, qty: int, note: str) -> str:
+    name = _display_name(name)
+    # "2 Excavators (Excavator)" - the description field often just repeats the
+    # name, and printing both reads as a mistake.
+    if note.strip().lower() in ('', name.lower(), name.rstrip('s').lower()):
+        note = ''
     # "4 Dump Trucks", not "4 Dump Truck". Same rule the crew section follows —
     # a count and a singular noun reads as a typo in a document that gets sent
     # to the owner.
@@ -411,7 +453,8 @@ def build_tecolote_content(report: dict) -> dict[str, Any]:
     header = [
         ('Report Date', _fmt_date(gen.get('report_date', ''))),
         ('Resident Engineer (RE) Arrival Time',
-         answers.get('shift_start') or answers.get('start_time') or gen.get('start_time', '')),
+         _fmt_time(answers.get('shift_start') or answers.get('start_time')
+                   or gen.get('start_time', ''))),
         ('Contractor', gen.get('contractor') or profile.contractor),
     ]
     weather = _weather_line(report)

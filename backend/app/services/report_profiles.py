@@ -595,8 +595,10 @@ TECOLOTE_EQUIPMENT_GROUPS = [
         'grader', 'backhoe', 'crane', 'roller', 'compactor',
     ]),
     ('Hauling & Logistics', [
+        # NOT a bare "trailer": a trailer-mounted pump is a support unit, and
+        # matching the word alone filed it under hauling.
         'dump truck', 'haul', '10-wheeler', 'ten wheeler', 'transfer', 'lowboy',
-        'flatbed', 'trailer',
+        'flatbed', 'trailer truck', 'end dump', 'bottom dump',
     ]),
     ('Support Units', []),  # catch-all — must stay last
 ]
