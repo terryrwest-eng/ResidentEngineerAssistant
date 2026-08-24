@@ -18,6 +18,7 @@ can be read back months later, that difference matters.
 
 import io
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -227,6 +228,48 @@ def _composed(report: dict) -> dict[str, str]:
     }
 
 
+
+def _summary_sections(report: dict) -> dict[int, list[str]]:
+    """
+    Sections read out of the activity summaries.
+
+    WHY: the interview is one way to fill this report in, not the only one. An
+    inspector who types the whole day into the summary was getting an empty
+    document - every section printing "nothing happened this shift" while their
+    text sat in the report untouched, because the export only ever looked at
+    interview answers.
+
+    Two shapes are handled. Text that already carries "1. Work Summary"
+    headings - because Rewrite produced it, or the interview did - is split on
+    those headings and each part filed under its number. Text with no headings
+    at all is one block of work, and goes to the work summary section where a
+    reader expects to find it. Nothing is dropped either way.
+    """
+    blocks: dict[int, list[str]] = {}
+    heading = re.compile(r"^\s*(\d+)\.\s+(\S.*)$")
+
+    for activity in report.get("activities", []) or []:
+        summary = str(activity.get("summary") or "").strip()
+        if not summary:
+            continue
+
+        # Anything before the first heading belongs to the work summary: it is
+        # the day's work, written without the format's numbering.
+        current = 1
+        for raw in summary.split("\n"):
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+            match = heading.match(line)
+            if match:
+                current = int(match.group(1))
+                continue
+            blocks.setdefault(current, []).append(
+                line.strip().lstrip("\u2022").strip() or line.strip()
+            )
+
+    return blocks
+
 def _section_body(report: dict, section) -> list[str]:
     """
     The lines printed under one section heading.
@@ -240,6 +283,14 @@ def _section_body(report: dict, section) -> list[str]:
     written = _composed(report).get(section.id, '')
     if written:
         return [line.rstrip() for line in written.split('\n') if line.strip()]
+
+    # Then whatever is in the report itself. The interview is ONE way to fill
+    # this in, not the only one — an inspector who typed the day into the
+    # summary was getting a document that declared every section empty while
+    # their text sat in the report untouched.
+    from_summary = _summary_sections(report).get(section.number, [])
+    if from_summary:
+        return from_summary
 
     answers = _answers(report)
     lines: list[str] = []
