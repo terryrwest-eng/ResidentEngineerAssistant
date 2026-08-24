@@ -455,7 +455,11 @@ export function ActivityEditor({
     setIsRewriting(true);
     setRewriteError(null);
     try {
-      const data = await scanApi.rewrite(activity.summary);
+      const data = await scanApi.rewrite(
+        activity.summary,
+        'summary',
+        useReportStore.getState().report?.general?.project_name || '',
+      );
       const polished = data.text || data.report_text || '';
       if (!polished) {
         // Server said OK but sent nothing usable — don't wipe the summary

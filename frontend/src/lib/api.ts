@@ -332,8 +332,14 @@ export const scanApi = {
   },
 
   /** AI Rewrite — polish rough notes into professional bullets */
-  rewrite: async (text: string, fieldType: string = 'summary') => {
-    const response = await api.post('/ai/rewrite', { text, field_type: fieldType });
+  rewrite: async (text: string, fieldType: string = 'summary', project: string = '') => {
+    const response = await api.post(
+      '/ai/rewrite',
+      { text, field_type: fieldType, project },
+      // Rewriting into a numbered-section format is a full rewrite of the day,
+      // not a line tidy, so it needs longer than the default.
+      { timeout: 180000 },
+    );
     return response.data;
   },
 

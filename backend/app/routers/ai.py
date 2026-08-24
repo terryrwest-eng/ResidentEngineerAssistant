@@ -2106,18 +2106,155 @@ Write the combined email body now:"""
 # WHY: Takes rough field notes and rewrites them into RE-quality bullets.
 # ============================================
 
+FORMAT_REWRITE_PROMPT = """You are the Resident Engineer rewriting today's daily report so it reads
+properly. The text below is what is already in the report - notes, half-written
+lines, or a draft. Rewrite it into the finished document.
+
+THE LAYOUT — use exactly these numbered sections, in this order:
+{section_list}
+
+HOW EACH SECTION READS
+A short label naming the WORK, then complete sentences. This is the shape:
+
+  Trench Excavation: Continued trench excavation and advanced the trench line
+  from Sta 143+98.80 to Sta 142+39.77. Perched water was encountered from Sta
+  143+98.31 to Sta 143+59.06.
+  Shoring Installation: Trench shoring boxes were installed progressively as
+  excavation advanced. Guardrails were installed on the boxes.
+  Pipe Installation: Placed SE-30 sand bedding to grade and installed four
+  36-inch water main segments:
+  MK-119: Sta 143+98.31 to Sta 143+59.06
+  MK-120: Sta 143+59.08 to Sta 143+19.32
+
+- Related facts join into sentences that read. Not stubs on separate lines.
+- Numbered items - pipe joints, welds - stay on their own lines under the
+  sub-topic that introduces them.
+- The label names the work, never the question that was asked.
+- Do NOT manufacture a label for every line. If a section holds one thing,
+  write the sentence and stop. A short section is correct.
+
+VOICE
+- Third person, past tense. NEVER "I", "we", "my" or "our". "i wasnt on site
+  when welding finished" becomes "Welding was not complete at the end of the
+  inspection period."
+- Fix spelling and grammar. Never change a technical term, a proper noun, an
+  abbreviation, a station or a number.
+- Plain English. No "delve", "it is worth noting", "seamless", "robust",
+  "leverage", "furthermore", "moreover"; never open with "additionally" or
+  "overall". Used not utilized, started not commenced, before not prior to.
+- Do NOT grade the work. Never "properly", "successfully", "good", "adequate".
+  Stating that work conformed to a named plan or spec IS the inspection finding
+  and must be kept.
+- Stations as "Sta XX+XX" keeping every decimal. Times 12-hour with AM/PM.
+  Acronyms stay acronyms - BMP, never Best Management Practice.
+
+WHAT YOU MUST NOT DO
+- Do NOT invent. Every station, quantity, count, name, time and material must
+  already be in the text. Nothing is added, estimated or completed from
+  knowledge of how this work usually goes.
+- Do NOT drop anything either. Every fact in the text appears in the rewrite,
+  in whichever section covers it.
+- Do NOT state a fact twice.
+- Do NOT pad. Length is not quality.
+
+PUT EACH FACT IN THE SECTION THAT COVERS IT
+Read the whole text first, then place each fact where it belongs, not where it
+happened to be written. Traffic control and sweeping are BMPs. Backfill belongs
+in the backfilling section even if it was mentioned beside the excavation.
+Monitors and inspectors belong in site inspection. A fact appears ONCE.
+
+EMPTY SECTIONS
+A section with nothing in the text still appears, with a plain sentence saying
+so - "No time and material work was performed this shift." Never write around
+an absence.
+
+OUTPUT
+Plain text. Each section as its number and title on its own line, then its
+lines beneath. No markdown, no asterisks, no bullet characters.
+
+THE TEXT TO REWRITE:
+---
+{text}
+---
+"""
+
+
 class RewriteRequest(BaseModel):
     text: str
     field_type: str = 'summary'
+    # Which project's format to rewrite into. Without it every project got
+    # the generic bullet rewrite, which is wrong for a format built from
+    # numbered sections.
+    project: str = ''
 
 
 @router.post('/rewrite')
 async def ai_rewrite(request: RewriteRequest):
-    """Rewrite rough field notes into professional report bullets."""
+    """
+    Rewrite what is in the report so it reads properly.
+
+    A project whose report is numbered narrative sections is rewritten into
+    THAT layout - the numbered sections, each with labelled sub-topics written
+    as sentences. Not bullets: a bulleted list is a different document, and
+    flattening the format into one is what the generic rewrite below does.
+
+    Everything else keeps the original bullet rewrite, which is correct for the
+    per-activity format it was written for.
+    """
     client, model_name = _get_gemini_client()
 
     try:
         from google.genai import types as genai_types
+
+        # A project whose report is numbered narrative sections gets rewritten
+        # into THAT layout. The generic bullet rewrite below flattens it into a
+        # list, which is the wrong document for those jobs.
+        from app.services.report_profiles import get_profile
+        profile = get_profile(request.project or '')
+        if request.project and profile.renderer == 'tecolote':
+            section_list = '\n'.join(
+                f'{s.number}. {s.title}   (when empty: "{s.empty_statement}")'
+                for s in profile.sections
+            )
+            formatted = _gemini_call_with_retry(
+                client, model_name,
+                contents=[FORMAT_REWRITE_PROMPT.format(
+                    section_list=section_list, text=request.text,
+                )],
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.0,
+                    thinking_config=genai_types.ThinkingConfig(
+                        thinking_level=GEMINI_THINKING_LEVEL),
+                    max_output_tokens=16384,
+                ),
+            )
+            written = (getattr(formatted, 'text', None) or '').strip()
+            written = re.sub(r'```[a-z]*\n?', '', written).strip()
+            if not written:
+                problem = _finish_reason_problem(formatted)
+                logger.warning(f'[rewrite] {profile.key} format rewrite empty: {problem}')
+                raise HTTPException(
+                    status_code=502,
+                    detail=problem or 'The rewrite came back empty. Your text is unchanged.',
+                )
+            # Drop the crew and equipment sections if the model wrote them
+            # anyway. It knows the format has eight sections and will fill the
+            # last two from nothing, announcing "no contractor labor force was
+            # on site" while the crew sits in the table directly below. Those
+            # come from rows and are printed by the export, so nothing here may
+            # speak for them. A prompt is a request; this is a guarantee.
+            drop = {s.number for s in profile.sections if s.id in ('labor', 'equipment')}
+            kept, skipping = [], False
+            for line in written.split('\n'):
+                heading = re.match(r'^\s*(\d+)\.\s+\S', line)
+                if heading:
+                    skipping = int(heading.group(1)) in drop
+                if not skipping:
+                    kept.append(line)
+            written = '\n'.join(kept).strip()
+
+            logger.info(f'[rewrite] {profile.key} format, {len(written)} chars')
+            return {'status': 'success', 'text': written}
 
         system_prompt = """You are a SENIOR Pipeline Construction Inspector with 20+ years creating formal Daily Inspection Reports for major public works and infrastructure projects.
 
