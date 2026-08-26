@@ -307,6 +307,51 @@ NOTE: Consultants only go in the manpower list, not equipment.
 # HELPERS
 # ============================================
 
+# Lines that are the model thinking out loud rather than writing the report.
+#
+# WHY: a report the RE produced came back with the compose step's reasoning in
+# it - "Fact 12 (excavation part):", "Let's check Section 5", "Let me re-read
+# the prompt on VOICE". Thought PARTS are already filtered out by
+# response.text; this is a different failure. The model wrote its planning as
+# ordinary output text, so nothing marked it as reasoning and it went into the
+# report alongside the prose.
+#
+# Safe to match on in this domain: the report is third person past tense by
+# rule, so a line can never legitimately open with "Let me", "I need to" or
+# "Wait". A construction narrative does not address itself.
+_REASONING_LINE = re.compile(
+    r"""^\s*(
+        let\s+me\b | let'?s\b | wait[!.,\s] | okay[,.\s] | ok[,.]\s |
+        hmm\b | actually,\s*(let|i)\b |
+        i\s+(need|should|will|have)\s+to\b | i'?ll\b | i'?m\s+going\s+to\b |
+        first,?\s+i\b | now,?\s+(let|i)\b |
+        fact\s+\d+[\s(:.] | combined\s+.{0,40}?(paragraph|sentence|in\s+section) |
+        re-?read(ing)?\s+the\s+prompt | the\s+(user|prompt)\s+(wants|asked|said|says) |
+        (looking|going)\s+(at|back)\s+(the|my)\b |
+        so\s+the\s+(answer|output|report)\s+(should|would|is)\b
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _strip_reasoning(text: str, where: str = '') -> str:
+    """
+    Drop any line where the model narrated its own process.
+
+    The structural fix is asking for JSON with a schema, so prose and planning
+    cannot share a field. This is the net for the paths that stay plain text.
+    Dropping the offending lines rather than truncating everything before them
+    means a leak in the middle of a report costs a sentence, not the rest of
+    the document.
+    """
+    lines = text.split('\n')
+    kept = [line for line in lines if not _REASONING_LINE.match(line)]
+    removed = len(lines) - len(kept)
+    if removed:
+        logger.warning(f'[{where or "ai"}] Dropped {removed} reasoning line(s) from model output')
+    return re.sub(r'\n{3,}', '\n\n', '\n'.join(kept)).strip()
+
+
 def _clean_json(text: str) -> dict[str, Any]:
     """Strip markdown fencing and extract the JSON object."""
     text = re.sub(r'```json\s*', '', text)
@@ -1465,6 +1510,7 @@ Generate the professional report text now (bullet points, past tense, factual):"
         report_text = response.text.strip()
         # Strip any accidental markdown fencing
         report_text = re.sub(r'```[a-z]*\n?', '', report_text).strip()
+        report_text = _strip_reasoning(report_text, 'generate-report')
 
         logger.info(f'[generate-report] Generated {len(report_text)} chars')
         return {'status': 'success', 'report_text': report_text}
@@ -2090,6 +2136,7 @@ Write the combined email body now:"""
         text = response.text.strip()
         # Clean any markdown code fences the model might wrap it in
         text = re.sub(r'```[a-z]*\n?', '', text).strip()
+        text = _strip_reasoning(text, 'email-summary')
         logger.info(f'[email-summary] Generated {len(text)} chars from {len(activity_blocks)} activities')
         return {'status': 'success', 'text': text}
 
@@ -2324,6 +2371,7 @@ OUTPUT FORMAT — CRITICAL:
             )
 
         text = re.sub(r'```[a-z]*\n?', '', raw_text.strip()).strip()
+        text = _strip_reasoning(text, 'chat-report')
         cleaned_text = _clean_summary_bullets(text)
         if not cleaned_text:
             logger.error(f'[rewrite] Cleaner emptied a {len(text)}-char response')
@@ -4074,7 +4122,7 @@ async def generate_tc(request: TCGenerateRequest):
             ),
         )
 
-        summary = response.text.strip()
+        summary = _strip_reasoning(response.text.strip(), 'generate-tc')
         logger.info(f'[generate-tc] Generated summary ({len(summary)} chars): {summary[:500]}')
 
         # Build work_area from location/streets

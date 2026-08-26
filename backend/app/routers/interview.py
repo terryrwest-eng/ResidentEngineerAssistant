@@ -34,6 +34,7 @@ from app.routers.ai import (
     _other_day_context,
     _transcribe_audio,
 )
+from app.routers.ai import _strip_reasoning
 from app.services.report_profiles import get_profile, list_profiles
 
 logger = logging.getLogger(__name__)
@@ -550,8 +551,12 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
         )
 
     data = _clean_json(raw)
+    # JSON mode keeps planning out of the body in the normal case, but the
+    # model can still write its reasoning INTO a body field - that is exactly
+    # how "Let's check Section 5" reached a finished report.
     by_id = {
-        str(item.get('id', '')): str(item.get('body', '') or '').strip()
+        str(item.get('id', '')): _strip_reasoning(
+            str(item.get('body', '') or '').strip(), 'compose')
         for item in (data.get('sections') or []) if isinstance(item, dict)
     }
 
