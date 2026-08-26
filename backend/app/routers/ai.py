@@ -420,8 +420,20 @@ def _clean_summary_bullets(text: str) -> str:
     for line in raw_lines:
         if not line:
             continue
-        # Strip existing bullet markers (•, -, *, –) or numbered lists (e.g. 1., 2.)
-        line_content = re.sub(r"^[•\-\*\–\d+\.]\s*", "", line).strip()
+        # "1. Work Summary & Pipe Installation" is a SECTION HEADING, not a
+        # list item. It is kept exactly as written, because the Tecolote export
+        # routes text into sections by matching those numbers - strip them and
+        # the whole report piles into section 1 while 2 through 8 print empty.
+        if re.match(r"^\d{1,2}\.\s+\S", line) and len(line) < 70 and not line.rstrip().endswith('.'):
+            cleaned_lines.append(line)
+            continue
+
+        # Strip a leading bullet marker or list number.
+        #
+        # The old pattern was r"^[...\d+\.]" - a character class, which matches
+        # exactly ONE character from the set. On "1. Work Summary" it removed
+        # the "1" and left ". Work Summary".
+        line_content = re.sub(r"^(?:[•\-\*\–]\s*|\d{1,2}[.)]\s+)", "", line).strip()
         if line_content:
             cleaned_lines.append(f"• {line_content}")
 

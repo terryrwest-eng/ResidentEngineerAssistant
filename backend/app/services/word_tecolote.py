@@ -246,7 +246,11 @@ def _equipment_line(name: str, qty: int, note: str) -> str:
     name = _display_name(name)
     # "2 Excavators (Excavator)" - the description field often just repeats the
     # name, and printing both reads as a mistake.
-    if note.strip().lower() in ('', name.lower(), name.rstrip('s').lower()):
+    stripped = note.strip().lower()
+    if stripped in ('', name.lower(), name.rstrip('s').lower()):
+        note = ''
+    # "Concrete Boom Pump (Pump)" - the note is a word already in the name.
+    elif stripped in {w.lower().rstrip('s') for w in name.split()}:
         note = ''
     # "4 Dump Trucks", not "4 Dump Truck". Same rule the crew section follows —
     # a count and a singular noun reads as a typo in a document that gets sent
@@ -415,14 +419,24 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
             continue
 
         for line in section['lines']:
-            p = doc.add_paragraph(style='List Bullet')
-            p.paragraph_format.space_after = Pt(2)
-            # An indented continuation line keeps its indent rather than
-            # becoming a bullet of its own.
+            # PROSE, not bullets. The format this report follows is written
+            # paragraphs led by a bold sub-topic label - "Trench Excavation:
+            # ..." - and bulleting every line turned the whole document into a
+            # list, which is not what the owner is expecting to read.
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(8)
+            p.paragraph_format.line_spacing = 1.15
+            # A list of numbered items - pipe joints, welds, crew counts - is
+            # indented under the paragraph that introduced it.
             if line.startswith('    '):
-                p.style = doc.styles['Normal']
-                p.paragraph_format.left_indent = Inches(0.5)
+                p.paragraph_format.left_indent = Inches(0.35)
+                p.paragraph_format.space_after = Pt(2)
                 p.add_run(line.strip())
+                continue
+            label, sep, rest = line.partition(': ')
+            if sep and len(label) < 45 and label[:1].isupper() and '.' not in label:
+                p.add_run(f'{label}: ').bold = True
+                p.add_run(rest)
             else:
                 p.add_run(line)
 
