@@ -404,9 +404,14 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
     doc.add_paragraph()
 
     for section in content['sections']:
+        # Spacing follows the supplied format: a gap BEFORE each numbered
+        # heading, one blank line under it, then the sub-topics running
+        # consecutively with no gap between them. Airier spacing between
+        # sub-topics reads as a list of separate notes rather than one
+        # section about one part of the shift.
         heading = doc.add_paragraph()
-        heading.paragraph_format.space_before = Pt(10)
-        heading.paragraph_format.space_after = Pt(4)
+        heading.paragraph_format.space_before = Pt(12)
+        heading.paragraph_format.space_after = Pt(6)
         run = heading.add_run(f"{section['number']}. {section['title']}")
         run.bold = True
         run.font.size = Pt(12)
@@ -415,7 +420,9 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
             # The heading plus a plain sentence: the topic was considered and
             # had nothing, which is not the same as nobody filling it in.
             for line in section['lines']:
-                doc.add_paragraph(line)
+                empty = doc.add_paragraph(line)
+                empty.paragraph_format.space_after = Pt(2)
+                empty.paragraph_format.line_spacing = 1.08
             continue
 
         for line in section['lines']:
@@ -424,8 +431,8 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
             # ..." - and bulleting every line turned the whole document into a
             # list, which is not what the owner is expecting to read.
             p = doc.add_paragraph()
-            p.paragraph_format.space_after = Pt(8)
-            p.paragraph_format.line_spacing = 1.15
+            p.paragraph_format.space_after = Pt(2)
+            p.paragraph_format.line_spacing = 1.08
             # A list of numbered items - pipe joints, welds, crew counts - is
             # indented under the paragraph that introduced it.
             if line.startswith('    '):
