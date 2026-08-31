@@ -1664,6 +1664,70 @@ class ReportChatResponse(BaseModel):
     deleted_activity_ids: list[str] | None = None             # Activity IDs to remove
 
 
+# Words that mean the user actually DID ask for less text.
+_ASKED_FOR_SHORTER = re.compile(
+    r'\b(shorten|shorter|summari[sz]e|summary|condense|trim|tighten|brief|'
+    r'briefer|cut\s+(it\s+)?down|boil\s+(it\s+)?down|one\s+line|'
+    r'a\s+few\s+words|less\s+detail|too\s+long)\b',
+    re.IGNORECASE,
+)
+
+# Below this share of the original length, a "rewrite" has stopped being a
+# rewrite. 0.45 leaves plenty of room for genuinely tightening wordy prose.
+_SHRINK_FLOOR = 0.45
+
+
+def _guard_summary_shrink(
+    modified: list[dict[str, Any]] | None,
+    original_report: dict[str, Any],
+    user_message: str,
+) -> tuple[list[dict[str, Any]] | None, list[str]]:
+    """
+    Refuse a "fix this" that silently deletes the report.
+
+    WHY: asked to fix the wording of a full shift narrative, the assistant
+    replaced it with two sentences describing the shift - "OHL performed trench
+    excavation and shoring near the north driveway... Two safety issues were
+    addressed." Every station, time and observation was gone. The app overwrites
+    the field with whatever comes back, so that is the report destroyed by a
+    request to improve it.
+
+    A prompt rule alone cannot be relied on for this, because the cost of it
+    being ignored once is a day of fieldwork. If the user asked for something
+    shorter they get it; otherwise a drastically shorter summary is dropped from
+    the modification and the rest of the edit still applies.
+    """
+    if not modified or _ASKED_FOR_SHORTER.search(user_message or ''):
+        return modified, []
+
+    originals = {
+        str(a.get('id', '')): str(a.get('summary') or '')
+        for a in (original_report.get('activities') or [])
+        if isinstance(a, dict)
+    }
+
+    kept: list[dict[str, Any]] = []
+    refused: list[str] = []
+    for act in modified:
+        if not isinstance(act, dict) or 'summary' not in act:
+            kept.append(act)
+            continue
+        before = originals.get(str(act.get('id', '')), '')
+        after = str(act.get('summary') or '')
+        if len(before) > 200 and len(after) < len(before) * _SHRINK_FLOOR:
+            logger.warning(
+                f'[report-chat] Refused summary shrink on {act.get("id")}: '
+                f'{len(before)} -> {len(after)} chars'
+            )
+            refused.append(str(act.get('work_area') or act.get('id') or 'an activity'))
+            act = {k: v for k, v in act.items() if k not in ('summary', 'summary_html')}
+            if len(act) <= 1:      # nothing left but the id
+                continue
+        kept.append(act)
+
+    return (kept or None), refused
+
+
 @router.post('/report-chat', response_model=ReportChatResponse)
 async def report_chat(request: ReportChatRequest):
     """
@@ -1827,6 +1891,24 @@ WORKED EXAMPLE — this is the exact failure to avoid:
 The same rule governs manpower, equipment and every other array: adding a crew
 member means returning the existing rows PLUS the new one, not the new one
 alone.
+
+IMPROVE — "fix", "clean up", "reword", "make it read better", "make it flow",
+          "fix the wording", "that sounds bad", "rewrite it properly"
+  → Return the SAME CONTENT, reworded. Every fact, station, time, quantity and
+    item that was there before is still there afterwards. Same number of
+    sub-topics, same number of bullets. You are changing HOW it reads, not WHAT
+    it says.
+
+  THIS IS NOT A REQUEST FOR A SUMMARY. "Fix the report" means hand back the
+  whole report, fixed. It never means hand back a two-sentence description of
+  the report. If the user wants it shorter they will say shorter.
+
+  WRONG — a whole shift replaced by an abstract:
+    {"id": "act-1", "summary": "OHL performed trench excavation and shoring
+     near the north driveway while working around an active gas pipeline. Two
+     safety issues were addressed during the shift."}
+
+  RIGHT — every sub-topic still present, each one written better.
 
 WHEN YOU CANNOT TELL, ADD. Losing what the user already wrote is far worse than
 leaving an extra line they can delete in one tap.
@@ -2020,6 +2102,18 @@ Return JSON:"""
                             deleted_activity_ids.append(source_id)
                         else:
                             logger.warning(f"[report-chat] Target report {target_id} not found")
+
+        modified_activities, refused = _guard_summary_shrink(
+            modified_activities, request.report, user_message)
+        if refused:
+            reply = (
+                reply.rstrip()
+                + '\n\nI left the summary for '
+                + ', '.join(refused)
+                + ' alone — the rewrite I produced was far shorter than what is '
+                  'there now and would have dropped most of the shift. Ask me to '
+                  'fix a specific part, or say "shorten it" if that is what you want.'
+            )
 
         # Sanitize summary bullets to plain text with dot bullets
         if modified_activities is not None:
