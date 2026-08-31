@@ -720,6 +720,8 @@ async function checkMonday() {
 // here is explicit, and it also saves navigating back into the app to switch
 // days.
 
+let pickerFilter = '';
+let pickerTotal = 0;
 let pickerReports = [];
 
 function fmtPickerDate(iso) {
@@ -781,11 +783,37 @@ function renderReportList() {
         return;
     }
 
+    // Matches on date, project or any activity name, so "8/14", "tecolote" and
+    // "blow-off" all find the report. Typing is far quicker than scrolling a
+    // year of reports.
+    const q = (pickerFilter || '').trim().toLowerCase();
+    const shown = !q ? pickerReports : pickerReports.filter((r) => {
+        const hay = [
+            r.report_date || '',
+            fmtPickerDate(r.report_date) || '',
+            r.project_name || '',
+            (r.activities || []).join(' '),
+        ].join(' ').toLowerCase();
+        return hay.includes(q);
+    });
+
+    const countEl = document.getElementById('reportCount');
+    if (countEl) {
+        countEl.textContent = q
+            ? `${shown.length} of ${pickerReports.length}`
+            : `${pickerReports.length} report${pickerReports.length === 1 ? '' : 's'}`;
+    }
+
+    if (!shown.length) {
+        list.innerHTML = '<div style="padding:12px; text-align:center; font-size:12px; color:rgba(255,255,255,0.5);">No reports match that</div>';
+        return;
+    }
+
     chrome.storage.local.get(['selectedReportId'], (stored) => {
         const selectedId = stored.selectedReportId;
         list.innerHTML = '';
 
-        pickerReports.forEach((r) => {
+        shown.forEach((r) => {
             const isSel = r.id === selectedId;
             const row = document.createElement('div');
             row.style.cssText = `
@@ -822,16 +850,41 @@ function renderReportList() {
     });
 }
 
+function wireReportSearch() {
+    const box = document.getElementById('reportSearch');
+    if (!box || box.dataset.wired) return;
+    box.dataset.wired = '1';
+    box.addEventListener('input', () => {
+        pickerFilter = box.value;
+        renderReportList();
+    });
+}
+
 async function loadReportPicker() {
+    wireReportSearch();
     const list = document.getElementById('reportList');
     if (!API_BASE) {
         if (list) list.innerHTML = '<div style="padding:12px; text-align:center; font-size:12px; color:rgba(255,255,255,0.5);">Not connected to the app</div>';
         return;
     }
     try {
-        const resp = await apiFetch(`${API_BASE}/api/extension/reports?limit=30`);
-        const data = await resp.json();
-        pickerReports = data.reports || [];
+        // Walk every page. The endpoint pages because it reads each report to
+        // get its activity names; asking for one huge page just moves the cost
+        // rather than removing it. The ceiling is a runaway guard, not a limit
+        // on what can be shown - it is far above any real report count.
+        pickerReports = [];
+        let total = 0;
+        for (let offset = 0; offset < 20000; offset += 200) {
+            const resp = await apiFetch(
+                `${API_BASE}/api/extension/reports?limit=200&offset=${offset}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            const page = data.reports || [];
+            pickerReports = pickerReports.concat(page);
+            total = data.total || pickerReports.length;
+            if (page.length === 0 || pickerReports.length >= total) break;
+        }
+        pickerTotal = total;
 
         // Show whichever report is currently active, so the popup opens
         // reflecting reality rather than a guess.

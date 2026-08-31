@@ -271,7 +271,10 @@ async def get_extension_context():
 
 
 @router.get("/extension/reports")
-async def list_reports_for_extension(limit: int = Query(30, ge=1, le=100)):
+async def list_reports_for_extension(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
     """
     Reports for the extension's picker: date, project, status and the actual
     activity names.
@@ -280,8 +283,16 @@ async def list_reports_for_extension(limit: int = Query(30, ge=1, le=100)):
     and the whole "active report" handshake above is fragile by design — one
     global pointer, no idea who is asking, silently goes stale. Letting the user
     see the activities and pick directly removes the guesswork.
+
+    PAGED, and it reports the true total. This used to cap at 30 with no offset
+    and no total, so the picker showed the 30 most recent reports and there was
+    no way to reach anything older - and nothing on screen said so, which just
+    reads as "my older reports are gone". The cost here is one full report read
+    per row, to get the activity names the picker shows; that is what the page
+    size is protecting, so the extension walks the pages instead of asking for
+    everything in one request.
     """
-    index_rows = list_reports(limit=limit, offset=0)
+    index_rows = list_reports(limit=limit, offset=offset)
     out = []
     for row in index_rows:
         full = get_report(row.get("id", "")) or {}
@@ -311,7 +322,12 @@ async def list_reports_for_extension(limit: int = Query(30, ge=1, le=100)):
     # sort is stable, so the second pass preserves the first's ordering.
     out.sort(key=lambda r: r["start_time"])
     out.sort(key=lambda r: r["report_date"], reverse=True)
-    return {"reports": out}
+    return {
+        "reports": out,
+        "total": get_report_count(),
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.get("/reports/{report_id}/consolidated")
