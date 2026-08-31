@@ -2337,7 +2337,14 @@ WHAT YOU MUST NOT DO
   knowledge of how this work usually goes.
 - Do NOT drop anything either. Every fact in the text appears in the rewrite,
   in whichever section covers it.
-- Do NOT state a fact twice.
+- Do NOT state a fact twice. This includes the SAME WORK described under two
+  different labels in different words. "Trenching down and installing timber
+  lagging" under Trench Excavation and "Beam and lagging installation" under
+  Shoring Installation are one operation written twice - the reader cannot tell
+  whether two things happened or one. Each operation belongs to exactly one
+  sub-topic: the digging under excavation, the beams and lagging under shoring.
+  Before writing, decide which label owns each piece of work, then write it
+  there and nowhere else.
 - Do NOT pad. Length is not quality.
 
 PUT EACH FACT IN THE SECTION THAT COVERS IT
