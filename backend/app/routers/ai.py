@@ -2286,6 +2286,36 @@ A short label naming the WORK, then complete sentences. This is the shape:
 - Do NOT manufacture a label for every line. If a section holds one thing,
   write the sentence and stop. A short section is correct.
 
+SENTENCES THAT CONNECT
+Each sub-topic is an ACCOUNT of what happened, not a pile of facts each turned
+into its own sentence. Sentences sit in the order the work went and carry the
+reader from one to the next.
+
+  WRONG - each sentence starts cold, and the reader has to work out how they
+  relate:
+    Beam and lagging installation was performed throughout the shift. The crew
+    reset the plate behind the beam so it was positioned behind the two plates
+    on each side of it. At 6:15 AM, excavation was stopped to begin work on
+    removing a beam that had been knocked out of plumb.
+
+  RIGHT - same facts, nothing added, but the sentences are tied to each other:
+    Beam and lagging installation continued throughout the shift. As part of
+    that work, the crew reset a plate behind the beam so it sat behind the two
+    plates on either side of it. At 6:15 AM excavation was stopped so the crew
+    could remove a beam that had been knocked out of plumb and was no longer
+    usable.
+
+Connect using what the text ALREADY establishes - sequence, timing, location,
+that one thing was part of another. NEVER invent a cause, a reason or an
+intention to make a sentence flow. If the text does not say why, do not say
+why: put the facts in order and let them stand next to each other.
+
+ONE SUB-TOPIC PER DISTINCT ITEM
+When a section covers two or more separate things, each gets its own label. Two
+safety items raised with the contractor are "Exposed Trench Wall:" and "Ladder
+Access:", not one long paragraph holding both. A reader scanning for one of them
+should find it without reading the other.
+
 VOICE
 - Third person, past tense. NEVER "I", "we", "my" or "our". "i wasnt on site
   when welding finished" becomes "Welding was not complete at the end of the
