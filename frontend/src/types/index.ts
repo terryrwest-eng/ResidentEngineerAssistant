@@ -34,6 +34,16 @@ export interface Report {
 /** Report header / project info */
 export interface GeneralInfo {
   project_name: string;
+  /**
+   * Which report FORMAT this report uses, set when the project is picked.
+   *
+   * The format used to be re-derived from project_name on every call, by
+   * matching it against the known project names. A name that does not match -
+   * "Morena Pipeline", a typo, a renamed job - silently fell back to the
+   * classic format, so a Tecolote shift came back as Morena bullets with
+   * nothing saying why. The key is chosen once, from the picker, and stored.
+   */
+  profile_key?: string;
   project_number: string;
   project_location: string;
   inspector_name: string;

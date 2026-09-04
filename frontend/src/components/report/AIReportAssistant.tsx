@@ -16,6 +16,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { getProfileKey } from '@/lib/reportFlow';
 import { useReportStore } from '@/stores/reportStore';
 import { scanApi } from '@/lib/api';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
@@ -347,7 +348,11 @@ export function AIReportAssistant({
     if (!activity.summary?.trim()) return;
     setIsRewriting(true);
     try {
-      const data = await scanApi.rewrite(activity.summary);
+      const data = await scanApi.rewrite(
+        activity.summary,
+        'summary',
+        getProfileKey(useReportStore.getState().report),
+      );
       const rewrittenText = data.text || data.report_text || '';
       if (rewrittenText) {
         onApply({ summary: rewrittenText });

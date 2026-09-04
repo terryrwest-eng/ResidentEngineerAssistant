@@ -24,7 +24,10 @@ field out of this one recording — which is far more reliable than asking it to
 parse a whole day at once.
 """
 
+import logging
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 # What kind of answer a question wants. The UI picks its input from this, and
 # the extractor uses it to know what shape to pull out of the speech.
@@ -839,6 +842,15 @@ def get_profile(key_or_project: str) -> ReportProfile:
     for name, profile in _BY_PROJECT_NAME.items():
         if needle in name or name in needle:
             return profile
+
+    # Nothing matched. The classic format is still the right fallback - every
+    # existing report uses it - but this is worth saying out loud: it means a
+    # report is being rendered in a format nobody chose for it, which is how a
+    # Tecolote shift filed under "Morena Pipeline" came back as Morena bullets.
+    logger.warning(
+        f'[profiles] No profile matches {key_or_project!r}; falling back to the '
+        f'classic format. Known: {sorted(_BY_PROJECT_NAME)}'
+    )
     return PROFILES['morena']
 
 

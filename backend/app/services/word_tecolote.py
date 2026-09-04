@@ -404,13 +404,16 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
     doc.add_paragraph()
 
     for section in content['sections']:
-        # Spacing follows the supplied format: a gap BEFORE each numbered
-        # heading, one blank line under it, then the sub-topics running
-        # consecutively with no gap between them. Airier spacing between
-        # sub-topics reads as a list of separate notes rather than one
-        # section about one part of the shift.
+        # A gap before each numbered heading, and a real gap between sub-topics.
+        #
+        # An earlier pass read the format's spacing out of a PASTED copy of it
+        # and made the sub-topics consecutive with no gap. Paste strips
+        # paragraph spacing, so that was reading a property of the clipboard as
+        # a property of the format. Two separate items - two safety findings,
+        # say - then ran together as one block, which is exactly the confusion
+        # the gap is there to prevent.
         heading = doc.add_paragraph()
-        heading.paragraph_format.space_before = Pt(12)
+        heading.paragraph_format.space_before = Pt(14)
         heading.paragraph_format.space_after = Pt(6)
         run = heading.add_run(f"{section['number']}. {section['title']}")
         run.bold = True
@@ -421,8 +424,8 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
             # had nothing, which is not the same as nobody filling it in.
             for line in section['lines']:
                 empty = doc.add_paragraph(line)
-                empty.paragraph_format.space_after = Pt(2)
-                empty.paragraph_format.line_spacing = 1.08
+                empty.paragraph_format.space_after = Pt(8)
+                empty.paragraph_format.line_spacing = 1.12
             continue
 
         for line in section['lines']:
@@ -431,8 +434,8 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
             # ..." - and bulleting every line turned the whole document into a
             # list, which is not what the owner is expecting to read.
             p = doc.add_paragraph()
-            p.paragraph_format.space_after = Pt(2)
-            p.paragraph_format.line_spacing = 1.08
+            p.paragraph_format.space_after = Pt(8)
+            p.paragraph_format.line_spacing = 1.12
             # A list of numbered items - pipe joints, welds, crew counts - is
             # indented under the paragraph that introduced it.
             if line.startswith('    '):

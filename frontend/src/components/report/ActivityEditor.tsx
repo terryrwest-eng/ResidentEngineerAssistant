@@ -16,6 +16,7 @@
 
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { DocTally } from '@/components/ui/Doc';
+import { getProfileKey } from '@/lib/reportFlow';
 import { useReportStore } from '@/stores/reportStore';
 import { ResourceTable } from '@/components/report/ResourceTable';
 import { AIReportAssistant } from '@/components/report/AIReportAssistant';
@@ -455,10 +456,13 @@ export function ActivityEditor({
     setIsRewriting(true);
     setRewriteError(null);
     try {
+      // The profile KEY, not the project name. Sending the name made the
+      // backend re-guess the format, and an unrecognised name silently
+      // rewrote a Tecolote shift into Morena bullets.
       const data = await scanApi.rewrite(
         activity.summary,
         'summary',
-        useReportStore.getState().report?.general?.project_name || '',
+        getProfileKey(useReportStore.getState().report),
       );
       const polished = data.text || data.report_text || '';
       if (!polished) {

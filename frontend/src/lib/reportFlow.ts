@@ -23,6 +23,12 @@ const PROFILE_BY_NAME: Record<string, string> = {
  * layout — never an error, because an unknown project must still be editable.
  */
 export function getProfileKey(report: Report | null): string {
+  // What the project picker actually chose, wherever it was recorded. A stored
+  // key is a fact; matching a free-text project name against a list is a guess,
+  // and the guess quietly returns the wrong FORMAT for the whole report.
+  const stored = (report?.general?.profile_key || report?.interview?.profile || '').trim();
+  if (stored) return stored;
+
   const name = (report?.general?.project_name || '').trim().toLowerCase();
   if (!name) return 'morena';
   if (PROFILE_BY_NAME[name]) return PROFILE_BY_NAME[name];

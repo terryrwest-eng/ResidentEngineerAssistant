@@ -262,7 +262,9 @@ export function NewReportPage() {
         fallbackZip={fallbackZip}
         onPicked={(profile, weather: WeatherSnapshot | null) => {
           setProfileKey(profile.key);
-          updateGeneral({ project_name: profile.project_name });
+          // Store the KEY, not just the display name. The name is free text the
+          // user can change; the key is what decides the report's format.
+          updateGeneral({ project_name: profile.project_name, profile_key: profile.key });
           if (weather) {
             setWeather(weather);
             // ALSO write it into general info. The General Info panel, the
