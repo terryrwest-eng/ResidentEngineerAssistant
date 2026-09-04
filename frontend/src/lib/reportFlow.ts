@@ -8,10 +8,24 @@
 
 import type { Report, Activity } from '@/types';
 
-/** Project name → profile key. Mirrors the backend's resolution. */
+/**
+ * Every name a project answers to → its profile key. Mirrors the backend.
+ *
+ * Morena Conveyance North and Morena Pipelines are two DIFFERENT projects.
+ * Tecolote Channel is a location within Morena Pipelines, not a project - it
+ * was listed here as a project name by mistake, so a report correctly labelled
+ * "Morena Pipelines" matched nothing and fell back to the other project's
+ * format. The old names stay as aliases so reports already saved under them
+ * keep resolving to the format they were written in.
+ */
 const PROFILE_BY_NAME: Record<string, string> = {
   'morena conveyance north': 'morena',
-  'tecolote channel': 'tecolote',
+  'morena': 'morena',
+  'morena pipelines': 'morena_pipelines',
+  'morena pipeline': 'morena_pipelines',
+  'morena_pipelines': 'morena_pipelines',
+  'tecolote channel': 'morena_pipelines',
+  'tecolote': 'morena_pipelines',
 };
 
 /**
@@ -32,9 +46,16 @@ export function getProfileKey(report: Report | null): string {
   const name = (report?.general?.project_name || '').trim().toLowerCase();
   if (!name) return 'morena';
   if (PROFILE_BY_NAME[name]) return PROFILE_BY_NAME[name];
-  for (const [known, key] of Object.entries(PROFILE_BY_NAME)) {
-    if (name.includes(known) || known.includes(name)) return key;
-  }
+
+  // Fuzzy only when it is unambiguous. "morena" sits inside both project
+  // names, and picking whichever came first would put the report in the wrong
+  // project's format with nothing to show for it.
+  const hits = new Set(
+    Object.entries(PROFILE_BY_NAME)
+      .filter(([known]) => name.includes(known) || known.includes(name))
+      .map(([, key]) => key),
+  );
+  if (hits.size === 1) return [...hits][0];
   return 'morena';
 }
 

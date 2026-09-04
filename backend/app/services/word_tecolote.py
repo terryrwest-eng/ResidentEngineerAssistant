@@ -26,7 +26,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 
-from app.services.report_profiles import TECOLOTE_EQUIPMENT_GROUPS, get_profile
+from app.services.report_profiles import TECOLOTE_EQUIPMENT_GROUPS, profile_for_report
 
 logger = logging.getLogger(__name__)
 
@@ -471,7 +471,9 @@ def build_tecolote_content(report: dict) -> dict[str, Any]:
     approved on.
     """
     gen = report.get('general', {}) or {}
-    profile = get_profile(gen.get('project_name', ''))
+    # The report's own profile, not a fresh guess from its project name -
+    # otherwise the dispatcher can route here while this resolves elsewhere.
+    profile = profile_for_report(report)
     answers = _answers(report)
 
     header = [

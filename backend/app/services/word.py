@@ -836,14 +836,14 @@ def generate_report_document(report: dict) -> io.BytesIO:
     An unknown project falls through to the classic layout, so a report written
     before profiles existed prints exactly as it always did.
     """
-    from app.services.report_profiles import get_profile
+    from app.services.report_profiles import profile_for_report
 
-    project = ((report.get("general") or {}).get("project_name") or "")
-    profile = get_profile(project)
+    project = (report.get("general") or {}).get("project_name") or ""
+    profile = profile_for_report(report)
 
     if profile.renderer == "tecolote":
         from app.services.word_tecolote import generate_tecolote_document
-        logger.info(f"[word] {project!r} -> Tecolote format")
+        logger.info(f"[word] {project!r} (profile {profile.key}) -> narrative format")
         return generate_tecolote_document(report)
 
     return generate_word_document(report)

@@ -775,9 +775,15 @@ class ReportProfile:
         *,
         contractor: str = '',
         renderer: str = 'classic',
+        aliases: tuple[str, ...] = (),
     ):
         self.key = key
         self.project_name = project_name
+        # Other names this project answers to: former names, the shorthand
+        # people actually type, and the KEY a report was saved with before the
+        # project was renamed. Without these a rename silently changes the
+        # format of every report already written under the old name.
+        self.aliases = aliases
         self.title = title
         self.sections = sections
         self.contractor = contractor
@@ -809,19 +815,32 @@ PROFILES: dict[str, ReportProfile] = {
         contractor='OHL',
         renderer='classic',
     ),
-    'tecolote': ReportProfile(
-        'tecolote',
-        'Tecolote Channel',
+    # Morena PIPELINES, not Morena Conveyance North - two different projects.
+    # Tecolote Channel is a LOCATION within this one, not a project of its own;
+    # it was registered as the project name by mistake, which meant a report
+    # correctly labelled "Morena Pipelines" matched nothing and silently came
+    # back in the other project's format.
+    'morena_pipelines': ReportProfile(
+        'morena_pipelines',
+        'Morena Pipelines',
         'Construction Daily Progress Report',
         TECOLOTE_SECTIONS,
         contractor='OHLA',
         renderer='tecolote',
+        aliases=('tecolote', 'tecolote channel', 'morena pipeline'),
     ),
 }
 
 # Projects are chosen by name in the UI and stored by name on the report, so a
 # report written before profiles existed still resolves to the right format.
 _BY_PROJECT_NAME = {p.project_name.lower(): p for p in PROFILES.values()}
+
+# Every name a profile answers to: its key, its project name and its aliases.
+# Looked up before any fuzzy matching, so an exact answer always beats a guess.
+_BY_ANY_NAME: dict[str, ReportProfile] = {}
+for _p in PROFILES.values():
+    for _name in (_p.key, _p.project_name, *_p.aliases):
+        _BY_ANY_NAME[_name.strip().lower()] = _p
 
 
 def get_profile(key_or_project: str) -> ReportProfile:
@@ -837,11 +856,25 @@ def get_profile(key_or_project: str) -> ReportProfile:
     needle = key_or_project.strip().lower()
     if needle in PROFILES:
         return PROFILES[needle]
-    if needle in _BY_PROJECT_NAME:
-        return _BY_PROJECT_NAME[needle]
-    for name, profile in _BY_PROJECT_NAME.items():
-        if needle in name or name in needle:
-            return profile
+    if needle in _BY_ANY_NAME:
+        return _BY_ANY_NAME[needle]
+
+    # Fuzzy, but only when it is UNAMBIGUOUS. "morena" is a substring of both
+    # "morena conveyance north" and "morena pipelines", and quietly picking
+    # whichever came first in the dict is how a report ends up in the wrong
+    # project's format with nothing to show for it.
+    matches = {
+        profile.key: profile
+        for name, profile in _BY_ANY_NAME.items()
+        if needle in name or name in needle
+    }
+    if len(matches) == 1:
+        return next(iter(matches.values()))
+    if len(matches) > 1:
+        logger.warning(
+            f'[profiles] {key_or_project!r} matches more than one project '
+            f'({sorted(matches)}); refusing to guess.'
+        )
 
     # Nothing matched. The classic format is still the right fallback - every
     # existing report uses it - but this is worth saying out loud: it means a
@@ -853,6 +886,26 @@ def get_profile(key_or_project: str) -> ReportProfile:
     )
     return PROFILES['morena']
 
+
+
+def profile_for_report(report: dict[str, Any]) -> ReportProfile:
+    """
+    The profile a whole REPORT belongs to.
+
+    Every place that needs a report's format should use this rather than
+    reaching for the project name itself. The stored key is what the project
+    picker chose; the project name is free text the user can edit, and matching
+    it against a list is a guess. Deriving the format independently in each
+    place is how one call site printed the narrative layout while the function
+    building its content resolved to the classic one.
+    """
+    general = report.get('general') or {}
+    stored = (
+        general.get('profile_key')
+        or (report.get('interview') or {}).get('profile')
+        or ''
+    )
+    return get_profile(str(stored) or str(general.get('project_name') or ''))
 
 def list_profiles() -> list[dict[str, Any]]:
     """Every profile, for the project picker that opens a new report."""
