@@ -29,6 +29,219 @@
         });
     }
 
+    // ============================================
+    // PAGE-LEVEL TOOLBAR (RadToolBar) + POSTBACK HELPERS
+    // The Main tab is committed by the document toolbar's "Save (Alt+s)" icon.
+    // That is a different control from the per-grid lblSave used by the
+    // Labor/Equipment and Activities grids, and it does not respond reliably
+    // to a bare .click() — RadToolBar drives its buttons from the full mouse
+    // event sequence, or from its own client-side API.
+    // ============================================
+
+    function getPageRequestManager() {
+        try {
+            if (typeof Sys !== 'undefined' && Sys.WebForms && Sys.WebForms.PageRequestManager) {
+                return Sys.WebForms.PageRequestManager.getInstance();
+            }
+        } catch (e) { /* not an ASP.NET AJAX page */ }
+        return null;
+    }
+
+    // Runs `trigger`, then resolves once the postback it starts has finished.
+    // Returns 'ok' | 'timeout' | 'no-postback' | 'no-prm'.
+    async function runAndAwaitPostback(trigger, timeoutMs = 30000) {
+        const prm = getPageRequestManager();
+        if (!prm) {
+            trigger();
+            await bgWait(3000);
+            return 'no-prm';
+        }
+
+        let ended = false;
+        const onEnd = () => { ended = true; };
+        prm.add_endRequest(onEnd);
+
+        try {
+            trigger();
+
+            // Did a postback actually start? Give it 3s.
+            let started = false;
+            for (let i = 0; i < 30; i++) {
+                const inFlight = typeof prm.get_isInAsyncPostBack === 'function' && prm.get_isInAsyncPostBack();
+                if (ended || inFlight) { started = true; break; }
+                await bgWait(100);
+            }
+            if (!started) return 'no-postback';
+
+            const deadline = Date.now() + timeoutMs;
+            while (!ended && Date.now() < deadline) await bgWait(200);
+            if (!ended) return 'timeout';
+
+            await bgWait(700); // let the re-rendered DOM settle
+            return 'ok';
+        } finally {
+            prm.remove_endRequest(onEnd);
+        }
+    }
+
+    function isVisible(el) {
+        return !!el && el.getClientRects().length > 0;
+    }
+
+    // Every RadToolBar client component on the page.
+    function getRadToolBars() {
+        if (typeof Sys === 'undefined' || !Sys.Application) return [];
+        return Sys.Application.getComponents().filter(c => {
+            if (!c || typeof c.get_items !== 'function' || typeof c.get_element !== 'function') return false;
+            let el = null;
+            try { el = c.get_element(); } catch (e) { return false; }
+            return !!el && /RadToolBar/.test(el.className || '');
+        });
+    }
+
+    // Depth-first search of toolbar items (buttons can sit inside drop-downs).
+    function findToolBarItem(match) {
+        const visit = (items) => {
+            if (!items || typeof items.get_count !== 'function') return null;
+            for (let i = 0; i < items.get_count(); i++) {
+                const it = items.getItem(i);
+                const label = [
+                    it.get_toolTip && it.get_toolTip(),
+                    it.get_text && it.get_text(),
+                    it.get_value && it.get_value()
+                ].filter(Boolean).join(' | ');
+                if (match(label, it)) return it;
+                if (typeof it.get_items === 'function') {
+                    const nested = visit(it.get_items());
+                    if (nested) return nested;
+                }
+            }
+            return null;
+        };
+        for (const tb of getRadToolBars()) {
+            let found = null;
+            try { found = visit(tb.get_items()); } catch (e) { /* skip odd component */ }
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // A synthetic .click() on its own is often ignored by RadToolBar, so send
+    // the whole sequence. .click() goes last so a javascript:__doPostBack href
+    // still fires and the click event is raised exactly once.
+    function fireMouseClick(el) {
+        const opts = { bubbles: true, cancelable: true, view: window, button: 0, detail: 1 };
+        el.dispatchEvent(new MouseEvent('mouseover', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        el.dispatchEvent(new MouseEvent('mouseup', opts));
+        el.click();
+    }
+
+    // The visible, enabled page-level Save anchor, most specific match first.
+    function findToolbarSaveElement() {
+        const selectors = [
+            'span.rtbIcon[title="Save (Alt+s)"]',
+            '[title="Save (Alt+s)"]',
+            'span.rtbIcon[title^="Save ("]',
+            '[title^="Save ("]'
+        ];
+        for (const sel of selectors) {
+            for (const el of document.querySelectorAll(sel)) {
+                const anchor = el.tagName === 'A' ? el : (el.closest('a') || el.parentElement);
+                if (!anchor) continue;
+                const li = anchor.closest('li');
+                if (li && /rtbDisabled|rtbItemDisabled/.test(li.className || '')) continue;
+                if (!isVisible(anchor)) continue;
+                return anchor;
+            }
+        }
+        return null;
+    }
+
+    // Clicks the page-level Save and waits out its postback.
+    // Three strategies, most reliable first. Returns { clicked, how, postback }.
+    async function clickToolbarSave() {
+        // Commit whatever field still holds focus before saving.
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        await bgWait(300);
+
+        // 1. Telerik client API — the button knows how to post itself back.
+        const exact = (label) => /save\s*\(alt\+s\)/i.test(label);
+        const loose = (label) => /(^|\|)\s*save\s*(\||$)/i.test(label);
+        const item = findToolBarItem(exact) || findToolBarItem(loose);
+        if (item && typeof item.click === 'function' && (!item.get_enabled || item.get_enabled())) {
+            console.log('  ↪ Save strategy 1: Telerik RadToolBar item.click()');
+            const result = await runAndAwaitPostback(() => item.click());
+            if (result !== 'no-postback') return { clicked: true, how: 'telerik-api', postback: result };
+            console.warn('  ⚠️ Telerik item.click() started no postback — trying DOM click');
+        } else {
+            console.log('  ℹ️ No Save item exposed by a RadToolBar component — trying DOM click');
+        }
+
+        // 2. Full mouse sequence on the toolbar anchor.
+        const anchor = findToolbarSaveElement();
+        if (anchor) {
+            console.log('  ↪ Save strategy 2: DOM mouse sequence on', anchor.id || anchor.className);
+            const result = await runAndAwaitPostback(() => fireMouseClick(anchor));
+            if (result !== 'no-postback') return { clicked: true, how: 'dom-click', postback: result };
+            console.warn('  ⚠️ DOM click started no postback — trying Alt+S');
+        } else {
+            console.warn('  ⚠️ No visible, enabled Save (Alt+s) element in the DOM — trying Alt+S');
+        }
+
+        // 3. Alt+S hotkey.
+        console.log('  ↪ Save strategy 3: Alt+S hotkey');
+        const hotkey = () => {
+            for (const type of ['keydown', 'keypress', 'keyup']) {
+                document.dispatchEvent(new KeyboardEvent(type, {
+                    bubbles: true, cancelable: true, key: 's', code: 'KeyS',
+                    keyCode: 83, which: 83, altKey: true
+                }));
+            }
+        };
+        const result = await runAndAwaitPostback(hotkey);
+        return { clicked: result !== 'no-postback', how: 'alt-s-hotkey', postback: result };
+    }
+
+    // Saves the Main tab and confirms the values survived the round-trip.
+    // Returns true only when it is safe to navigate away from the page.
+    async function saveMainTab(data) {
+        console.log('💾 Saving Main tab (page-level Save) before leaving the page...');
+        const result = await clickToolbarSave();
+
+        if (!result.clicked) {
+            console.error('❌ Save (Alt+s) could not be triggered — all three strategies failed');
+            return false;
+        }
+        console.log(`  ✅ Save triggered via ${result.how} (postback: ${result.postback})`);
+
+        if (result.postback === 'timeout') {
+            console.error('❌ Save postback did not finish within 30s');
+            return false;
+        }
+
+        // Confirm the round-trip kept our values. A server-side validation
+        // failure re-renders the page and silently drops them.
+        await bgWait(500);
+        const checks = [
+            ['Record #', 'ctl00_CPH1_txtCode', data.recordCode],
+            ['Location', 'ctl00_CPH1_txtDescription', data.location]
+        ];
+        for (const [label, id, expected] of checks) {
+            if (!expected) continue;
+            const el = document.getElementById(id);
+            if (!el) { console.warn(`  ⚠️ ${label} field is gone after save (${id})`); continue; }
+            if (String(el.value).trim() !== String(expected).trim()) {
+                console.error(`  ❌ ${label} did not persist: expected "${expected}", got "${el.value}"`);
+                return false;
+            }
+            console.log(`  ✅ ${label} persisted: "${el.value}"`);
+        }
+
+        console.log('✅ Main tab saved');
+        return true;
+    }
+
     // STOP MECHANISM: Press Escape to cancel, or click stop button
     let shouldStop = false;
     let stopButton = null;
@@ -1098,18 +1311,28 @@
         showStopButton();
         const wait = bgWait;
 
-        // Tab navigation helper
-        function clickTab(tabName) {
-            const tabs = document.querySelectorAll('#ctl00_CPH1_tbsDocument .rtsUL .rtsLI a.rtsLink');
-            for (const tab of tabs) {
-                if (tab.textContent.trim() === tabName) {
-                    tab.click();
-                    console.log(`📑 Clicked tab: "${tabName}"`);
-                    return true;
+        // Tab navigation helper — polls for the tab strip (it is re-rendered by
+        // every postback) and waits out the postback the switch kicks off.
+        async function clickTab(tabName) {
+            let target = null;
+            for (let attempt = 0; attempt < 20; attempt++) {
+                const tabs = document.querySelectorAll('#ctl00_CPH1_tbsDocument .rtsUL .rtsLI a.rtsLink');
+                for (const tab of tabs) {
+                    if (tab.textContent.trim() === tabName) { target = tab; break; }
                 }
+                if (target && isVisible(target)) break;
+                if (attempt === 0) console.log(`  ⏳ Waiting for tab strip to render "${tabName}"...`);
+                await wait(500);
             }
-            console.error(`❌ Tab not found: "${tabName}"`);
-            return false;
+
+            if (!target) {
+                console.error(`❌ Tab not found: "${tabName}"`);
+                return false;
+            }
+
+            const result = await runAndAwaitPostback(() => fireMouseClick(target));
+            console.log(`📑 Clicked tab: "${tabName}" (postback: ${result})`);
+            return true;
         }
 
         // Helper: set a plain text input and fire change/blur
@@ -1238,7 +1461,7 @@
             console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
 
             // Ensure we're on the Main tab
-            clickTab('Main');
+            await clickTab('Main');
             await wait(500);
 
             // 1. Report Date
@@ -1280,17 +1503,19 @@
                 data.shiftValue
             );
 
-            // 10. SAVE Main Tab
-            const mainSaveBtn = document.querySelector('span[title="Save (Alt+s)"]');
-            if (mainSaveBtn) {
-                const saveLink = mainSaveBtn.closest('a') || mainSaveBtn.parentElement;
-                if (saveLink) {
-                    console.log('💾 Clicking Main Tab Save (Alt+s)...');
-                    saveLink.click();
-                    await wait(3000); // Wait for AJAX postback to complete
-                }
-            } else {
-                console.warn('⚠️ Main Tab Save (Alt+s) button not found');
+            // 10. SAVE Main Tab — this has to land before we leave the page,
+            // or every field typed above is discarded when the tab switches.
+            const mainSaved = await saveMainTab(data);
+            if (!mainSaved) {
+                hideStopButton();
+                alert(
+                    '⚠️ Auto-fill stopped after the Main tab.\n\n' +
+                    'The page-level Save (Alt+s) did not go through, so nothing was committed ' +
+                    'and the remaining tabs were skipped rather than losing your data.\n\n' +
+                    'The fields are still filled in on screen — press Save yourself, then re-run ' +
+                    'Auto-Fill Everything to continue. See the console for which step failed.'
+                );
+                return;
             }
             
             if (shouldStop) { hideStopButton(); return; }
@@ -1302,7 +1527,7 @@
             console.log('━━━ PHASE 2/5: Activities ━━━');
 
             if (data.activities && data.activities.length > 0) {
-                clickTab('On Site');
+                await clickTab('On Site');
                 await wait(1500); // Wait for tab to load
 
                 // Reuse existing fillAllActivities
@@ -1333,7 +1558,7 @@
             console.log('━━━ PHASE 3/5: Labor & Equipment ━━━');
 
             if (data.resources && data.resources.length > 0) {
-                clickTab('Labor and Equipment');
+                await clickTab('Labor and Equipment');
                 await wait(1500);
 
                 // Reuse existing fillAllRows
@@ -1363,7 +1588,7 @@
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 4/5: Additional Information ━━━');
 
-            clickTab('Additional Information');
+            await clickTab('Additional Information');
             await wait(1500);
 
             await setComboBox(
@@ -1396,7 +1621,7 @@
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 5/5: Notes ━━━');
 
-            clickTab('Notes');
+            await clickTab('Notes');
             await wait(1500);
 
             // ALWAYS copy to clipboard first as a bulletproof fallback
