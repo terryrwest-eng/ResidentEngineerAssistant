@@ -68,6 +68,88 @@
     }
 
     // ============================================
+    // ACTIVITY INSTRUMENTATION
+    // PMWeb does not save through an ASP.NET partial postback, so
+    // PageRequestManager cannot answer "did that click do anything?" — it stays
+    // silent whether the click worked or not. Counting the requests the page
+    // starts, and watching it re-render, answers it whatever the mechanism.
+    // Third-party chatter (pendo and friends) is excluded by origin.
+    // ============================================
+
+    let _netInFlight = 0;
+    let _netStarted = 0;
+    let _mutations = 0;
+
+    function isSameOriginRequest(url) {
+        try {
+            return new URL(url, location.href).origin === location.origin;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    (function instrumentPageActivity() {
+        try {
+            const XHR = window.XMLHttpRequest;
+            if (XHR && XHR.prototype && !XHR.prototype.__pmwebInstrumented) {
+                const open = XHR.prototype.open;
+                const send = XHR.prototype.send;
+
+                XHR.prototype.open = function (method, url) {
+                    this.__pmwebUrl = url;
+                    return open.apply(this, arguments);
+                };
+
+                XHR.prototype.send = function () {
+                    if (isSameOriginRequest(this.__pmwebUrl)) {
+                        _netStarted++;
+                        _netInFlight++;
+                        this.addEventListener('loadend', () => {
+                            _netInFlight = Math.max(0, _netInFlight - 1);
+                        }, { once: true });
+                    }
+                    return send.apply(this, arguments);
+                };
+
+                XHR.prototype.__pmwebInstrumented = true;
+            }
+        } catch (e) {
+            console.warn('⚠️ Could not instrument XMLHttpRequest:', e);
+        }
+
+        try {
+            if (typeof window.fetch === 'function' && !window.fetch.__pmwebInstrumented) {
+                const original = window.fetch;
+                const wrapped = function (input) {
+                    const url = (input && input.url) || input;
+                    if (!isSameOriginRequest(url)) return original.apply(this, arguments);
+                    _netStarted++;
+                    _netInFlight++;
+                    return original.apply(this, arguments).finally(() => {
+                        _netInFlight = Math.max(0, _netInFlight - 1);
+                    });
+                };
+                wrapped.__pmwebInstrumented = true;
+                window.fetch = wrapped;
+            }
+        } catch (e) {
+            console.warn('⚠️ Could not instrument fetch:', e);
+        }
+
+        try {
+            // The ASP.NET form only — pendo and other third-party widgets append
+            // to <body>, and their churn must not read as the page responding.
+            const scope = document.forms[0] || document.documentElement;
+            new MutationObserver((records) => { _mutations += records.length; }).observe(
+                scope,
+                { childList: true, subtree: true, attributes: true, characterData: true }
+            );
+        } catch (e) {
+            console.warn('⚠️ Could not observe DOM mutations:', e);
+        }
+    })();
+
+    // ============================================
     // PAGE-LEVEL TOOLBAR (RadToolBar) + POSTBACK HELPERS
     // The Main tab is committed by the document toolbar's "Save (Alt+s)" icon.
     // That is a different control from the per-grid lblSave used by the
@@ -85,51 +167,56 @@
         return null;
     }
 
-    // Runs `trigger`, then resolves once the postback it starts has finished.
-    // Returns 'ok' | 'timeout' | 'no-postback' | 'no-prm'.
-    async function runAndAwaitPostback(trigger, timeoutMs = 30000) {
-        // A full (non-AJAX) postback tears the page down instead of raising a
-        // PageRequestManager event. Watching for the unload is what tells that
-        // apart from a click that did nothing at all — without it a real save
-        // looks like a dead click and the caller clicks Save again.
+    // Runs `trigger`, then waits for whatever the page decides to do about it:
+    // a partial postback, a request of its own, a full navigation, or just a
+    // re-render. Returns 'ok' | 'full-postback' | 'timeout' | 'no-activity'.
+    async function runAndAwaitActivity(trigger, timeoutMs = 30000, startWindowMs = 6000) {
+        // Only `unload` is blocked by PMWeb's permissions policy; these two fire.
         let unloading = false;
         const onUnload = () => { unloading = true; };
         window.addEventListener('beforeunload', onUnload, true);
         window.addEventListener('pagehide', onUnload, true);
 
         const prm = getPageRequestManager();
-
         let ended = false;
         const onEnd = () => { ended = true; };
         if (prm) prm.add_endRequest(onEnd);
 
+        const inAsync = () => !!prm
+            && typeof prm.get_isInAsyncPostBack === 'function'
+            && prm.get_isInAsyncPostBack();
+
+        const netBaseline = _netStarted;
+        const mutationBaseline = _mutations;
+        const MUTATION_BURST = 3; // one stray attribute change is not a response
+
         try {
             trigger();
 
-            if (!prm) {
-                await bgWait(3000);
-                return unloading ? 'full-postback' : 'no-prm';
-            }
-
-            // Did a postback actually start? Give it 3s.
-            let started = false;
-            for (let i = 0; i < 30; i++) {
+            // Did anything at all happen?
+            let signal = '';
+            const startDeadline = Date.now() + startWindowMs;
+            while (Date.now() < startDeadline) {
                 if (unloading) return 'full-postback';
-                const inFlight = typeof prm.get_isInAsyncPostBack === 'function' && prm.get_isInAsyncPostBack();
-                if (ended || inFlight) { started = true; break; }
+                if (ended || inAsync()) { signal = 'partial postback'; break; }
+                if (_netStarted > netBaseline) { signal = 'request'; break; }
+                if (_mutations > mutationBaseline + MUTATION_BURST) { signal = 'form re-render'; break; }
                 await bgWait(100);
             }
-            if (!started) return unloading ? 'full-postback' : 'no-postback';
+            if (!signal) return 'no-activity';
+            console.log('     · page responded (' + signal + ')');
 
+            // Now wait for it to finish.
             const deadline = Date.now() + timeoutMs;
-            while (!ended && Date.now() < deadline) {
+            while (Date.now() < deadline) {
                 if (unloading) return 'full-postback';
+                if (_netInFlight === 0 && !inAsync()) {
+                    await bgWait(1000); // let the re-rendered DOM settle
+                    if (_netInFlight === 0 && !inAsync()) return 'ok';
+                }
                 await bgWait(200);
             }
-            if (!ended) return 'timeout';
-
-            await bgWait(700); // let the re-rendered DOM settle
-            return 'ok';
+            return 'timeout';
         } finally {
             if (prm) prm.remove_endRequest(onEnd);
             window.removeEventListener('beforeunload', onUnload, true);
@@ -211,49 +298,88 @@
         return null;
     }
 
-    // Clicks the page-level Save and waits out its postback.
-    // Three strategies, most reliable first. Returns { clicked, how, postback }.
+    // Dumps what the Save control actually looks like, so a failure says what is
+    // there rather than leaving it to guesswork.
+    function dumpSaveDiagnostics() {
+        console.group('🔎 Save button diagnostics');
+        const anchor = findToolbarSaveElement();
+        if (!anchor) {
+            console.log('No Save anchor matched. Anything with a Save-ish title:');
+            document.querySelectorAll('[title*="Save" i]').forEach(el => {
+                console.log(el.tagName, '|', el.className, '|', JSON.stringify(el.getAttribute('title')), el);
+            });
+        } else {
+            console.log('anchor       :', anchor);
+            console.log('outerHTML    :', anchor.outerHTML.slice(0, 600));
+            console.log('href         :', anchor.getAttribute('href'));
+            console.log('onclick attr :', anchor.getAttribute('onclick'));
+            const li = anchor.closest('li');
+            if (li) console.log('parent li    :', li.outerHTML.slice(0, 600));
+            const toolbar = anchor.closest('.RadToolBar');
+            if (toolbar) console.log('toolbar      :', toolbar.id, '|', toolbar.className);
+        }
+        console.log('PageRequestManager :', !!getPageRequestManager());
+        console.log('RadToolBars        :', getRadToolBars().map(t => {
+            const el = t.get_element();
+            return el ? (el.id || el.className) : '(no element)';
+        }));
+        console.log('requests seen so far:', _netStarted, '| in flight:', _netInFlight);
+        console.groupEnd();
+    }
+
+    // Clicks the page-level Save and waits for the page to act on it.
+    // Each approach is tried ONCE, and the next one is only reached if the page
+    // did not react at all — clicking Save repeatedly at a page that is already
+    // saving is how the earlier version lost the run.
+    // Returns { clicked, how, outcome }.
     async function clickToolbarSave() {
         // Commit whatever field still holds focus before saving.
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
         await bgWait(300);
 
-        // 1. Telerik client API — the button knows how to post itself back.
+        const attempts = [];
+
+        // 1. Telerik client API.
         const exact = (label) => /save\s*\(alt\+s\)/i.test(label);
         const loose = (label) => /(^|\|)\s*save\s*(\||$)/i.test(label);
         const item = findToolBarItem(exact) || findToolBarItem(loose);
         if (item && typeof item.click === 'function' && (!item.get_enabled || item.get_enabled())) {
-            console.log('  ↪ Save strategy 1: Telerik RadToolBar item.click()');
-            const result = await runAndAwaitPostback(() => item.click());
-            if (result !== 'no-postback') return { clicked: true, how: 'telerik-api', postback: result };
-            console.warn('  ⚠️ Telerik item.click() started no postback — trying DOM click');
-        } else {
-            console.log('  ℹ️ No Save item exposed by a RadToolBar component — trying DOM click');
+            attempts.push({ how: 'telerik-api', run: () => item.click() });
         }
 
         // 2. Full mouse sequence on the toolbar anchor.
         const anchor = findToolbarSaveElement();
         if (anchor) {
-            console.log('  ↪ Save strategy 2: DOM mouse sequence on', anchor.id || anchor.className);
-            const result = await runAndAwaitPostback(() => fireMouseClick(anchor));
-            if (result !== 'no-postback') return { clicked: true, how: 'dom-click', postback: result };
-            console.warn('  ⚠️ DOM click started no postback — trying Alt+S');
-        } else {
-            console.warn('  ⚠️ No visible, enabled Save (Alt+s) element in the DOM — trying Alt+S');
+            attempts.push({
+                how: 'dom-click (' + (anchor.id || anchor.className) + ')',
+                run: () => fireMouseClick(anchor)
+            });
         }
 
         // 3. Alt+S hotkey.
-        console.log('  ↪ Save strategy 3: Alt+S hotkey');
-        const hotkey = () => {
-            for (const type of ['keydown', 'keypress', 'keyup']) {
-                document.dispatchEvent(new KeyboardEvent(type, {
-                    bubbles: true, cancelable: true, key: 's', code: 'KeyS',
-                    keyCode: 83, which: 83, altKey: true
-                }));
+        attempts.push({
+            how: 'alt-s-hotkey',
+            run: () => {
+                for (const type of ['keydown', 'keypress', 'keyup']) {
+                    document.dispatchEvent(new KeyboardEvent(type, {
+                        bubbles: true, cancelable: true, key: 's', code: 'KeyS',
+                        keyCode: 83, which: 83, altKey: true
+                    }));
+                }
             }
-        };
-        const result = await runAndAwaitPostback(hotkey);
-        return { clicked: result !== 'no-postback', how: 'alt-s-hotkey', postback: result };
+        });
+
+        for (const attempt of attempts) {
+            console.log('  ↪ Save via ' + attempt.how);
+            const outcome = await runAndAwaitActivity(attempt.run);
+            if (outcome !== 'no-activity') {
+                return { clicked: true, how: attempt.how, outcome };
+            }
+            console.warn('  ⚠️ ' + attempt.how + ': the page did not react — trying the next approach');
+        }
+
+        dumpSaveDiagnostics();
+        return { clicked: false, how: 'none', outcome: 'no-activity' };
     }
 
     // Saves the Main tab. Returns:
@@ -272,19 +398,19 @@
 
         if (!result.clicked) {
             clearResumeState();
-            console.error('❌ Save (Alt+s) could not be triggered — all three strategies failed');
+            console.error('❌ Save (Alt+s) could not be triggered — the page did not react to any approach');
             return 'failed';
         }
-        console.log(`  ✅ Save triggered via ${result.how} (postback: ${result.postback})`);
+        console.log(`  ✅ Save triggered via ${result.how} (page reacted: ${result.outcome})`);
 
-        if (result.postback === 'full-postback') {
+        if (result.outcome === 'full-postback') {
             console.log('  ↻ Save ran as a full page postback — the run resumes after the reload');
             return 'reloading';
         }
 
-        if (result.postback === 'timeout') {
+        if (result.outcome === 'timeout') {
             clearResumeState();
-            console.error('❌ Save postback did not finish within 30s');
+            console.error('❌ The page never went quiet after Save (30s)');
             return 'failed';
         }
 
@@ -1436,8 +1562,8 @@
                 return false;
             }
 
-            const result = await runAndAwaitPostback(() => fireMouseClick(target));
-            console.log(`📑 Clicked tab: "${tabName}" (postback: ${result})`);
+            const result = await runAndAwaitActivity(() => fireMouseClick(target));
+            console.log(`📑 Clicked tab: "${tabName}" (page reacted: ${result})`);
             return true;
         }
 
