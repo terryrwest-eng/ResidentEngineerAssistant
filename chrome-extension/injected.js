@@ -30,6 +30,44 @@
     }
 
     // ============================================
+    // RESUME STATE
+    // A full page postback destroys this script mid-run. Recording where the
+    // run had got to, before the click that might reload, lets the freshly
+    // injected copy pick the run back up.
+    // ============================================
+
+    const RESUME_KEY = '__pmwebAutoFillResume';
+
+    function saveResumeState(phase, data) {
+        try {
+            sessionStorage.setItem(RESUME_KEY, JSON.stringify({ phase, data, ts: Date.now() }));
+        } catch (e) {
+            console.warn('⚠️ Could not record resume state:', e);
+        }
+    }
+
+    function clearResumeState() {
+        try { sessionStorage.removeItem(RESUME_KEY); } catch (e) { /* nothing to clear */ }
+    }
+
+    // One shot: reading it clears it, so a stale entry can never loop.
+    function loadResumeState() {
+        let state = null;
+        try {
+            const raw = sessionStorage.getItem(RESUME_KEY);
+            if (!raw) return null;
+            state = JSON.parse(raw);
+        } catch (e) {
+            clearResumeState();
+            return null;
+        }
+        clearResumeState();
+        if (!state || !state.data || !state.phase) return null;
+        if (Date.now() - state.ts > 10 * 60 * 1000) return null; // gone stale
+        return state;
+    }
+
+    // ============================================
     // PAGE-LEVEL TOOLBAR (RadToolBar) + POSTBACK HELPERS
     // The Main tab is committed by the document toolbar's "Save (Alt+s)" icon.
     // That is a different control from the per-grid lblSave used by the
@@ -50,37 +88,52 @@
     // Runs `trigger`, then resolves once the postback it starts has finished.
     // Returns 'ok' | 'timeout' | 'no-postback' | 'no-prm'.
     async function runAndAwaitPostback(trigger, timeoutMs = 30000) {
+        // A full (non-AJAX) postback tears the page down instead of raising a
+        // PageRequestManager event. Watching for the unload is what tells that
+        // apart from a click that did nothing at all — without it a real save
+        // looks like a dead click and the caller clicks Save again.
+        let unloading = false;
+        const onUnload = () => { unloading = true; };
+        window.addEventListener('beforeunload', onUnload, true);
+        window.addEventListener('pagehide', onUnload, true);
+
         const prm = getPageRequestManager();
-        if (!prm) {
-            trigger();
-            await bgWait(3000);
-            return 'no-prm';
-        }
 
         let ended = false;
         const onEnd = () => { ended = true; };
-        prm.add_endRequest(onEnd);
+        if (prm) prm.add_endRequest(onEnd);
 
         try {
             trigger();
 
+            if (!prm) {
+                await bgWait(3000);
+                return unloading ? 'full-postback' : 'no-prm';
+            }
+
             // Did a postback actually start? Give it 3s.
             let started = false;
             for (let i = 0; i < 30; i++) {
+                if (unloading) return 'full-postback';
                 const inFlight = typeof prm.get_isInAsyncPostBack === 'function' && prm.get_isInAsyncPostBack();
                 if (ended || inFlight) { started = true; break; }
                 await bgWait(100);
             }
-            if (!started) return 'no-postback';
+            if (!started) return unloading ? 'full-postback' : 'no-postback';
 
             const deadline = Date.now() + timeoutMs;
-            while (!ended && Date.now() < deadline) await bgWait(200);
+            while (!ended && Date.now() < deadline) {
+                if (unloading) return 'full-postback';
+                await bgWait(200);
+            }
             if (!ended) return 'timeout';
 
             await bgWait(700); // let the re-rendered DOM settle
             return 'ok';
         } finally {
-            prm.remove_endRequest(onEnd);
+            if (prm) prm.remove_endRequest(onEnd);
+            window.removeEventListener('beforeunload', onUnload, true);
+            window.removeEventListener('pagehide', onUnload, true);
         }
     }
 
@@ -203,25 +256,44 @@
         return { clicked: result !== 'no-postback', how: 'alt-s-hotkey', postback: result };
     }
 
-    // Saves the Main tab and confirms the values survived the round-trip.
-    // Returns true only when it is safe to navigate away from the page.
+    // Saves the Main tab. Returns:
+    //   'saved'     — committed, safe to move to the next tab
+    //   'reloading' — the save was a full postback; the page is going away and
+    //                 the reload handler resumes the run at Phase 2
+    //   'failed'    — nothing was committed; do not navigate away
     async function saveMainTab(data) {
         console.log('💾 Saving Main tab (page-level Save) before leaving the page...');
+
+        // Recorded before the click, because if this Save turns out to be a
+        // full postback the page reloads and this script never runs again.
+        saveResumeState(2, data);
+
         const result = await clickToolbarSave();
 
         if (!result.clicked) {
+            clearResumeState();
             console.error('❌ Save (Alt+s) could not be triggered — all three strategies failed');
-            return false;
+            return 'failed';
         }
         console.log(`  ✅ Save triggered via ${result.how} (postback: ${result.postback})`);
 
-        if (result.postback === 'timeout') {
-            console.error('❌ Save postback did not finish within 30s');
-            return false;
+        if (result.postback === 'full-postback') {
+            console.log('  ↻ Save ran as a full page postback — the run resumes after the reload');
+            return 'reloading';
         }
 
-        // Confirm the round-trip kept our values. A server-side validation
-        // failure re-renders the page and silently drops them.
+        if (result.postback === 'timeout') {
+            clearResumeState();
+            console.error('❌ Save postback did not finish within 30s');
+            return 'failed';
+        }
+
+        // The page stayed put, so there is nothing to resume.
+        clearResumeState();
+
+        // Check the round-trip kept our values. Only an emptied field means the
+        // save was rejected — PMWeb normalises some values on save, and that is
+        // not a failure worth throwing the rest of the run away over.
         await bgWait(500);
         const checks = [
             ['Record #', 'ctl00_CPH1_txtCode', data.recordCode],
@@ -231,15 +303,20 @@
             if (!expected) continue;
             const el = document.getElementById(id);
             if (!el) { console.warn(`  ⚠️ ${label} field is gone after save (${id})`); continue; }
-            if (String(el.value).trim() !== String(expected).trim()) {
-                console.error(`  ❌ ${label} did not persist: expected "${expected}", got "${el.value}"`);
-                return false;
+            const actual = String(el.value).trim();
+            if (!actual) {
+                console.error(`  ❌ ${label} came back empty — the save was rejected`);
+                return 'failed';
             }
-            console.log(`  ✅ ${label} persisted: "${el.value}"`);
+            if (actual !== String(expected).trim()) {
+                console.warn(`  ⚠️ ${label} came back as "${actual}" (sent "${expected}") — continuing anyway`);
+                continue;
+            }
+            console.log(`  ✅ ${label} persisted: "${actual}"`);
         }
 
         console.log('✅ Main tab saved');
-        return true;
+        return 'saved';
     }
 
     // STOP MECHANISM: Press Escape to cancel, or click stop button
@@ -1304,9 +1381,38 @@
     // ============================================
 
     window.addEventListener('PMWEB_FILL_EVERYTHING', async (event) => {
+        await runFullAutoFill(event.detail, 1);
+    });
+
+    // Picks the run back up when a Save turned out to be a full page postback:
+    // the page reloads, content.js injects this script again, and the run
+    // continues from the phase recorded before the click.
+    async function maybeResumeAfterReload() {
+        const pending = loadResumeState();
+        if (!pending) return;
+
+        await bgWait(2500); // let PMWeb finish wiring up its controls
+        console.log(`↻ Found an interrupted run — offering to resume at phase ${pending.phase}`);
+
+        const go = window.confirm(
+            'PMWeb Auto-Fill\n\n' +
+            'The Main tab saved and the page reloaded.\n\n' +
+            `Resume the run at Phase ${pending.phase} of 5?`
+        );
+        if (!go) { console.log('↻ Resume declined'); return; }
+
+        await runFullAutoFill(pending.data, pending.phase);
+    }
+
+    if (document.readyState === 'complete') {
+        maybeResumeAfterReload();
+    } else {
+        window.addEventListener('load', maybeResumeAfterReload);
+    }
+
+    async function runFullAutoFill(data, startPhase = 1) {
         shouldStop = false;
-        const data = event.detail;
-        console.log('🚀 FULL AUTO-FILL: Starting 5-phase automation');
+        console.log(`🚀 FULL AUTO-FILL: Starting 5-phase automation (from phase ${startPhase})`);
         console.log('📋 Payload:', JSON.stringify(data, null, 2).substring(0, 500));
         showStopButton();
         const wait = bgWait;
@@ -1458,68 +1564,81 @@
             // ═══════════════════════════════════════
             // PHASE 1: MAIN TAB FIELDS
             // ═══════════════════════════════════════
-            console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
+            if (startPhase > 1) {
+                console.log('⏭️ Skipping Phase 1 — the Main tab was saved before the reload');
+            } else {
+                console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
 
-            // Ensure we're on the Main tab
-            await clickTab('Main');
-            await wait(500);
+                // Ensure we're on the Main tab
+                await clickTab('Main');
+                await wait(500);
 
-            // 1. Report Date
-            setDatePicker('ctl00_CPH1_dtpReportDate_dateInput', data.reportDate);
-            await wait(200);
+                // 1. Report Date
+                setDatePicker('ctl00_CPH1_dtpReportDate_dateInput', data.reportDate);
+                await wait(200);
 
-            // 2. Record #
-            setTextInput('ctl00_CPH1_txtCode', data.recordCode);
+                // 2. Record #
+                setTextInput('ctl00_CPH1_txtCode', data.recordCode);
 
-            // 3. Location
-            setTextInput('ctl00_CPH1_txtDescription', data.location);
+                // 3. Location
+                setTextInput('ctl00_CPH1_txtDescription', data.location);
 
-            // 4. Weather Conditions (comma-separated string like "Sunny,Partly Cloudy")
-            await setComboBox('ctl00_CPH1_ddlConditions_Input', data.weatherConditions);
+                // 4. Weather Conditions (comma-separated string like "Sunny,Partly Cloudy")
+                await setComboBox('ctl00_CPH1_ddlConditions_Input', data.weatherConditions);
 
-            // 5. Temperature (average)
-            if (data.temperature) {
-                setTextInput('ctl00_CPH1_txtTemperature', data.temperature);
-            }
+                // 5. Temperature (average)
+                if (data.temperature) {
+                    setTextInput('ctl00_CPH1_txtTemperature', data.temperature);
+                }
 
-            // 6. Precip Amount
-            setTextInput('ctl00_CPH1_txtPrecip', data.precipAmount);
+                // 6. Precip Amount
+                setTextInput('ctl00_CPH1_txtPrecip', data.precipAmount);
 
-            // 7. Start Time (military, no colon: "630")
-            setTextInput(
-                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl00_txtMeasure',
-                data.startTimeMilitary
-            );
-
-            // 8. End Time (military: "1530")
-            setTextInput(
-                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl01_txtMeasure',
-                data.endTimeMilitary
-            );
-
-            // 9. Shift
-            await setComboBox(
-                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl02_ddlMeasure_Input',
-                data.shiftValue
-            );
-
-            // 10. SAVE Main Tab — this has to land before we leave the page,
-            // or every field typed above is discarded when the tab switches.
-            const mainSaved = await saveMainTab(data);
-            if (!mainSaved) {
-                hideStopButton();
-                alert(
-                    '⚠️ Auto-fill stopped after the Main tab.\n\n' +
-                    'The page-level Save (Alt+s) did not go through, so nothing was committed ' +
-                    'and the remaining tabs were skipped rather than losing your data.\n\n' +
-                    'The fields are still filled in on screen — press Save yourself, then re-run ' +
-                    'Auto-Fill Everything to continue. See the console for which step failed.'
+                // 7. Start Time (military, no colon: "630")
+                setTextInput(
+                    'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl00_txtMeasure',
+                    data.startTimeMilitary
                 );
-                return;
-            }
+
+                // 8. End Time (military: "1530")
+                setTextInput(
+                    'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl01_txtMeasure',
+                    data.endTimeMilitary
+                );
+
+                // 9. Shift
+                await setComboBox(
+                    'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl02_ddlMeasure_Input',
+                    data.shiftValue
+                );
+
+                // 10. SAVE Main Tab — this has to land before we leave the page,
+                // or every field typed above is discarded when the tab switches.
+                const saveStatus = await saveMainTab(data);
+
+                if (saveStatus === 'reloading') {
+                    // The page is on its way out. Stop quietly; the freshly injected
+                    // copy resumes at Phase 2 once the reload finishes.
+                    console.log('⏸️ Pausing — the page is reloading, the run continues after it');
+                    hideStopButton();
+                    return;
+                }
+
+                if (saveStatus !== 'saved') {
+                    hideStopButton();
+                    alert(
+                        '⚠️ Auto-fill stopped after the Main tab.\n\n' +
+                        'The page-level Save (Alt+s) did not go through, so nothing was committed ' +
+                        'and the remaining tabs were skipped rather than losing your data.\n\n' +
+                        'The fields are still filled in on screen — press Save yourself, then re-run ' +
+                        'Auto-Fill Everything to continue. See the console for which step failed.'
+                    );
+                    return;
+                }
             
-            if (shouldStop) { hideStopButton(); return; }
-            console.log('✅ PHASE 1 COMPLETE');
+                if (shouldStop) { hideStopButton(); return; }
+                console.log('✅ PHASE 1 COMPLETE');
+            }
 
             // ═══════════════════════════════════════
             // PHASE 2: ACTIVITIES (On Site tab)
@@ -1658,8 +1777,9 @@
             alert(`Auto-fill error: ${err.message}`);
         }
 
+        clearResumeState();
         hideStopButton();
         console.log('🎉🎉🎉 ALL 5 PHASES COMPLETE! 🎉🎉🎉');
-    });
+    }
 
 })();
