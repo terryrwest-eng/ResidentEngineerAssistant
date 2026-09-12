@@ -29,6 +29,422 @@
         });
     }
 
+    // ============================================
+    // RESUME STATE
+    // A full page postback destroys this script mid-run. Recording where the
+    // run had got to, before the click that might reload, lets the freshly
+    // injected copy pick the run back up.
+    // ============================================
+
+    const RESUME_KEY = '__pmwebAutoFillResume';
+
+    function saveResumeState(phase, data) {
+        try {
+            sessionStorage.setItem(RESUME_KEY, JSON.stringify({ phase, data, ts: Date.now() }));
+        } catch (e) {
+            console.warn('⚠️ Could not record resume state:', e);
+        }
+    }
+
+    function clearResumeState() {
+        try { sessionStorage.removeItem(RESUME_KEY); } catch (e) { /* nothing to clear */ }
+    }
+
+    // One shot: reading it clears it, so a stale entry can never loop.
+    function loadResumeState() {
+        let state = null;
+        try {
+            const raw = sessionStorage.getItem(RESUME_KEY);
+            if (!raw) return null;
+            state = JSON.parse(raw);
+        } catch (e) {
+            clearResumeState();
+            return null;
+        }
+        clearResumeState();
+        if (!state || !state.data || !state.phase) return null;
+        if (Date.now() - state.ts > 10 * 60 * 1000) return null; // gone stale
+        return state;
+    }
+
+    // ============================================
+    // ACTIVITY INSTRUMENTATION
+    // PMWeb does not save through an ASP.NET partial postback, so
+    // PageRequestManager cannot answer "did that click do anything?" — it stays
+    // silent whether the click worked or not. Counting the requests the page
+    // starts, and watching it re-render, answers it whatever the mechanism.
+    // Third-party chatter (pendo and friends) is excluded by origin.
+    // ============================================
+
+    let _netInFlight = 0;
+    let _netStarted = 0;
+    let _mutations = 0;
+
+    function isSameOriginRequest(url) {
+        try {
+            return new URL(url, location.href).origin === location.origin;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    (function instrumentPageActivity() {
+        try {
+            const XHR = window.XMLHttpRequest;
+            if (XHR && XHR.prototype && !XHR.prototype.__pmwebInstrumented) {
+                const open = XHR.prototype.open;
+                const send = XHR.prototype.send;
+
+                XHR.prototype.open = function (method, url) {
+                    this.__pmwebUrl = url;
+                    return open.apply(this, arguments);
+                };
+
+                XHR.prototype.send = function () {
+                    if (isSameOriginRequest(this.__pmwebUrl)) {
+                        _netStarted++;
+                        _netInFlight++;
+                        this.addEventListener('loadend', () => {
+                            _netInFlight = Math.max(0, _netInFlight - 1);
+                        }, { once: true });
+                    }
+                    return send.apply(this, arguments);
+                };
+
+                XHR.prototype.__pmwebInstrumented = true;
+            }
+        } catch (e) {
+            console.warn('⚠️ Could not instrument XMLHttpRequest:', e);
+        }
+
+        try {
+            if (typeof window.fetch === 'function' && !window.fetch.__pmwebInstrumented) {
+                const original = window.fetch;
+                const wrapped = function (input) {
+                    const url = (input && input.url) || input;
+                    if (!isSameOriginRequest(url)) return original.apply(this, arguments);
+                    _netStarted++;
+                    _netInFlight++;
+                    return original.apply(this, arguments).finally(() => {
+                        _netInFlight = Math.max(0, _netInFlight - 1);
+                    });
+                };
+                wrapped.__pmwebInstrumented = true;
+                window.fetch = wrapped;
+            }
+        } catch (e) {
+            console.warn('⚠️ Could not instrument fetch:', e);
+        }
+
+        try {
+            // The ASP.NET form only — pendo and other third-party widgets append
+            // to <body>, and their churn must not read as the page responding.
+            const scope = document.forms[0] || document.documentElement;
+            new MutationObserver((records) => { _mutations += records.length; }).observe(
+                scope,
+                { childList: true, subtree: true, attributes: true, characterData: true }
+            );
+        } catch (e) {
+            console.warn('⚠️ Could not observe DOM mutations:', e);
+        }
+    })();
+
+    // ============================================
+    // PAGE-LEVEL TOOLBAR (RadToolBar) + POSTBACK HELPERS
+    // The Main tab is committed by the document toolbar's "Save (Alt+s)" icon.
+    // That is a different control from the per-grid lblSave used by the
+    // Labor/Equipment and Activities grids, and it does not respond reliably
+    // to a bare .click() — RadToolBar drives its buttons from the full mouse
+    // event sequence, or from its own client-side API.
+    // ============================================
+
+    function getPageRequestManager() {
+        try {
+            if (typeof Sys !== 'undefined' && Sys.WebForms && Sys.WebForms.PageRequestManager) {
+                return Sys.WebForms.PageRequestManager.getInstance();
+            }
+        } catch (e) { /* not an ASP.NET AJAX page */ }
+        return null;
+    }
+
+    // Runs `trigger`, then waits for whatever the page decides to do about it:
+    // a partial postback, a request of its own, a full navigation, or just a
+    // re-render. Returns 'ok' | 'full-postback' | 'timeout' | 'no-activity'.
+    async function runAndAwaitActivity(trigger, timeoutMs = 30000, startWindowMs = 6000) {
+        // Only `unload` is blocked by PMWeb's permissions policy; these two fire.
+        let unloading = false;
+        const onUnload = () => { unloading = true; };
+        window.addEventListener('beforeunload', onUnload, true);
+        window.addEventListener('pagehide', onUnload, true);
+
+        const prm = getPageRequestManager();
+        let ended = false;
+        const onEnd = () => { ended = true; };
+        if (prm) prm.add_endRequest(onEnd);
+
+        const inAsync = () => !!prm
+            && typeof prm.get_isInAsyncPostBack === 'function'
+            && prm.get_isInAsyncPostBack();
+
+        const netBaseline = _netStarted;
+        const mutationBaseline = _mutations;
+        const MUTATION_BURST = 3; // one stray attribute change is not a response
+
+        try {
+            trigger();
+
+            // Did anything at all happen?
+            let signal = '';
+            const startDeadline = Date.now() + startWindowMs;
+            while (Date.now() < startDeadline) {
+                if (unloading) return 'full-postback';
+                if (ended || inAsync()) { signal = 'partial postback'; break; }
+                if (_netStarted > netBaseline) { signal = 'request'; break; }
+                if (_mutations > mutationBaseline + MUTATION_BURST) { signal = 'form re-render'; break; }
+                await bgWait(100);
+            }
+            if (!signal) return 'no-activity';
+            console.log('     · page responded (' + signal + ')');
+
+            // Now wait for it to finish.
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+                if (unloading) return 'full-postback';
+                if (_netInFlight === 0 && !inAsync()) {
+                    await bgWait(1000); // let the re-rendered DOM settle
+                    if (_netInFlight === 0 && !inAsync()) return 'ok';
+                }
+                await bgWait(200);
+            }
+            return 'timeout';
+        } finally {
+            if (prm) prm.remove_endRequest(onEnd);
+            window.removeEventListener('beforeunload', onUnload, true);
+            window.removeEventListener('pagehide', onUnload, true);
+        }
+    }
+
+    function isVisible(el) {
+        return !!el && el.getClientRects().length > 0;
+    }
+
+    // Every RadToolBar client component on the page.
+    function getRadToolBars() {
+        if (typeof Sys === 'undefined' || !Sys.Application) return [];
+        return Sys.Application.getComponents().filter(c => {
+            if (!c || typeof c.get_items !== 'function' || typeof c.get_element !== 'function') return false;
+            let el = null;
+            try { el = c.get_element(); } catch (e) { return false; }
+            return !!el && /RadToolBar/.test(el.className || '');
+        });
+    }
+
+    // Depth-first search of toolbar items (buttons can sit inside drop-downs).
+    function findToolBarItem(match) {
+        const visit = (items) => {
+            if (!items || typeof items.get_count !== 'function') return null;
+            for (let i = 0; i < items.get_count(); i++) {
+                const it = items.getItem(i);
+                const label = [
+                    it.get_toolTip && it.get_toolTip(),
+                    it.get_text && it.get_text(),
+                    it.get_value && it.get_value()
+                ].filter(Boolean).join(' | ');
+                if (match(label, it)) return it;
+                if (typeof it.get_items === 'function') {
+                    const nested = visit(it.get_items());
+                    if (nested) return nested;
+                }
+            }
+            return null;
+        };
+        for (const tb of getRadToolBars()) {
+            let found = null;
+            try { found = visit(tb.get_items()); } catch (e) { /* skip odd component */ }
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // A synthetic .click() on its own is often ignored by RadToolBar, so send
+    // the whole sequence. .click() goes last so a javascript:__doPostBack href
+    // still fires and the click event is raised exactly once.
+    function fireMouseClick(el) {
+        const opts = { bubbles: true, cancelable: true, view: window, button: 0, detail: 1 };
+        el.dispatchEvent(new MouseEvent('mouseover', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        el.dispatchEvent(new MouseEvent('mouseup', opts));
+        el.click();
+    }
+
+    // The visible, enabled page-level Save anchor, most specific match first.
+    function findToolbarSaveElement() {
+        const selectors = [
+            'span.rtbIcon[title="Save (Alt+s)"]',
+            '[title="Save (Alt+s)"]',
+            'span.rtbIcon[title^="Save ("]',
+            '[title^="Save ("]'
+        ];
+        for (const sel of selectors) {
+            for (const el of document.querySelectorAll(sel)) {
+                const anchor = el.tagName === 'A' ? el : (el.closest('a') || el.parentElement);
+                if (!anchor) continue;
+                const li = anchor.closest('li');
+                if (li && /rtbDisabled|rtbItemDisabled/.test(li.className || '')) continue;
+                if (!isVisible(anchor)) continue;
+                return anchor;
+            }
+        }
+        return null;
+    }
+
+    // Dumps what the Save control actually looks like, so a failure says what is
+    // there rather than leaving it to guesswork.
+    function dumpSaveDiagnostics() {
+        console.group('🔎 Save button diagnostics');
+        const anchor = findToolbarSaveElement();
+        if (!anchor) {
+            console.log('No Save anchor matched. Anything with a Save-ish title:');
+            document.querySelectorAll('[title*="Save" i]').forEach(el => {
+                console.log(el.tagName, '|', el.className, '|', JSON.stringify(el.getAttribute('title')), el);
+            });
+        } else {
+            console.log('anchor       :', anchor);
+            console.log('outerHTML    :', anchor.outerHTML.slice(0, 600));
+            console.log('href         :', anchor.getAttribute('href'));
+            console.log('onclick attr :', anchor.getAttribute('onclick'));
+            const li = anchor.closest('li');
+            if (li) console.log('parent li    :', li.outerHTML.slice(0, 600));
+            const toolbar = anchor.closest('.RadToolBar');
+            if (toolbar) console.log('toolbar      :', toolbar.id, '|', toolbar.className);
+        }
+        console.log('PageRequestManager :', !!getPageRequestManager());
+        console.log('RadToolBars        :', getRadToolBars().map(t => {
+            const el = t.get_element();
+            return el ? (el.id || el.className) : '(no element)';
+        }));
+        console.log('requests seen so far:', _netStarted, '| in flight:', _netInFlight);
+        console.groupEnd();
+    }
+
+    // Clicks the page-level Save and waits for the page to act on it.
+    // Each approach is tried ONCE, and the next one is only reached if the page
+    // did not react at all — clicking Save repeatedly at a page that is already
+    // saving is how the earlier version lost the run.
+    // Returns { clicked, how, outcome }.
+    async function clickToolbarSave() {
+        // Commit whatever field still holds focus before saving.
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        await bgWait(300);
+
+        const attempts = [];
+
+        // 1. Telerik client API.
+        const exact = (label) => /save\s*\(alt\+s\)/i.test(label);
+        const loose = (label) => /(^|\|)\s*save\s*(\||$)/i.test(label);
+        const item = findToolBarItem(exact) || findToolBarItem(loose);
+        if (item && typeof item.click === 'function' && (!item.get_enabled || item.get_enabled())) {
+            attempts.push({ how: 'telerik-api', run: () => item.click() });
+        }
+
+        // 2. Full mouse sequence on the toolbar anchor.
+        const anchor = findToolbarSaveElement();
+        if (anchor) {
+            attempts.push({
+                how: 'dom-click (' + (anchor.id || anchor.className) + ')',
+                run: () => fireMouseClick(anchor)
+            });
+        }
+
+        // 3. Alt+S hotkey.
+        attempts.push({
+            how: 'alt-s-hotkey',
+            run: () => {
+                for (const type of ['keydown', 'keypress', 'keyup']) {
+                    document.dispatchEvent(new KeyboardEvent(type, {
+                        bubbles: true, cancelable: true, key: 's', code: 'KeyS',
+                        keyCode: 83, which: 83, altKey: true
+                    }));
+                }
+            }
+        });
+
+        for (const attempt of attempts) {
+            console.log('  ↪ Save via ' + attempt.how);
+            const outcome = await runAndAwaitActivity(attempt.run);
+            if (outcome !== 'no-activity') {
+                return { clicked: true, how: attempt.how, outcome };
+            }
+            console.warn('  ⚠️ ' + attempt.how + ': the page did not react — trying the next approach');
+        }
+
+        dumpSaveDiagnostics();
+        return { clicked: false, how: 'none', outcome: 'no-activity' };
+    }
+
+    // Saves the Main tab. Returns:
+    //   'saved'     — committed, safe to move to the next tab
+    //   'reloading' — the save was a full postback; the page is going away and
+    //                 the reload handler resumes the run at Phase 2
+    //   'failed'    — nothing was committed; do not navigate away
+    async function saveMainTab(data) {
+        console.log('💾 Saving Main tab (page-level Save) before leaving the page...');
+
+        // Recorded before the click, because if this Save turns out to be a
+        // full postback the page reloads and this script never runs again.
+        saveResumeState(2, data);
+
+        const result = await clickToolbarSave();
+
+        if (!result.clicked) {
+            clearResumeState();
+            console.error('❌ Save (Alt+s) could not be triggered — the page did not react to any approach');
+            return 'failed';
+        }
+        console.log(`  ✅ Save triggered via ${result.how} (page reacted: ${result.outcome})`);
+
+        if (result.outcome === 'full-postback') {
+            console.log('  ↻ Save ran as a full page postback — the run resumes after the reload');
+            return 'reloading';
+        }
+
+        if (result.outcome === 'timeout') {
+            clearResumeState();
+            console.error('❌ The page never went quiet after Save (30s)');
+            return 'failed';
+        }
+
+        // The page stayed put, so there is nothing to resume.
+        clearResumeState();
+
+        // Check the round-trip kept our values. Only an emptied field means the
+        // save was rejected — PMWeb normalises some values on save, and that is
+        // not a failure worth throwing the rest of the run away over.
+        await bgWait(500);
+        const checks = [
+            ['Record #', 'ctl00_CPH1_txtCode', data.recordCode],
+            ['Location', 'ctl00_CPH1_txtDescription', data.location]
+        ];
+        for (const [label, id, expected] of checks) {
+            if (!expected) continue;
+            const el = document.getElementById(id);
+            if (!el) { console.warn(`  ⚠️ ${label} field is gone after save (${id})`); continue; }
+            const actual = String(el.value).trim();
+            if (!actual) {
+                console.error(`  ❌ ${label} came back empty — the save was rejected`);
+                return 'failed';
+            }
+            if (actual !== String(expected).trim()) {
+                console.warn(`  ⚠️ ${label} came back as "${actual}" (sent "${expected}") — continuing anyway`);
+                continue;
+            }
+            console.log(`  ✅ ${label} persisted: "${actual}"`);
+        }
+
+        console.log('✅ Main tab saved');
+        return 'saved';
+    }
+
     // STOP MECHANISM: Press Escape to cancel, or click stop button
     let shouldStop = false;
     let stopButton = null;
@@ -1091,25 +1507,64 @@
     // ============================================
 
     window.addEventListener('PMWEB_FILL_EVERYTHING', async (event) => {
+        await runFullAutoFill(event.detail, 1);
+    });
+
+    // Picks the run back up when a Save turned out to be a full page postback:
+    // the page reloads, content.js injects this script again, and the run
+    // continues from the phase recorded before the click.
+    async function maybeResumeAfterReload() {
+        const pending = loadResumeState();
+        if (!pending) return;
+
+        await bgWait(2500); // let PMWeb finish wiring up its controls
+        console.log(`↻ Found an interrupted run — offering to resume at phase ${pending.phase}`);
+
+        const go = window.confirm(
+            'PMWeb Auto-Fill\n\n' +
+            'The Main tab saved and the page reloaded.\n\n' +
+            `Resume the run at Phase ${pending.phase} of 5?`
+        );
+        if (!go) { console.log('↻ Resume declined'); return; }
+
+        await runFullAutoFill(pending.data, pending.phase);
+    }
+
+    if (document.readyState === 'complete') {
+        maybeResumeAfterReload();
+    } else {
+        window.addEventListener('load', maybeResumeAfterReload);
+    }
+
+    async function runFullAutoFill(data, startPhase = 1) {
         shouldStop = false;
-        const data = event.detail;
-        console.log('🚀 FULL AUTO-FILL: Starting 5-phase automation');
+        console.log(`🚀 FULL AUTO-FILL: Starting 5-phase automation (from phase ${startPhase})`);
         console.log('📋 Payload:', JSON.stringify(data, null, 2).substring(0, 500));
         showStopButton();
         const wait = bgWait;
 
-        // Tab navigation helper
-        function clickTab(tabName) {
-            const tabs = document.querySelectorAll('#ctl00_CPH1_tbsDocument .rtsUL .rtsLI a.rtsLink');
-            for (const tab of tabs) {
-                if (tab.textContent.trim() === tabName) {
-                    tab.click();
-                    console.log(`📑 Clicked tab: "${tabName}"`);
-                    return true;
+        // Tab navigation helper — polls for the tab strip (it is re-rendered by
+        // every postback) and waits out the postback the switch kicks off.
+        async function clickTab(tabName) {
+            let target = null;
+            for (let attempt = 0; attempt < 20; attempt++) {
+                const tabs = document.querySelectorAll('#ctl00_CPH1_tbsDocument .rtsUL .rtsLI a.rtsLink');
+                for (const tab of tabs) {
+                    if (tab.textContent.trim() === tabName) { target = tab; break; }
                 }
+                if (target && isVisible(target)) break;
+                if (attempt === 0) console.log(`  ⏳ Waiting for tab strip to render "${tabName}"...`);
+                await wait(500);
             }
-            console.error(`❌ Tab not found: "${tabName}"`);
-            return false;
+
+            if (!target) {
+                console.error(`❌ Tab not found: "${tabName}"`);
+                return false;
+            }
+
+            const result = await runAndAwaitActivity(() => fireMouseClick(target));
+            console.log(`📑 Clicked tab: "${tabName}" (page reacted: ${result})`);
+            return true;
         }
 
         // Helper: set a plain text input and fire change/blur
@@ -1235,66 +1690,81 @@
             // ═══════════════════════════════════════
             // PHASE 1: MAIN TAB FIELDS
             // ═══════════════════════════════════════
-            console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
-
-            // Ensure we're on the Main tab
-            clickTab('Main');
-            await wait(500);
-
-            // 1. Report Date
-            setDatePicker('ctl00_CPH1_dtpReportDate_dateInput', data.reportDate);
-            await wait(200);
-
-            // 2. Record #
-            setTextInput('ctl00_CPH1_txtCode', data.recordCode);
-
-            // 3. Location
-            setTextInput('ctl00_CPH1_txtDescription', data.location);
-
-            // 4. Weather Conditions (comma-separated string like "Sunny,Partly Cloudy")
-            await setComboBox('ctl00_CPH1_ddlConditions_Input', data.weatherConditions);
-
-            // 5. Temperature (average)
-            if (data.temperature) {
-                setTextInput('ctl00_CPH1_txtTemperature', data.temperature);
-            }
-
-            // 6. Precip Amount
-            setTextInput('ctl00_CPH1_txtPrecip', data.precipAmount);
-
-            // 7. Start Time (military, no colon: "630")
-            setTextInput(
-                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl00_txtMeasure',
-                data.startTimeMilitary
-            );
-
-            // 8. End Time (military: "1530")
-            setTextInput(
-                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl01_txtMeasure',
-                data.endTimeMilitary
-            );
-
-            // 9. Shift
-            await setComboBox(
-                'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl02_ddlMeasure_Input',
-                data.shiftValue
-            );
-
-            // 10. SAVE Main Tab
-            const mainSaveBtn = document.querySelector('span[title="Save (Alt+s)"]');
-            if (mainSaveBtn) {
-                const saveLink = mainSaveBtn.closest('a') || mainSaveBtn.parentElement;
-                if (saveLink) {
-                    console.log('💾 Clicking Main Tab Save (Alt+s)...');
-                    saveLink.click();
-                    await wait(3000); // Wait for AJAX postback to complete
-                }
+            if (startPhase > 1) {
+                console.log('⏭️ Skipping Phase 1 — the Main tab was saved before the reload');
             } else {
-                console.warn('⚠️ Main Tab Save (Alt+s) button not found');
-            }
+                console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
+
+                // Ensure we're on the Main tab
+                await clickTab('Main');
+                await wait(500);
+
+                // 1. Report Date
+                setDatePicker('ctl00_CPH1_dtpReportDate_dateInput', data.reportDate);
+                await wait(200);
+
+                // 2. Record #
+                setTextInput('ctl00_CPH1_txtCode', data.recordCode);
+
+                // 3. Location
+                setTextInput('ctl00_CPH1_txtDescription', data.location);
+
+                // 4. Weather Conditions (comma-separated string like "Sunny,Partly Cloudy")
+                await setComboBox('ctl00_CPH1_ddlConditions_Input', data.weatherConditions);
+
+                // 5. Temperature (average)
+                if (data.temperature) {
+                    setTextInput('ctl00_CPH1_txtTemperature', data.temperature);
+                }
+
+                // 6. Precip Amount
+                setTextInput('ctl00_CPH1_txtPrecip', data.precipAmount);
+
+                // 7. Start Time (military, no colon: "630")
+                setTextInput(
+                    'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl00_txtMeasure',
+                    data.startTimeMilitary
+                );
+
+                // 8. End Time (military: "1530")
+                setTextInput(
+                    'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl01_txtMeasure',
+                    data.endTimeMilitary
+                );
+
+                // 9. Shift
+                await setComboBox(
+                    'ctl00_CPH1_DocumentSpecificationsHeader1_rptHeaderSpecification_ctl02_ddlMeasure_Input',
+                    data.shiftValue
+                );
+
+                // 10. SAVE Main Tab — this has to land before we leave the page,
+                // or every field typed above is discarded when the tab switches.
+                const saveStatus = await saveMainTab(data);
+
+                if (saveStatus === 'reloading') {
+                    // The page is on its way out. Stop quietly; the freshly injected
+                    // copy resumes at Phase 2 once the reload finishes.
+                    console.log('⏸️ Pausing — the page is reloading, the run continues after it');
+                    hideStopButton();
+                    return;
+                }
+
+                if (saveStatus !== 'saved') {
+                    hideStopButton();
+                    alert(
+                        '⚠️ Auto-fill stopped after the Main tab.\n\n' +
+                        'The page-level Save (Alt+s) did not go through, so nothing was committed ' +
+                        'and the remaining tabs were skipped rather than losing your data.\n\n' +
+                        'The fields are still filled in on screen — press Save yourself, then re-run ' +
+                        'Auto-Fill Everything to continue. See the console for which step failed.'
+                    );
+                    return;
+                }
             
-            if (shouldStop) { hideStopButton(); return; }
-            console.log('✅ PHASE 1 COMPLETE');
+                if (shouldStop) { hideStopButton(); return; }
+                console.log('✅ PHASE 1 COMPLETE');
+            }
 
             // ═══════════════════════════════════════
             // PHASE 2: ACTIVITIES (On Site tab)
@@ -1302,7 +1772,7 @@
             console.log('━━━ PHASE 2/5: Activities ━━━');
 
             if (data.activities && data.activities.length > 0) {
-                clickTab('On Site');
+                await clickTab('On Site');
                 await wait(1500); // Wait for tab to load
 
                 // Reuse existing fillAllActivities
@@ -1333,7 +1803,7 @@
             console.log('━━━ PHASE 3/5: Labor & Equipment ━━━');
 
             if (data.resources && data.resources.length > 0) {
-                clickTab('Labor and Equipment');
+                await clickTab('Labor and Equipment');
                 await wait(1500);
 
                 // Reuse existing fillAllRows
@@ -1363,7 +1833,7 @@
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 4/5: Additional Information ━━━');
 
-            clickTab('Additional Information');
+            await clickTab('Additional Information');
             await wait(1500);
 
             await setComboBox(
@@ -1396,7 +1866,7 @@
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 5/5: Notes ━━━');
 
-            clickTab('Notes');
+            await clickTab('Notes');
             await wait(1500);
 
             // ALWAYS copy to clipboard first as a bulletproof fallback
@@ -1433,8 +1903,9 @@
             alert(`Auto-fill error: ${err.message}`);
         }
 
+        clearResumeState();
         hideStopButton();
         console.log('🎉🎉🎉 ALL 5 PHASES COMPLETE! 🎉🎉🎉');
-    });
+    }
 
 })();
