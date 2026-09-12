@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, "backend")
 
-from app.services.pmweb_mappings import lookup_resource  # noqa: E402
+from app.services.pmweb_mappings import lookup_resource, _builtin_catalog  # noqa: E402
 
 results = []
 
@@ -84,6 +84,40 @@ check(
 
 # Empty input keeps its long-standing default.
 check("empty input defaults to Laborers", lookup_resource("") == "LL-03- Laborers")
+
+# --- against a real synced catalogue, it resolves what the matcher resolves --
+# Same rules as frontend/src/lib/resourceMatcher.ts, so the two agree on both
+# what they resolve AND what they refuse to.
+CATALOG = _builtin_catalog() + [
+    "LE-161- Traffic Control Truck", "LE-167- Thermoplastic Truck",
+    "LE-168- Paint Stencil Truck", "LE-169- DOT Truck",
+    "LE-170- Airless Paint Striper", "LE-172- Airless Paint Grinder",
+    "LE-173- Thermo Stencil Truck", "LE-176- Hot Melt Loop Sealant Applicator",
+    "LE-177- Self Contained Saw Cutting Truck", "LE-178- Traffic Loop Saw",
+]
+
+for spoken, expected in (
+    ("self contained saw truck", "LE-177- Self Contained Saw Cutting Truck"),
+    ("saw truck", "LE-177- Self Contained Saw Cutting Truck"),
+    ("thermo stencil truck", "LE-173- Thermo Stencil Truck"),
+    ("dot truck", "LE-169- DOT Truck"),
+    ("traffic control truck", "LE-161- Traffic Control Truck"),
+    ("paint striper", "LE-170- Airless Paint Striper"),
+):
+    got = lookup_resource(spoken, CATALOG)
+    check(f"resolves: {spoken!r}", got == expected, f"got {got!r}")
+
+# --- and refuses the rest rather than inventing one ------------------------
+# These are different NAMES for a resource, not shortened forms of one. The
+# matcher leaves them for the resolution dialog; guessing here would undo that.
+for spoken in ("striping truck", "hot melt trailer", "air compressor"):
+    got = lookup_resource(spoken, CATALOG)
+    check(f"left alone: {spoken!r}", got == spoken, f"got {got!r}")
+
+# Ambiguous on its own — a dozen entries are trucks.
+check("bare 'dump truck' does not become a crew truck",
+      lookup_resource("dump truck", CATALOG) != "LE-01- Crew Truck",
+      f"got {lookup_resource('dump truck', CATALOG)!r}")
 
 
 print(f"\n{sum(results)}/{len(results)} passed")

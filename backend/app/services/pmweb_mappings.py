@@ -5,6 +5,8 @@ Preserves all lookup tables from the legacy app exactly.
 These map user-entered shorthand to official PMWeb dropdown values.
 """
 
+import json
+import os
 import re
 
 COMPANY_MAP: dict[str, str] = {
@@ -301,60 +303,173 @@ RESOURCE_MAP: dict[str, str] = {
 
 # A resource already written the way PMWeb writes it: "LE-169- DOT Truck".
 _PMWEB_CODE = re.compile(r"^[A-Za-z]{2}-\d+-")
+_CODE_PREFIX = re.compile(r"^[A-Za-z]{2}-\d+-\s*")
+
+# The resources this user has synced out of PMWeb, cached on the settings
+# file's mtime so an export reads it once rather than once per row.
+_CATALOG_CACHE: dict[str, tuple[float, list[str]]] = {}
 
 
-def lookup_resource(user_input: str) -> str:
-    """Map user input to PMWeb resource dropdown value."""
+def _builtin_catalog() -> list[str]:
+    return list(dict.fromkeys(RESOURCE_MAP.values()))
+
+
+def resource_catalog() -> list[str]:
+    """Every resource we are allowed to resolve to: the built-in table plus
+    whatever the Chrome extension has synced out of this user's PMWeb."""
+    builtin = _builtin_catalog()
+    try:
+        from app.core.paths import settings_file
+
+        path = settings_file()
+        mtime = os.path.getmtime(path)
+    except Exception:
+        # No user context (tests, scripts) or no settings yet.
+        return builtin
+
+    cached = _CATALOG_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    codes: list[str] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            custom = (json.load(f) or {}).get("custom_resource_codes") or {}
+        codes = list(custom.get("labor") or []) + list(custom.get("equipment") or [])
+    except Exception:
+        codes = []
+
+    catalog = list(dict.fromkeys(builtin + codes))
+    _CATALOG_CACHE[path] = (mtime, catalog)
+    return catalog
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", "", text.lower())).strip()
+
+
+def _description(resource: str) -> str:
+    """"LE-177- Self Contained Saw Cutting Truck" -> "Self Contained Saw Cutting Truck"."""
+    return _CODE_PREFIX.sub("", resource).strip() or resource
+
+
+def _contains_words(haystack: str, needle: str) -> bool:
+    """Does `needle` appear in `haystack` as whole words?"""
+    if not needle:
+        return False
+    return re.search(r"" + re.escape(needle) + r"", haystack) is not None
+
+
+def _words_agree(a: str, b: str) -> bool:
+    """Two words describe the same thing.
+
+    Equal, or one is a prefix of the other and the shorter is long enough to
+    mean something — this is what lets "laborer" meet "laborers" without
+    letting "pe" meet "striper".
+    """
+    if a == b:
+        return True
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= 4 and longer.startswith(shorter)
+
+
+def _score(query: str, description: str) -> float:
+    """Scored exactly as the dictation matcher scores it — see resourceMatcher.ts.
+
+    The two have to agree. The matcher deliberately refuses to name a resource
+    it is not sure about, and if this side then guesses, that restraint is
+    thrown away and a confidently wrong resource lands in the report.
+    """
+    q = _normalize(query)
+    d = _normalize(description)
+    if not q or not d:
+        return 0.0
+    if q == d:
+        return 1.0
+    if q + "s" == d or d + "s" == q:
+        return 0.98
+    # Whole words only. A raw substring test is what produced the original bug:
+    # the description "PE" sits inside "airless paint striper", so a striper
+    # scored 0.90 against a person.
+    if _contains_words(d, q):
+        return 0.95
+    if _contains_words(q, d):
+        return 0.90
+
+    q_words = q.split(" ")
+    d_words = d.split(" ")
+    matched = [w for w in q_words if any(_words_agree(w, x) for x in d_words)]
+    if len(matched) == len(q_words):
+        return 0.85
+    return (len(matched) / max(len(q_words), 1)) * 0.7
+
+
+def match_resource(user_input: str, catalog: list[str] | None = None) -> str | None:
+    """The catalogue entry this text names, or None when nothing is sure enough.
+
+    Near-exact wins outright. Failing that, a word-subset match is accepted
+    only when exactly one entry achieves it: "saw truck" names one thing in a
+    given catalogue and resolves, "truck" names a dozen and does not.
+    """
+    pool = resource_catalog() if catalog is None else catalog
+    scored = [(r, _score(user_input, _description(r))) for r in pool]
+
+    near = [x for x in scored if x[1] >= 0.95]
+    if near:
+        # Highest score, then the shortest description — the matcher prefers the
+        # generic entry over a more specific one on a tie, and so do we.
+        near.sort(key=lambda x: (-x[1], len(_description(x[0]))))
+        return near[0][0]
+
+    subset = [x for x in scored if x[1] >= 0.85]
+    if len(subset) == 1:
+        return subset[0][0]
+    return None
+
+
+def lookup_resource(user_input: str, catalog: list[str] | None = None) -> str:
+    """Map what was written or said to a PMWeb resource.
+
+    Returns the input UNCHANGED when nothing matches confidently. This function
+    used to fall through to a chain of substring guesses, and the guesses were
+    wrong in the way that matters: "LE-170- Airless Paint Striper" matched the
+    key "pe" inside "striper" and was exported as "LL-09- PE", a person, while
+    "LE-169- DOT Truck" and both "LE-161- Traffic Control Truck" rows matched
+    "truck" and consolidated into one "LE-01- Crew Truck, qty 3". The report on
+    screen was right the whole time; only the export was rewritten.
+    """
     if not user_input:
         return "LL-03- Laborers"
 
     raw = user_input.strip()
     normalized = raw.lower()
 
-    # 1. Exact key match
+    # 1. A shorthand the table knows outright ("pe", "mini", "cat 330").
     if normalized in RESOURCE_MAP:
         return RESOURCE_MAP[normalized]
 
-    # 2. Exact value match (already a PMWeb code)
+    # 2. Already exactly a built-in resource.
     for value in RESOURCE_MAP.values():
         if normalized == value.lower():
             return value
 
-    # 2b. Already in PMWeb's own form, but not in the table — a resource added
-    # to the PMWeb dropdown since this map was written. Hand it back untouched.
-    #
-    # WHY: every step below this one guesses, and guessing at something that is
-    # already the answer can only make it worse. "LE-170- Airless Paint Striper"
-    # used to fall through to step 3, where the key "pe" matched inside
-    # "striper", and it was exported as "LL-09- PE" — a person. "LE-169- DOT
-    # Truck" and two "LE-161- Traffic Control Truck" rows all matched the key
-    # "truck" and were exported as a single "LE-01- Crew Truck, qty 3". The
-    # report on screen was right the whole time; only the export was rewritten,
-    # which is what made it look like edits were not saving.
+    pool = resource_catalog() if catalog is None else catalog
+
+    # 3. Already in PMWeb's own form. Prefer the catalogue's spelling when it
+    # has one, so casing stays canonical; otherwise keep exactly what was given.
     if _PMWEB_CODE.match(raw):
+        for value in pool:
+            if normalized == value.lower():
+                return value
         return raw
 
-    # 3. Key appears as a whole word in the input ("cat 330" contains "330").
-    # Longest key first and on word boundaries: a bare substring test lets the
-    # shortest key in the table win, and the shortest key is never the better
-    # match — it is just the one that happened to appear inside another word.
-    for key, value in sorted(RESOURCE_MAP.items(), key=lambda kv: -len(kv[0])):
-        if key == "_default":
-            continue
-        if re.search(r"\b" + re.escape(key) + r"\b", normalized):
-            return value
+    # 4. Same rules the dictation matcher uses.
+    matched = match_resource(raw, pool)
+    if matched:
+        return matched
 
-    # 4. Input is substring of key
-    for key, value in RESOURCE_MAP.items():
-        if key != "_default" and normalized in key:
-            return value
-
-    # 5. Fuzzy: input appears in PMWeb value string
-    for value in RESOURCE_MAP.values():
-        if normalized in value.lower():
-            return value
-
-    return user_input  # Return as-is if no match
+    # 5. Nothing is sure. Keep what was written rather than invent a resource.
+    return raw
 
 
 def lookup_company(user_input: str) -> str:
