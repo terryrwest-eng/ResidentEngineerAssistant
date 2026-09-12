@@ -14,10 +14,10 @@
  * 7. User reviews → clicks "Add All to Report" → activities are created
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useReportStore } from '@/stores/reportStore';
 import { scanApi } from '@/lib/api';
-import { getResourceMatcher } from '@/lib/resourceMatcher';
+import { getResourceMatcher, loadResourceAliases } from '@/lib/resourceMatcher';
 import { DICTATION_CHECKLIST, findActivityGaps } from '@/lib/activityGaps';
 import { ActivityGapChips } from '@/components/report/ActivityGapChips';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
@@ -367,6 +367,23 @@ export function BulkDictateButton() {
     document.body.removeChild(a);
     console.debug('[BulkDictate] Recording downloaded');
   }
+
+  // Pull the user's synced PMWeb catalogue into the matcher before any
+  // dictation lands.
+  //
+  // WHY: getResourceMatcher() builds its pool once and caches it, and on its
+  // own it only knows the hardcoded DEFAULT_MANPOWER/DEFAULT_EQUIPMENT lists.
+  // loadResourceAliases() is what adds the codes synced from PMWeb — and it
+  // was only ever called by AutoCreateDialog and DispatchImportDialog. Dictate
+  // straight into a fresh session and the matcher had never seen them, so a
+  // spoken "thermo stencil truck" could not resolve to LE-173 because LE-173
+  // was not in the pool. Whether it worked depended on which screen you had
+  // opened first, which is why it looked intermittent.
+  //
+  // Recording and transcription take seconds, so this always resolves first.
+  useEffect(() => {
+    loadResourceAliases();
+  }, []);
 
   // --- Map raw API activities to typed Activity[] ---
   function mapActivities(rawList: Record<string, unknown>[]): Activity[] {
