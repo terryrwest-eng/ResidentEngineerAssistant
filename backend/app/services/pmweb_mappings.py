@@ -5,6 +5,8 @@ Preserves all lookup tables from the legacy app exactly.
 These map user-entered shorthand to official PMWeb dropdown values.
 """
 
+import re
+
 COMPANY_MAP: dict[str, str] = {
     "ohl": "OHL NA",
     "ohl na": "OHL NA",
@@ -297,12 +299,17 @@ RESOURCE_MAP: dict[str, str] = {
 }
 
 
+# A resource already written the way PMWeb writes it: "LE-169- DOT Truck".
+_PMWEB_CODE = re.compile(r"^[A-Za-z]{2}-\d+-")
+
+
 def lookup_resource(user_input: str) -> str:
     """Map user input to PMWeb resource dropdown value."""
     if not user_input:
         return "LL-03- Laborers"
 
-    normalized = user_input.lower().strip()
+    raw = user_input.strip()
+    normalized = raw.lower()
 
     # 1. Exact key match
     if normalized in RESOURCE_MAP:
@@ -313,9 +320,28 @@ def lookup_resource(user_input: str) -> str:
         if normalized == value.lower():
             return value
 
-    # 3. Key is substring of input ("cat 330" contains "330")
-    for key, value in RESOURCE_MAP.items():
-        if key != "_default" and key in normalized:
+    # 2b. Already in PMWeb's own form, but not in the table — a resource added
+    # to the PMWeb dropdown since this map was written. Hand it back untouched.
+    #
+    # WHY: every step below this one guesses, and guessing at something that is
+    # already the answer can only make it worse. "LE-170- Airless Paint Striper"
+    # used to fall through to step 3, where the key "pe" matched inside
+    # "striper", and it was exported as "LL-09- PE" — a person. "LE-169- DOT
+    # Truck" and two "LE-161- Traffic Control Truck" rows all matched the key
+    # "truck" and were exported as a single "LE-01- Crew Truck, qty 3". The
+    # report on screen was right the whole time; only the export was rewritten,
+    # which is what made it look like edits were not saving.
+    if _PMWEB_CODE.match(raw):
+        return raw
+
+    # 3. Key appears as a whole word in the input ("cat 330" contains "330").
+    # Longest key first and on word boundaries: a bare substring test lets the
+    # shortest key in the table win, and the shortest key is never the better
+    # match — it is just the one that happened to appear inside another word.
+    for key, value in sorted(RESOURCE_MAP.items(), key=lambda kv: -len(kv[0])):
+        if key == "_default":
+            continue
+        if re.search(r"\b" + re.escape(key) + r"\b", normalized):
             return value
 
     # 4. Input is substring of key
