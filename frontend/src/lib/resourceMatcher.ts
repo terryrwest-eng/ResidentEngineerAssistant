@@ -230,6 +230,23 @@ export class ResourceMatcher {
     const best = topCandidates[0];
 
     if (!best || best.score < 0.95) {
+      // Nothing is near-exact. Spoken resources are almost always a shortened
+      // form of the catalogue entry — "self contained saw truck" for
+      // "LE-177- Self Contained Saw Cutting Truck" — which scores 0.85: every
+      // word of what was said appears in the entry, the entry just carries one
+      // more word. Requiring 0.95 threw all of those away, and the backend then
+      // guessed at the loose text and produced a confidently wrong resource.
+      //
+      // Accept a word-subset match ONLY when exactly one entry achieves it.
+      // "saw truck" names one thing in this catalogue and resolves; "truck"
+      // names a dozen and still goes to the resolution dialog, which is where
+      // a genuinely ambiguous phrase belongs.
+      const subset = scored.filter((s) => s.score >= 0.85);
+      if (subset.length === 1) {
+        console.debug(`[ResourceMatcher] Unique partial match: "${query}" → ${subset[0].resource}`);
+        return { matched: subset[0].resource, confidence: 0.95, alternatives: [] };
+      }
+
       return {
         matched: null,
         confidence: best ? best.score : 0,
