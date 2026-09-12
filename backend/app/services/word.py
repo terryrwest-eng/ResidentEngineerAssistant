@@ -1,15 +1,17 @@
 """
 Daily Reporter V3 — Word Document Export Service
 
-Generates the exact same report format as the legacy app.
-Two pages:
-  Page 1: Report detail (header, general info, activities with manpower/equipment)
-  Page 2: Consolidated resource table (6 cols - for Word doc)
+Generates the exact same report format as the legacy app: a header, the
+general info, and the activities with their manpower and equipment.
 
-Separate from the PMWeb Combined table (11 cols - for Chrome extension injection).
+Resource rows are listed exactly as they were entered — one line per person,
+one line per machine. They are NOT merged. Eight labourers on a shift are
+eight people with names, and two traffic control trucks are two trucks;
+collapsing them into "QTY 8" discarded the names and read, to the person who
+had just typed them, as the report losing their work.
 
-WHY SEPARATE: The Word doc uses a 6-col summary for readability.
-The PMWeb preview uses all 11 cols (including Start/Finish times) for direct grid injection.
+Separate from the PMWeb Combined table (11 cols - for Chrome extension
+injection), which carries Start/Finish times for direct grid injection.
 """
 
 import io
@@ -201,13 +203,54 @@ def _get_activity_time_range(manpower_list: list) -> tuple:
 # WORD DOCUMENT GENERATOR
 # ============================================
 
+def _resource_line(item: dict, is_equip: bool) -> str:
+    """One resource row, rendered exactly as it was entered.
+
+    Shared by the Word report and the PMWeb Notes HTML so the two can never
+    drift apart again — they were separate copies of the same merging logic,
+    and both had to be found to fix either.
+
+    Returns "" for a row with no quantity or no hours, which is how a
+    half-filled row has always been skipped.
+    """
+    if is_equip:
+        raw = (item.get("name") or item.get("description") or "").strip()
+        worker = ""
+    else:
+        raw = (item.get("trade") or item.get("name") or "").strip()
+        # Manpower carries the trade in `trade` and the person in `name`.
+        # Equipment repeats itself across both, hence the guard.
+        worker = (item.get("name") or "").strip()
+        if worker.lower() == raw.lower():
+            worker = ""
+
+    qty = _num(item.get("qty"))
+    hours = _num(item.get("hours"))
+    company = (item.get("company") or "OHL NA").strip()
+
+    if qty <= 0 or hours <= 0:
+        return ""
+
+    parts = [lookup_resource(raw)]
+    if worker:
+        parts.append(worker)
+    parts.append(f"QTY {_format_number(qty)}")
+    # "EA" only means something when the row covers more than one of them.
+    parts.append(f"{_format_number(hours)} HRS" + (" EA" if qty > 1 else ""))
+    parts.append(company)
+
+    line = " - ".join(parts)
+    if is_equip and item.get("is_rental"):
+        line += " - RENTAL"
+    return line
+
+
 def generate_word_document(report: dict) -> io.BytesIO:
     """
     Generate a Word document from report data.
 
     Structure:
-      Page 1: DAILY FIELD REPORT header → General info → Notes → Activities detail
-      Page 2: Consolidated Resources table (6 columns)
+      DAILY FIELD REPORT header → General info → Notes → Activities detail
 
     Returns io.BytesIO ready to stream.
     """
@@ -359,49 +402,12 @@ def generate_word_document(report: dict) -> io.BytesIO:
             if header:
                 _add_resource_header(header)
 
-            # Consolidate: group by (resource, hours, company) and sum qty
-            # Key: (resource, hours, company, is_rental)
-            # Value: {qty, hours, company, is_rental}
-            consolidated: dict[tuple, dict] = {}
+            # One line per row, exactly as entered — see the module docstring
+            # for why these are not merged.
             for item in items:
-                # Determine resource name
-                if is_equip:
-                    raw = (item.get("name") or item.get("description") or "").strip()
-                else:
-                    raw = (item.get("trade") or item.get("name") or "").strip()
-
-                qty = _num(item.get("qty"))
-                hours = _num(item.get("hours"))
-                company = (item.get("company") or "OHL NA").strip()
-
-                if qty <= 0 or hours <= 0:
+                line = _resource_line(item, is_equip)
+                if not line:
                     continue
-
-                # Map to PMWeb code
-                resource = lookup_resource(raw)
-                is_rental = bool(is_equip and item.get("is_rental"))
-
-                key = (resource, hours, company, is_rental)
-                if key in consolidated:
-                    consolidated[key]["qty"] += qty
-                else:
-                    consolidated[key] = {
-                        "resource": resource,
-                        "qty": qty,
-                        "hours": hours,
-                        "company": company,
-                        "is_rental": is_rental,
-                    }
-
-            # Render consolidated rows
-            for row in consolidated.values():
-                line = (
-                    f"{row['resource']} - QTY {_format_number(row['qty'])} - "
-                    f"{_format_number(row['hours'])} HRS EA - {row['company']}"
-                )
-                if row["is_rental"]:
-                    line += " - RENTAL"
-
                 pr = doc.add_paragraph(line)
                 pr.paragraph_format.left_indent = Inches(0.25)
                 pr.paragraph_format.space_after = Pt(1)
@@ -412,40 +418,6 @@ def generate_word_document(report: dict) -> io.BytesIO:
         _process_resource_list(act.get("extra_work_manpower", []), is_equip=False, header="Extra Work Manpower:")
         _process_resource_list(act.get("extra_work_equipment", []), is_equip=True, header="Extra Work Equipment:")
         _process_resource_list(act.get("consultant_manpower", []), is_equip=False, header="Consultants:")
-
-    # ────────────────────────────────────────
-    # PAGE 2: CONSOLIDATED TABLE (Word doc view)
-    # ────────────────────────────────────────
-    doc.add_page_break()
-    doc.add_heading("Consolidated Resources", level=2)
-
-    aggregated = _aggregate_for_word(report)
-
-    if aggregated:
-        table = doc.add_table(rows=1, cols=6)
-        table.style = "Table Grid"
-
-        headers = ["Resource", "Pay Type", "Class", "Qty", "Company", "Total Hours"]
-        for i, h in enumerate(headers):
-            _add_cell_text(table.rows[0].cells[i], h, bold=True)
-
-        for row_data in aggregated:
-            row = table.add_row().cells
-            _add_cell_text(row[0], row_data["resource"])
-            _add_cell_text(row[1], row_data["pay_type"])
-            _add_cell_text(row[2], row_data["classification"])
-            _add_cell_text(row[3], f"{row_data['qty']:g}", align=WD_ALIGN_PARAGRAPH.RIGHT)
-            _add_cell_text(row[4], row_data["company"])
-            _add_cell_text(row[5], f"{row_data['total_hours']:g}", align=WD_ALIGN_PARAGRAPH.RIGHT)
-
-            # Bold Extra Work rows
-            if str(row_data.get("pay_type", "")).startswith("EW"):
-                for cell in row:
-                    for para in cell.paragraphs:
-                        for r in para.runs:
-                            r.font.bold = True
-    else:
-        doc.add_paragraph("No resources found.")
 
     # Save to bytes
     doc_bytes = io.BytesIO()
@@ -458,7 +430,7 @@ def generate_word_document(report: dict) -> io.BytesIO:
 def generate_notes_html(report: dict) -> str:
     """
     Generate the report content as HTML for PMWeb Notes.
-    Same content as Word doc Page 1 — NO tables, NO consolidated resources.
+    Same content as the Word report — NO tables.
     
     Returns an HTML string ready to paste into PMWeb's RadEditor iframe.
     """
@@ -563,42 +535,11 @@ def generate_notes_html(report: dict) -> str:
             html_parts.append(
                 f'<p style="margin:4px 0 0 0;"><b style="font-size:9pt;">{header}</b></p>'
             )
-            consolidated: dict[tuple, dict] = {}
+            # One line per row, matching the Word report exactly.
             for item in items:
-                if is_equip:
-                    raw = (item.get("name") or item.get("description") or "").strip()
-                else:
-                    raw = (item.get("trade") or item.get("name") or "").strip()
-
-                qty = _num(item.get("qty"))
-                hours = _num(item.get("hours"))
-                company = (item.get("company") or "OHL NA").strip()
-
-                if qty <= 0 or hours <= 0:
+                line = _resource_line(item, is_equip)
+                if not line:
                     continue
-
-                resource = lookup_resource(raw)
-                is_rental = bool(is_equip and item.get("is_rental"))
-
-                key = (resource, hours, company, is_rental)
-                if key in consolidated:
-                    consolidated[key]["qty"] += qty
-                else:
-                    consolidated[key] = {
-                        "resource": resource,
-                        "qty": qty,
-                        "hours": hours,
-                        "company": company,
-                        "is_rental": is_rental,
-                    }
-
-            for row in consolidated.values():
-                line = (
-                    f"{row['resource']} - QTY {_format_number(row['qty'])} - "
-                    f"{_format_number(row['hours'])} HRS EA - {row['company']}"
-                )
-                if row["is_rental"]:
-                    line += " - RENTAL"
                 html_parts.append(
                     f'<p style="margin:1px 0;padding-left:18px;">{line}</p>'
                 )
@@ -611,109 +552,6 @@ def generate_notes_html(report: dict) -> str:
 
     return "\n".join(html_parts)
 
-
-# ============================================
-# AGGREGATION (Word consolidated view - 6 cols)
-# ============================================
-
-def _aggregate_for_word(report: dict) -> list:
-    """
-    Flatten all resources across all activities for the Word consolidated table.
-    Applies OT split (>8 hrs → Regular + Overtime rows).
-
-    CONSOLIDATION RULES:
-      - Deduplicate exact duplicate rows within each activity
-      - Group ONLY within the same activity (different activities stay separate)
-      - Group only if same resource, same hours per unit, same company, same work type
-      - Sum quantities for matching rows
-      - total_hours = consolidated_qty × hours_per_unit
-    """
-    all_rows: list[dict] = []
-    prime = "OHL NA"
-    company_aliases = {"OHLA": prime, "ohla": prime, "Ohla": prime}
-
-    activities = report.get("activities", [])
-    for act in activities:
-        # Per-activity consolidation bucket
-        # Key: (resource, pay_type, classification, company, hours_per_unit)
-        # Value: consolidated row dict
-        activity_consolidated: dict[tuple, dict] = {}
-
-        def _add_to_bucket(resource: str, pay_type: str, classification: str,
-                           company: str, qty: float, hours_per_unit: float):
-            key = (resource, pay_type, classification, company, hours_per_unit)
-            if key in activity_consolidated:
-                activity_consolidated[key]["qty"] += qty
-                activity_consolidated[key]["total_hours"] += qty * hours_per_unit
-            else:
-                activity_consolidated[key] = {
-                    "resource": resource,
-                    "pay_type": pay_type,
-                    "classification": classification,
-                    "qty": qty,
-                    "total_hours": qty * hours_per_unit,
-                    "company": company,
-                }
-
-        def _process(items: list, is_equip: bool, force_flags: dict = None):
-            for item in items:
-                if force_flags:
-                    item = {**item, **force_flags}
-
-                if is_equip:
-                    raw = (item.get("name") or item.get("description") or "").strip()
-                else:
-                    raw = (item.get("trade") or item.get("name") or "").strip()
-
-                resource = lookup_resource(raw)
-                qty = _num(item.get("qty"))
-                hours = _num(item.get("hours"))
-
-                if qty <= 0 or hours <= 0:
-                    continue
-
-                raw_company = item.get("company", "") or ""
-                company = company_aliases.get(raw_company, raw_company) or prime
-
-                is_ew = item.get("is_extra_work", False)
-                pay_type = "EW - Extra Work" if is_ew else "CS - Cost"
-
-                # OT split for manpower only
-                if not is_equip and hours > STANDARD_HOURS:
-                    _add_to_bucket(resource, pay_type, "LR - Labor Regular Time",
-                                   company, qty, STANDARD_HOURS)
-                    _add_to_bucket(resource, pay_type, "LO - Labor Overtime",
-                                   company, qty, hours - STANDARD_HOURS)
-                else:
-                    _add_to_bucket(resource, pay_type, "LR - Labor Regular Time",
-                                   company, qty, hours)
-
-        _process(act.get("manpower", []), is_equip=False)
-        _process(act.get("equipment", []), is_equip=True)
-        _process(act.get("extra_work_manpower", []), is_equip=False, force_flags={"is_extra_work": True})
-        _process(act.get("extra_work_equipment", []), is_equip=True, force_flags={"is_extra_work": True})
-        _process(act.get("consultant_manpower", []), is_equip=False, force_flags={"is_consultant": True})
-
-        # Append this activity's consolidated rows to the final list
-        logger.info(
-            f'[word-consolidate] Activity "{act.get("work_area", "?")[:40]}": '
-            f'input={len(act.get("manpower", []))}mp+{len(act.get("equipment", []))}eq → '
-            f'consolidated={len(activity_consolidated)} rows'
-        )
-        for key, row in activity_consolidated.items():
-            logger.info(
-                f'[word-consolidate]   {row["resource"]} | {row["pay_type"]} | '
-                f'qty={row["qty"]:g} | hrs={row["total_hours"]:g} | {row["company"]}'
-            )
-        all_rows.extend(activity_consolidated.values())
-
-    logger.info(f'[word-consolidate] TOTAL: {len(all_rows)} consolidated rows')
-    return all_rows
-
-
-# ============================================
-# PMWEB COMBINED AGGREGATION (11 cols for Chrome extension)
-# ============================================
 
 def aggregate_for_pmweb(report: dict) -> list:
     """
