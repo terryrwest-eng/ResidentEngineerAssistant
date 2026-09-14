@@ -15,7 +15,7 @@ import { CapacitorConfig } from '@capacitor/cli';
  *     for everything including the UI. Simpler to update but no offline capability.
  */
 const config: CapacitorConfig = {
-  appId: 'com.ohla.dailyreporter',
+  appId: 'com.redailyreporter.app',
   appName: 'Daily Reporter',
   webDir: 'dist',
   plugins: {

@@ -1,5 +1,5 @@
 {
-	"appId": "com.ohla.dailyreporter",
+	"appId": "com.redailyreporter.app",
 	"appName": "Daily Reporter",
 	"webDir": "dist",
 	"plugins": {

@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">Daily Reporter</string>
     <string name="title_activity_main">Daily Reporter</string>
-    <string name="package_name">com.ohla.dailyreporter</string>
-    <string name="custom_url_scheme">com.ohla.dailyreporter</string>
+    <string name="package_name">com.redailyreporter.app</string>
+    <string name="custom_url_scheme">com.redailyreporter.app</string>
 </resources>

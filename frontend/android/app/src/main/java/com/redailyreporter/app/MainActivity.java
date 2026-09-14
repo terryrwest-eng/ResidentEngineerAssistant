@@ -1,4 +1,4 @@
-package com.ohla.dailyreporter;
+package com.redailyreporter.app;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
