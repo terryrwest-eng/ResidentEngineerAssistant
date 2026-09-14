@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches, backfill, interview
+from app.routers import reports, auth, export, ai, trackers, settings, weather, pdf_search, schedule, dispatches, backfill, interview, conversation
 
 # --- Logging ---
 logging.basicConfig(
@@ -84,6 +84,7 @@ app.include_router(backfill.router)
 app.include_router(interview.router)
 
 
+app.include_router(conversation.router)
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
