@@ -1,33 +1,35 @@
 <!--
   Daily Reporter — browser tab icon.
 
-  The same isometric pipe run as the Android launcher icon, in the same amber
-  on the same slate, so a pinned tab and a home screen shortcut are
+  The same two isometric pipe runs as the Android launcher icon, in the same
+  amber on the same slate, so a pinned tab and a home screen shortcut are
   recognisably the same app.
 
-  Geometry mirrors scripts/make_app_icon.py — a run, a riser, another run,
-  centred on a 108 canvas. Change one and change the other.
+  Geometry mirrors scripts/make_app_icon.py: two runs coming in along one
+  isometric axis and turning up, offset along the other horizontal axis so they
+  sit side by side in the same plane. Change one and change the other.
 
-  SVG rotates clockwise for a positive angle and Pillow rotates the other way,
-  which is why the bores are rotated -30 here where the generator says 30.
+  The front run carries a slate outline so the pair never merges into one
+  shape. SVG rotates clockwise for a positive angle and Pillow rotates the
+  other way, which is why the bores are -30 here where the generator says 30.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
   <rect width="108" height="108" rx="24" fill="#132A3E"/>
 
-  <!-- The underside, offset down, so the run has a light direction rather
-       than reading as a flat ribbon. -->
-  <polyline points="28.02,85.5 54,70.5 54,43.5 79.98,28.5"
-            fill="none" stroke="#C97205" stroke-width="15"
-            stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Back run: underside first, then the pipe. -->
+    <polyline points="25.86,69.85 58.76,50.85 58.76,29.85" stroke="#C97205" stroke-width="13"/>
+    <polyline points="25.86,67.25 58.76,48.25 58.76,27.25" stroke="#F59E0B" stroke-width="13"/>
 
-  <!-- The pipe. -->
-  <polyline points="28.02,82.5 54,67.5 54,40.5 79.98,25.5"
-            fill="none" stroke="#F59E0B" stroke-width="15"
-            stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Front run: a slate outline keeps it off the one behind. -->
+    <polyline points="49.24,80.75 82.15,61.75 82.15,40.75" stroke="#132A3E" stroke-width="19.4"/>
+    <polyline points="49.24,83.35 82.15,64.35 82.15,43.35" stroke="#C97205" stroke-width="13"/>
+    <polyline points="49.24,80.75 82.15,61.75 82.15,40.75" stroke="#F59E0B" stroke-width="13"/>
+  </g>
 
-  <!-- Open bores, square to the run. A circle here reads as a rivet. -->
-  <ellipse cx="28.02" cy="82.5" rx="2.4" ry="4.5" fill="#0C1C2A"
-           transform="rotate(-30 28.02 82.5)"/>
-  <ellipse cx="79.98" cy="25.5" rx="2.4" ry="4.5" fill="#0C1C2A"
-           transform="rotate(-30 79.98 25.5)"/>
+  <!-- Open bores at the cut ends, square to the run. -->
+  <ellipse cx="25.86" cy="67.25" rx="2.08" ry="3.9" fill="#0C1C2A"
+           transform="rotate(-30 25.86 67.25)"/>
+  <ellipse cx="49.24" cy="80.75" rx="2.08" ry="3.9" fill="#0C1C2A"
+           transform="rotate(-30 49.24 80.75)"/>
 </svg>

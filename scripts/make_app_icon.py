@@ -6,10 +6,11 @@ a colour is wrong on a dark home screen, a shape is muddy at 48px. Re-running
 this regenerates every density consistently, which is not something you get
 from editing five PNGs by hand.
 
-WHAT IT DRAWS: a run of pipe following an isometric routing — up-right, up and
-over, down-right. The job is commercial pipeline construction, and a piping
-isometric is what that work looks like on paper. Safety amber on engineering
-slate.
+WHAT IT DRAWS: two runs of pipe coming in along one isometric axis and turning
+up together. The job is commercial pipeline construction, and
+a piping isometric is what that work looks like on paper. One line is a length
+of pipe; two running together with laterals is a system. Safety amber on
+engineering slate.
 
 THREE VERSIONS WERE WRONG BEFORE THIS ONE, all of which looked fine as an idea:
   - a clipboard with a voice waveform: the bars read as drips off a shower head
@@ -64,34 +65,42 @@ ISO_DOWN_RIGHT = (0.866, 0.5)
 ISO_UP = (0.0, -1.0)
 
 
-def _route() -> list[tuple[float, float]]:
+def _routes() -> list[list[tuple[float, float]]]:
     """
-    The centreline: a run, a riser, another run — the Z every piping isometric
-    is made of.
+    Two runs coming in along one isometric axis and turning up together.
 
-    An earlier version went up-and-over instead, with a short riser, and the
-    result read as a chevron or a coat hanger. What makes a route legible is
-    that the two runs sit at DIFFERENT LEVELS with a riser between them; a
-    peak is just a bent bar.
+    HOW MUCH FITS AT 48px is the whole constraint. An earlier version ran two
+    parallel headers with branches dropping off both; at icon size the runs
+    fused into a blob and the branches read as feet. Two lines and one elbow
+    each is the most this holds.
 
-    Centred on the canvas afterwards rather than by hand, so the lengths can be
-    tuned without re-deriving the start point each time.
+    The pair is offset along the OTHER horizontal axis, not straight down, so
+    they sit side by side in the same plane like pipes in a rack — offset
+    vertically they would share an x and their risers would collide.
     """
-    pts = [(0.0, 0.0)]
+    def walk(start, legs):
+        pts = [start]
+        for axis, length in legs:
+            x, y = pts[-1]
+            pts.append((x + axis[0] * length, y + axis[1] * length))
+        return pts
 
-    def run(axis, length):
-        x, y = pts[-1]
-        pts.append((x + axis[0] * length, y + axis[1] * length))
+    # A long approach and a shorter riser. Even legs read as two boots; the
+    # run has to dominate for the turn to look like a turn.
+    legs = [(ISO_UP_RIGHT, 38), (ISO_UP, 21)]
+    spacing = 27.0
+    offset = (ISO_DOWN_RIGHT[0] * spacing, ISO_DOWN_RIGHT[1] * spacing)
 
-    run(ISO_UP_RIGHT, 30)
-    run(ISO_UP, 27)
-    run(ISO_UP_RIGHT, 30)
+    paths = [
+        walk((0.0, 0.0), legs),
+        walk(offset, legs),
+    ]
 
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
+    xs = [x for path in paths for x, _ in path]
+    ys = [y for path in paths for _, y in path]
     dx = 54.0 - (min(xs) + max(xs)) / 2
     dy = 54.0 - (min(ys) + max(ys)) / 2
-    return [(x + dx, y + dy) for x, y in pts]
+    return [[(x + dx, y + dy) for x, y in path] for path in paths]
 
 
 def _open_end(img: Image.Image, point: tuple[float, float],
@@ -120,44 +129,45 @@ def _open_end(img: Image.Image, point: tuple[float, float],
 
 def _pipe_layer(size: int) -> Image.Image:
     """
-    A run of pipe following an isometric routing.
+    Two runs of pipe following an isometric routing.
 
-    WHY A POLYLINE AND NOT CYLINDERS: joining separately drawn cylinders at an
+    WHY POLYLINES AND NOT CYLINDERS: joining separately drawn cylinders at an
     elbow leaves a seam that no amount of fiddling hides. One thick stroke with
-    round joins IS the run, elbows included, and the round join is the right
+    round joins IS the run, elbows included, and a round join is the right
     shape for a long-radius bend anyway.
 
-    An earlier version drew a single tilted cylinder. It read as a paper towel
-    roll — one tube with no route is not piping, it is just a tube.
+    The back run is drawn first and carries a slate outline, so where the two
+    cross the front one reads as being in front instead of the pair merging
+    into one shape.
     """
     img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     u = size / CANVAS
 
-    pts = [(x * u, y * u) for x, y in _route()]
-    dia = 15.0 * u
-    ends = (pts[0], pts[-1])
+    routes = _routes()
+    dia = 13.0 * u
+    drop = 2.6 * u
+    gap = 3.2 * u          # the dark separation between the two runs
 
-    # The underside first, offset down, so the run has a light direction
-    # instead of reading as flat ribbon.
-    shadow = [(x, y + 3.0 * u) for x, y in pts]
-    draw.line(shadow, fill=AMBER_DARK, width=int(dia), joint='curve')
-    for x, y in ends:
-        draw.ellipse([x - dia / 2, y + 3.0 * u - dia / 2,
-                      x + dia / 2, y + 3.0 * u + dia / 2], fill=AMBER_DARK)
+    def stroke(path, width, colour, dy=0.0):
+        pts = [(x * u, y * u + dy) for x, y in path]
+        draw.line(pts, fill=colour, width=max(1, int(width)), joint='curve')
+        # joint='curve' rounds the corners but leaves the ends square, which
+        # makes a run look sawn off rather than continuing.
+        for x, y in (pts[0], pts[-1]):
+            draw.ellipse([x - width / 2, y - width / 2,
+                          x + width / 2, y + width / 2], fill=colour)
 
-    # The pipe itself.
-    draw.line(pts, fill=AMBER, width=int(dia), joint='curve')
-    # joint='curve' rounds the corners but leaves the two ends square, which
-    # makes a run look cut off rather than continuing.
-    for x, y in ends:
-        draw.ellipse([x - dia / 2, y - dia / 2, x + dia / 2, y + dia / 2], fill=AMBER)
+    # Back run first, complete, then a slate outline under the front one so the
+    # two never touch.
+    for i, path in enumerate(routes):
+        if i == 1:
+            stroke(path, dia + gap * 2, SLATE)
+        stroke(path, dia, AMBER_DARK, drop)
+        stroke(path, dia, AMBER)
 
-    # Open bores at both ends: this is a section of a run, not a sealed bar.
-    # Square to the run, not a circle — a round dot at icon size reads as a
-    # rivet or a bolt hole, and two of them read as eyes.
-    _open_end(img, pts[0], ISO_UP_RIGHT, dia)
-    _open_end(img, pts[-1], ISO_UP_RIGHT, dia)
+    for path in routes:
+        _open_end(img, (path[0][0] * u, path[0][1] * u), ISO_UP_RIGHT, dia)
 
     return img
 
