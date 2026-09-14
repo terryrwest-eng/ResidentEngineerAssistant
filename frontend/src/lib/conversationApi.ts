@@ -1,0 +1,115 @@
+/**
+ * Daily Reporter V4 — the conversation API
+ *
+ * Three calls. `turn` is the loop: what was said goes in, the next question
+ * comes back, and the whole record travels with it in both directions — the
+ * server keeps nothing between turns, so a dropped connection or a reloaded
+ * page loses a question, not a shift.
+ */
+
+import { createAuthedClient, BASE_URL } from '@/lib/authClient';
+import type { Report } from '@/types';
+
+const api = createAuthedClient({
+  baseURL: `${BASE_URL}/api/conversation`,
+  // A turn is three model calls run at full thinking level, deliberately. The
+  // default two minutes is not enough and a timeout here loses the answer the
+  // inspector just gave.
+  timeout: 300000,
+});
+
+/** One thing the record still needs, or is not sure about. */
+export interface Blocking {
+  key: string;
+  question_id: string;
+  label: string;
+  instance: string;
+  reason?: string;
+  heard?: string;
+  required?: string;
+}
+
+export interface SectionGap {
+  section_id: string;
+  number: number;
+  title: string;
+  writable: boolean;
+  missing: Blocking[];
+  suspect: Blocking[];
+}
+
+export interface Conflict {
+  key: string;
+  known: string;
+  heard: string;
+  note: string;
+}
+
+export interface Progress {
+  total: number;
+  known: number;
+  suspect: number;
+  empty: number;
+}
+
+export interface TurnResult {
+  transcript: string;
+  reply: string;
+  /** Opaque to the UI — hand it straight back on the next turn. */
+  record: Record<string, unknown>;
+  updated: { key: string; state: string; value: string; instance: string; reason: string }[];
+  asked_keys: string[];
+  conflicts: Conflict[];
+  progress: Progress;
+  gaps: SectionGap[];
+  ready_to_write: boolean;
+  /** ok — carry on · repeat — it could not hear, say it again · done */
+  status: 'ok' | 'repeat' | 'done';
+  reason: string;
+}
+
+export interface TurnInput {
+  profile: string;
+  report_date: string;
+  record: Record<string, unknown> | null;
+  history: { role: 'assistant' | 'inspector'; text: string }[];
+  audio_data?: string;
+  mime_type?: string;
+  duration_seconds?: number;
+  text?: string;
+  asked_keys?: string[];
+}
+
+export const conversationApi = {
+  /** One exchange. Send nothing on the first call to get the opening question. */
+  turn: async (input: TurnInput): Promise<TurnResult> => {
+    const response = await api.post('/turn', input);
+    return response.data as TurnResult;
+  },
+
+  /** What is still unknown, without spending a turn. No model call. */
+  gaps: async (input: Pick<TurnInput, 'profile' | 'report_date' | 'record'>) => {
+    const response = await api.post('/gaps', input);
+    return response.data as {
+      progress: Progress;
+      gaps: SectionGap[];
+      blocking: Blocking[];
+      conflicts: Conflict[];
+      ready_to_write: boolean;
+    };
+  },
+
+  /**
+   * Write the report from the record.
+   *
+   * Throws with status 409 while anything is missing, unclear or contested —
+   * the caller is a conversation that can still go and ask, so the refusal
+   * carries the list rather than a half-written report.
+   */
+  compose: async (
+    input: Pick<TurnInput, 'profile' | 'report_date' | 'record'>,
+  ): Promise<{ report: Report; progress: Progress }> => {
+    const response = await api.post('/compose', input);
+    return response.data as { report: Report; progress: Progress };
+  },
+};

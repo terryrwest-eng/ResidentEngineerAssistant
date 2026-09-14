@@ -11,6 +11,7 @@ import { BottomNav } from '@/components/layout/BottomNav';
 import { TopHeader } from '@/components/layout/TopHeader';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { NewReportPage } from '@/pages/NewReportPage';
+import { ConversationPage } from '@/pages/ConversationPage';
 import { ScanPage } from '@/pages/ScanPage';
 import { TrackersPage } from '@/pages/TrackersPage';
 import { ReportHistoryPage } from '@/pages/ReportHistoryPage';
@@ -58,6 +59,9 @@ function AppShell() {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/report/new" element={<NewReportPage />} />
+            {/* The conversation. Writes a report only when the record can
+                support one, so it never leaves a half-filled draft behind. */}
+            <Route path="/report/talk" element={<ConversationPage />} />
             <Route path="/report/:id" element={<NewReportPage />} />
             <Route path="/scan" element={<ScanPage />} />
             <Route path="/trackers" element={<TrackersPage />} />

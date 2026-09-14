@@ -21,6 +21,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ArrowRight,
+  MessagesSquare,
 } from 'lucide-react';
 import { reportApi } from '@/lib/api';
 import { localDateString, formatReportDate } from '@/lib/formatters';
@@ -169,6 +170,12 @@ export function DashboardPage() {
           label="Voice Dictation"
           description="Dictate today's activities"
           onClick={() => navigate('/report/new?action=dictate')}
+        />
+        <QuickAction
+          icon={<MessagesSquare size={24} />}
+          label="Talk It Through"
+          description="Answer questions until the report is complete"
+          onClick={() => navigate('/report/talk')}
         />
         <QuickAction
           icon={<CalendarClock size={24} />}
