@@ -41,8 +41,15 @@ rec.apply("day::locations", state="ok", value="Nobel Dr\nGenesee Ave",
           rows=[{"item": "Nobel Dr"}, {"item": "Genesee Ave"}],
           heard="we were on nobel and genesee today")
 rec.set_instances("activity", ["Nobel Dr", "Genesee Ave"])
+# Derived from the profile, not hardcoded: adding a question to the interview
+# is a normal thing to do, and it should not fail a test about instancing.
+_fixed = sum(len(sec.questions) for sec in rec.profile.sections
+             if not getattr(sec, 'repeats', False))
+_per_location = sum(len(sec.questions) for sec in rec.profile.sections
+                    if getattr(sec, 'repeats', False))
 check("naming two locations creates a full slot set for each",
-      len(rec.slots) == 25, f"{len(rec.slots)} slots")
+      len(rec.slots) == _fixed + 2 * _per_location,
+      f"{len(rec.slots)} slots, expected {_fixed} + 2 x {_per_location}")
 
 first = rec.next_targets(1)[0]
 check("questions follow the order the day ran, not the alphabet",

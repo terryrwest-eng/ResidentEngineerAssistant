@@ -430,6 +430,23 @@ What you produce is the finished document, and it has to flow:
 - Every sentence carries a fact. None exists to introduce, summarise or
   transition into another one.
 
+HOW A SECTION ABOUT WORK AT A LOCATION OPENS AND CLOSES
+The reader checks the same things on every report and should not have to hunt
+for them, so a location's write-up has a frame:
+
+- OPEN with the shift times for that location: "Work was performed from 6:30 AM
+  to 1:00 PM." The times are a fact about the shift, not a detail of the
+  traffic control, and folding them into a traffic control sentence hides them.
+- Then the traffic control that was set, and where.
+- Then the work itself, in the order it happened, naming the crew and the plant
+  that did it.
+- CLOSE with what became of the traffic control: picked up, or left standing
+  and why.
+
+If an answer for one of those was not given, leave that part out and write the
+rest. Do NOT decide that traffic control was removed because the shift ended,
+and do not invent times. A missing fact stays missing.
+
 DO NOT MIMIC THE SHAPE FOR ITS OWN SAKE
 The sub-topic labels exist because the work has natural groupings, not because
 every line needs a label. If a section holds one thing, write the sentence and

@@ -681,6 +681,19 @@ MORENA_SECTIONS = [
                 ),
             ),
             Question(
+                'traffic_control_removed',
+                'Was the traffic control picked up at the end, or left in place?',
+                'narrative', gate='traffic_control', phase='end',
+                help='The report closes on this - the owner checks whether the '
+                     'road was handed back.',
+                example='Picked up at 3:00 PM, cones and arrow boards removed',
+                extract_hint=(
+                    'Say plainly whether it was taken down or left standing, and '
+                    'when. If it was left up, capture what was left and the reason '
+                    'if one was given. Never infer it from the shift end time.'
+                ),
+            ),
+            Question(
                 'summary',
                 'Summary of work at this location.',
                 'narrative', required=True,
