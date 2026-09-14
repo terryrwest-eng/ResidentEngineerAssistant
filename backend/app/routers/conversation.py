@@ -182,6 +182,14 @@ def _ask(client, model_name, prompt: str) -> str:
         contents=[prompt],
         config=genai_types.GenerateContentConfig(
             thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+            # Constrain the API to EMIT JSON rather than asking the prompt
+            # nicely and hoping. Every other AI call in this app already
+            # does this; the conversation router was the one that did not,
+            # and it is the one that returned 502s full of
+            # "Expecting ',' delimiter". Asked in words, the model stays
+            # free to put a raw newline inside a string value, which a long
+            # answer full of station numbers reliably does.
+            response_mime_type='application/json',
             max_output_tokens=8192,
         ),
     )
