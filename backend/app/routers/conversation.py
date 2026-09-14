@@ -42,6 +42,7 @@ from app.routers.ai import (
     _transcribe_audio,
 )
 from app.routers.interview import HOUSE_STYLE
+from app.services.composer import NotReady, compose
 from app.services.day_record import DayRecord
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,16 @@ RULES:
    Never mark "ok" to avoid a follow-up question. An unclear value that gets
    written as certain is the worst outcome available to you.
 3. Stations keep every decimal exactly as spoken. Times are 12-hour with AM/PM.
+3a. A field of kind "crew" or "equipment" is answered with "rows", not "value".
+   Use these keys and leave out what was not said - a missing key is honest,
+   an invented value is not:
+     crew       {{"trade": "LL-03- Laborers", "name": "Dan Griffin", "qty": 1,
+                 "hours": 4.25, "company": "Payco", "is_3rd_party": false}}
+     equipment  {{"name": "LE-161- Traffic Control Truck", "qty": 1,
+                 "hours": 4.25, "company": "Payco"}}
+   One row per person and per machine. Do NOT total them into a single row
+   with a quantity: eight labourers are eight people with names.
+   Write the resource exactly as spoken. Do not map it to a code yourself.
 4. If what they said DISAGREES with a field already marked known, do not
    overwrite it. Report it in "conflicts" and let the inspector settle it.
 5. A contractor's complaint is not a finding. If they say the GC held them up,
@@ -395,6 +406,43 @@ async def take_turn(request: TurnRequest, _user=Depends(require_user)):
         ready_to_write=ready,
         status='done' if ready and bool(plan.get('done')) else 'ok',
     )
+
+
+class ComposeRequest(BaseModel):
+    profile: str = 'morena'
+    report_date: str = ''
+    record: dict[str, Any] | None = None
+
+
+@router.post('/compose')
+async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
+    """
+    Turn a finished day record into a report, ready to save.
+
+    Returns 409 with what is blocking rather than writing around a hole. The
+    caller is a conversation that can still ask - handing it the list of what
+    is missing is more useful than handing it a report with a confident
+    sentence covering an unknown.
+    """
+    record = _load(TurnRequest(profile=request.profile,
+                               report_date=request.report_date,
+                               record=request.record))
+    client, model_name = _get_gemini_client()
+
+    try:
+        report = compose(record, client, model_name)
+    except NotReady as exc:
+        raise HTTPException(status_code=409, detail={
+            'error': 'record_not_ready',
+            'blocking': exc.blocking,
+            'conflicts': exc.conflicts,
+            'progress': record.progress(),
+        })
+    except Exception as exc:
+        logger.exception('[conversation] compose failed: %s', exc)
+        raise HTTPException(status_code=502, detail=f'Could not write the report: {exc}')
+
+    return {'report': report, 'progress': record.progress()}
 
 
 @router.post('/gaps')
