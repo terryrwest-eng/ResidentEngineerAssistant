@@ -37,6 +37,7 @@ from PIL import Image, ImageDraw
 HERE = os.path.dirname(os.path.abspath(__file__))
 RES = os.path.join(HERE, '..', 'frontend', 'android', 'app', 'src', 'main', 'res')
 FAVICON = os.path.join(HERE, '..', 'frontend', 'public', 'favicon.svg')
+ICO = os.path.join(HERE, '..', 'desktop', 'app.ico')
 
 # Engineering slate and safety amber. The slate is dark enough to hold its own
 # on a white home screen and light enough not to vanish on a black one.
@@ -309,6 +310,22 @@ def _hex(rgba) -> str:
     return '#%02X%02X%02X' % rgba[:3]
 
 
+def write_ico(path: str) -> None:
+    """
+    The Windows icon for the desktop wrapper.
+
+    One .ico carries several sizes and Windows picks per context — 256 for the
+    large view, 16 for the taskbar and title bar. Letting it downscale a single
+    large image instead produces mush at 16px, so every size is rendered from
+    the vector geometry rather than resampled from one bitmap.
+    """
+    sizes = (256, 128, 64, 48, 32, 16)
+    frames = [legacy(n, False) for n in sizes]
+    frames[0].save(path, format='ICO',
+                   sizes=[(n, n) for n in sizes],
+                   append_images=frames[1:])
+
+
 def main() -> None:
     written = 0
     for density, size in FOREGROUND.items():
@@ -333,6 +350,9 @@ def main() -> None:
     written += 1
 
     write_favicon(FAVICON)
+    written += 1
+
+    write_ico(ICO)
     written += 1
 
     print(f'wrote {written} files under {os.path.normpath(RES)}')

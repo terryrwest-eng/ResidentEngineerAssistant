@@ -42,14 +42,46 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+
+        // Release signing, read from ../keystore.properties, which is NOT in
+        // the repo. Anyone holding the keystore AND its password can ship an
+        // update that Android accepts as this app, so the two never get
+        // committed - see .gitignore.
+        //
+        // Guarded because a checkout without the keystore must still be able
+        // to build a debug APK. Without the guard, cloning the repo and
+        // running any gradle task fails on a missing file.
+        release {
+            def props = new Properties()
+            def propsFile = rootProject.file('keystore.properties')
+            if (propsFile.exists()) {
+                props.load(new FileInputStream(propsFile))
+                storeFile rootProject.file(props['storeFile'])
+                storePassword props['storePassword']
+                keyAlias props['keyAlias']
+                keyPassword props['keyPassword']
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
+            // Left off deliberately. R8 strips what it cannot see being used,
+            // and Capacitor reaches its plugins by reflection from JavaScript -
+            // which it cannot see. Turning this on silently breaks plugins at
+            // runtime, not at build time.
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+
+            // A release build is NOT debuggable. That is the whole point of
+            // moving off the debug key: a debuggable APK lets anyone with USB
+            // access read the app's memory and local storage, on a phone that
+            // goes to job sites.
+            signingConfig rootProject.file('keystore.properties').exists()
+                    ? signingConfigs.release
+                    : null
         }
     }
 }

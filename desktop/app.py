@@ -26,7 +26,11 @@ import os
 import re
 import sys
 import json
+import socket
 import logging
+import threading
+import functools
+import http.server
 import webview
 import httpx
 from urllib.parse import unquote
@@ -55,6 +59,53 @@ CONFIG_DIR = os.path.join(
     'RE Report Assistant'
 )
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'config.json')
+
+
+class _SpaHandler(http.server.SimpleHTTPRequestHandler):
+    """
+    Serves the bundled front end, and serves index.html for anything it does
+    not recognise.
+
+    WHY THE FALLBACK: the app routes on the client with real paths (/report/42).
+    A plain file server 404s those, so the app works until the moment someone
+    refreshes, which is the worst possible time to find out.
+    """
+
+    def log_message(self, fmt, *args):
+        logger.debug("[web] " + fmt, *args)
+
+    def send_head(self):
+        path = self.translate_path(self.path)
+        if not os.path.exists(path) and not self.path.startswith('/assets/'):
+            self.path = '/index.html'
+        return super().send_head()
+
+
+def _bundled_web_root():
+    """
+    Where the built front end lives, frozen or not.
+
+    PyInstaller unpacks data to _MEIPASS when frozen; running from source it is
+    simply the sibling of this file. Returns None when there is no bundle,
+    which is what makes the cloud fallback below possible.
+    """
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    root = os.path.join(base, 'web')
+    return root if os.path.isfile(os.path.join(root, 'index.html')) else None
+
+
+def _serve(root):
+    """Start a local server for `root` on a free port. Returns its URL."""
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    handler = functools.partial(_SpaHandler, directory=root)
+    httpd = http.server.ThreadingHTTPServer(('127.0.0.1', port), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    logger.info("Serving bundled front end from %s on port %d", root, port)
+    return f'http://127.0.0.1:{port}'
 
 
 class Api:
@@ -284,10 +335,26 @@ def main():
     else:
         logger.info("No work folder configured yet — will prompt on first submit")
 
-    # Create the native window
+    # Prefer the front end bundled inside the app; fall back to the cloud copy.
+    #
+    # WHY BUNDLE IT: as a thin client the window is blank whenever the site is
+    # slow, redeploying or unreachable — on a job site that is most of the
+    # interesting moments. Bundled, the app opens instantly and only the DATA
+    # needs the network.
+    #
+    # The fallback is not a nicety: running this from source during development
+    # there is no bundle, and pointing at the cloud copy is exactly right then.
+    web_root = _bundled_web_root()
+    if web_root:
+        url = _serve(web_root)
+        logger.info("Front end: bundled")
+    else:
+        url = RAILWAY_URL
+        logger.info("Front end: cloud (no bundle found)")
+
     window = webview.create_window(
         title='RE Report Assistant',
-        url=RAILWAY_URL,
+        url=url,
         js_api=api,
         width=1400,
         height=900,

@@ -10,3 +10,8 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# Release signing. The keystore and its passwords never go in the repo:
+# anyone with both can ship an update that Android accepts as this app.
+release.keystore
+keystore.properties
