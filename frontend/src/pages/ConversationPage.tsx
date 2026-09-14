@@ -13,15 +13,32 @@
  * NOTHING IS SAVED UNTIL IT IS WRITTEN. There is no report until the record is
  * complete and the composer has run, so a half-finished conversation cannot
  * leave a half-finished report in the history.
+ *
+ * IT IS STILL PARKED ON THE DEVICE. Keeping the record only in React state
+ * meant the screen closing threw the whole day away - it happened twice in the
+ * field, both times on the last question. After every turn the record is
+ * written to local storage and picked up again when the page reopens, so the
+ * backend stays stateless and no report appears until it is written, but a
+ * killed WebView no longer takes an hour of answers with it. See
+ * lib/conversationDraft.ts.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, Square, Send, Loader2, AlertTriangle, CheckCircle2, FileText } from 'lucide-react';
+import {
+  Mic, Square, Send, Loader2, AlertTriangle, CheckCircle2, FileText, RotateCcw,
+} from 'lucide-react';
 
 import { conversationApi, type Conflict, type Progress, type SectionGap } from '@/lib/conversationApi';
 import { reportApi } from '@/lib/api';
-import { useToast } from '@/components/ui/ConfirmProvider';
+import { useConfirm, useToast } from '@/components/ui/ConfirmProvider';
+import {
+  clearConversationDraft,
+  draftAnswerCount,
+  loadConversationDraft,
+  saveConversationDraft,
+  type ConversationDraftInput,
+} from '@/lib/conversationDraft';
 import { useMicLevel, MIC_SILENCE_THRESHOLD } from '@/hooks/useMicLevel';
 import { MicLevelMeter } from '@/components/ui/MicLevelMeter';
 import { localDateString } from '@/lib/formatters';
@@ -54,6 +71,9 @@ function pickMimeType(): string {
   );
 }
 
+/** The only format this screen talks about, named once. */
+const PROFILE = 'morena';
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -66,20 +86,70 @@ function blobToBase64(blob: Blob): Promise<string> {
 export function ConversationPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const confirm = useConfirm();
   const mic = useMicLevel('conversation');
 
-  const [phase, setPhase] = useState<Phase>('opening');
-  const [history, setHistory] = useState<Exchange[]>([]);
-  const [record, setRecord] = useState<Record<string, unknown> | null>(null);
-  const [askedKeys, setAskedKeys] = useState<string[]>([]);
-  const [progress, setProgress] = useState<Progress>({ total: 0, known: 0, suspect: 0, empty: 0 });
-  const [gaps, setGaps] = useState<SectionGap[]>([]);
-  const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [ready, setReady] = useState(false);
-  const [typed, setTyped] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  // Read ONCE, before the first render, so a resumed conversation never
+  // flashes the opening question first - and so the opening turn below can see
+  // that it is not needed rather than racing it.
+  const [restored] = useState(() => loadConversationDraft());
 
-  const reportDate = useRef(localDateString());
+  const [phase, setPhase] = useState<Phase>(restored ? 'listening' : 'opening');
+  const [history, setHistory] = useState<Exchange[]>(restored?.history ?? []);
+  const [record, setRecord] = useState<Record<string, unknown> | null>(restored?.record ?? null);
+  const [askedKeys, setAskedKeys] = useState<string[]>(restored?.askedKeys ?? []);
+  const [progress, setProgress] = useState<Progress>(
+    restored?.progress ?? { total: 0, known: 0, suspect: 0, empty: 0 },
+  );
+  const [gaps, setGaps] = useState<SectionGap[]>(restored?.gaps ?? []);
+  const [conflicts, setConflicts] = useState<Conflict[]>(restored?.conflicts ?? []);
+  const [ready, setReady] = useState(restored?.ready ?? false);
+  const [typed, setTyped] = useState(restored?.typed ?? '');
+  const [error, setError] = useState<string | null>(null);
+  /** Shown until the conversation is carried on or started over. */
+  const [resumed, setResumed] = useState(!!restored);
+
+  // A resumed conversation belongs to the day it was started, not to today.
+  // Taking today's date would file a Friday shift under Saturday.
+  //
+  // State rather than a ref because the header prints it. Every call that
+  // sends it takes it as an argument instead of reading it back out, so
+  // starting over cannot send today's turn against yesterday's date.
+  const [reportDate, setReportDate] = useState(restored?.reportDate || localDateString());
+
+  // The thread, as a value rather than as state. Parking has to happen with
+  // the NEW history in hand, and a state updater is not the place to do it.
+  const historyRef = useRef<Exchange[]>(restored?.history ?? []);
+
+  /** Exactly what would be restored if the screen closed right now. */
+  const draftRef = useRef<ConversationDraftInput>({
+    reportDate: restored?.reportDate || localDateString(),
+    profile: PROFILE,
+    history: restored?.history ?? [],
+    record: restored?.record ?? null,
+    askedKeys: restored?.askedKeys ?? [],
+    progress: restored?.progress ?? { total: 0, known: 0, suspect: 0, empty: 0 },
+    gaps: restored?.gaps ?? [],
+    conflicts: restored?.conflicts ?? [],
+    ready: restored?.ready ?? false,
+    typed: restored?.typed ?? '',
+  });
+
+  /**
+   * Set once the conversation has become a report.
+   *
+   * Leaving this screen unmounts it, and unmounting parks the draft - which
+   * would write the whole conversation straight back after it had been
+   * released, and greet the next report with a resume banner for one already
+   * written.
+   */
+  const released = useRef(false);
+
+  const park = useCallback(() => {
+    if (released.current) return;
+    saveConversationDraft(draftRef.current);
+  }, []);
+
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const mimeRef = useRef('audio/webm');
@@ -92,7 +162,11 @@ export function ConversationPage() {
   }, [history, phase]);
 
   const applyTurn = useCallback(
-    (result: Awaited<ReturnType<typeof conversationApi.turn>>, said?: string) => {
+    (
+      result: Awaited<ReturnType<typeof conversationApi.turn>>,
+      forDate: string,
+      said?: string,
+    ) => {
       setRecord(result.record);
       setAskedKeys(result.asked_keys || []);
       setProgress(result.progress);
@@ -100,35 +174,51 @@ export function ConversationPage() {
       setConflicts(result.conflicts || []);
       setReady(result.ready_to_write);
 
-      setHistory((prev) => {
-        const next = [...prev];
-        // What it actually heard, not what was said into the room. If those
-        // differ the inspector needs to see it before it becomes a fact.
-        const heard = (result.transcript || said || '').trim();
-        if (heard) next.push({ role: 'inspector', text: heard });
-        if (result.reply) next.push({ role: 'assistant', text: result.reply });
-        return next;
-      });
+      // What it actually heard, not what was said into the room. If those
+      // differ the inspector needs to see it before it becomes a fact.
+      const heard = (result.transcript || said || '').trim();
+      const next = [...historyRef.current];
+      if (heard) next.push({ role: 'inspector', text: heard });
+      if (result.reply) next.push({ role: 'assistant', text: result.reply });
+      historyRef.current = next;
+      setHistory(next);
+
+      // Parked NOW, with the answer that was just understood. Everything above
+      // this line is React state, which the screen closing takes with it.
+      draftRef.current = {
+        reportDate: forDate,
+        profile: PROFILE,
+        history: next,
+        record: result.record,
+        askedKeys: result.asked_keys || [],
+        progress: result.progress,
+        gaps: result.gaps || [],
+        conflicts: result.conflicts || [],
+        ready: result.ready_to_write,
+        typed: '',
+      };
+      park();
 
       setPhase('listening');
     },
-    [],
+    [park],
   );
 
   const send = useCallback(
     async (payload: { text?: string; audio_data?: string; mime_type?: string; duration_seconds?: number }) => {
       setPhase('thinking');
       setError(null);
+      setResumed(false);
       try {
         const result = await conversationApi.turn({
-          profile: 'morena',
-          report_date: reportDate.current,
+          profile: PROFILE,
+          report_date: reportDate,
           record,
-          history,
+          history: historyRef.current,
           asked_keys: askedKeys,
           ...payload,
         });
-        applyTurn(result, payload.text);
+        applyTurn(result, reportDate, payload.text);
         if (result.status === 'repeat') {
           toast(result.reason || "Didn't catch that — say it again", 'err');
         }
@@ -139,34 +229,102 @@ export function ConversationPage() {
         setPhase('failed');
       }
     },
-    [record, history, askedKeys, applyTurn, toast],
+    [record, askedKeys, reportDate, applyTurn, toast],
   );
 
   // The opening question. Sending nothing is what asks for it.
+  // Takes the day rather than reading it back: starting over changes the date
+  // and asks the opening question in the same breath, and state read here
+  // would still be yesterday.
+  const askOpening = useCallback(async (forDate: string) => {
+    try {
+      const result = await conversationApi.turn({
+        profile: PROFILE,
+        report_date: forDate,
+        record: null,
+        history: [],
+      });
+      applyTurn(result, forDate);
+    } catch (err) {
+      console.error('[Conversation] could not start:', err);
+      setError(err instanceof Error ? err.message : 'Could not start the conversation');
+      setPhase('failed');
+    }
+  }, [applyTurn]);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await conversationApi.turn({
-          profile: 'morena',
-          report_date: reportDate.current,
-          record: null,
-          history: [],
-        });
-        if (!cancelled) applyTurn(result);
-      } catch (err) {
-        if (cancelled) return;
-        console.error('[Conversation] could not start:', err);
-        setError(err instanceof Error ? err.message : 'Could not start the conversation');
-        setPhase('failed');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // A conversation was parked on this device - carry on with it. Asking the
+    // opening question here would talk over an answer already given.
+    if (restored) return;
+    // The opening question has to be fetched, and the answer to it is state.
+    // That is the one thing this screen cannot do any other way.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void askOpening(reportDate);
     // Deliberately once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The last line of defence. Every turn is parked already, so this covers the
+  // sentence typed but not yet sent - and the Android case this whole fix is
+  // about, where the WebView is killed without ever unmounting the page.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') park();
+    };
+    window.addEventListener('pagehide', park);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('pagehide', park);
+      document.removeEventListener('visibilitychange', onHide);
+      park();
+    };
+  }, [park]);
+
+  /**
+   * Throw the parked conversation away and open a fresh one.
+   *
+   * Confirmed, because it is the one control on this screen that destroys
+   * answers - which is the thing the parking exists to prevent.
+   */
+  const startOver = useCallback(async () => {
+    const ok = await confirm({
+      title: 'Start a new conversation?',
+      message: 'The answers saved on this device will be thrown away.',
+      confirmLabel: 'Start over',
+      danger: true,
+    });
+    if (!ok) return;
+
+    clearConversationDraft();
+    historyRef.current = [];
+    setHistory([]);
+    setRecord(null);
+    setAskedKeys([]);
+    setProgress({ total: 0, known: 0, suspect: 0, empty: 0 });
+    setGaps([]);
+    setConflicts([]);
+    setReady(false);
+    setTyped('');
+    setError(null);
+    setResumed(false);
+    setPhase('opening');
+
+    const today = localDateString();
+    setReportDate(today);
+    draftRef.current = {
+      reportDate: today,
+      profile: PROFILE,
+      history: [],
+      record: null,
+      askedKeys: [],
+      progress: { total: 0, known: 0, suspect: 0, empty: 0 },
+      gaps: [],
+      conflicts: [],
+      ready: false,
+      typed: '',
+    };
+    await askOpening(today);
+  }, [askOpening, confirm]);
 
   async function startRecording() {
     try {
@@ -228,11 +386,15 @@ export function ConversationPage() {
     setError(null);
     try {
       const { report } = await conversationApi.compose({
-        profile: 'morena',
-        report_date: reportDate.current,
+        profile: PROFILE,
+        report_date: reportDate,
         record,
       });
       const created = await reportApi.create(report as unknown as Record<string, unknown>);
+      // It is a report now, so the parked copy has nothing left to protect -
+      // and must not come back when leaving this screen unmounts it.
+      released.current = true;
+      clearConversationDraft();
       toast('Report written');
       navigate(`/report/${created.id}`, { replace: true });
     } catch (err) {
@@ -251,6 +413,7 @@ export function ConversationPage() {
     }
   }
 
+  const restoredCount = restored ? draftAnswerCount(restored) : 0;
   const pct = progress.total ? Math.round((progress.known / progress.total) * 100) : 0;
   const busy = phase === 'thinking' || phase === 'writing' || phase === 'opening';
   const stillOpen = gaps.flatMap((g) => [...g.missing, ...g.suspect]);
@@ -260,9 +423,31 @@ export function ConversationPage() {
       <header>
         <h1 style={{ margin: 0, fontSize: '1.25rem' }}>Talk through the day</h1>
         <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-          {reportDate.current} · answer in your own words, it will ask for whatever is missing
+          {reportDate} · answer in your own words, it will ask for whatever is missing
         </p>
       </header>
+
+      {/* Picked up from the device. Shown until it is carried on or dropped,
+          because silently resuming yesterday's conversation would be its own
+          kind of lost work. */}
+      {resumed && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          border: '1px solid var(--color-success, #16a34a)',
+          background: 'var(--color-success-light, #F0FDF4)',
+          borderRadius: 8, padding: '8px 12px', fontSize: '0.85rem',
+        }}>
+          <RotateCcw size={15} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 160 }}>
+            Picked up where you left off - {restoredCount}{' '}
+            {restoredCount === 1 ? 'answer' : 'answers'} saved on this device
+            {reportDate !== localDateString() ? ` for ${reportDate}` : ''}.
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={() => void startOver()}>
+            Start over
+          </button>
+        </div>
+      )}
 
       {/* Progress: how much of the report is actually known. */}
       <div>
@@ -344,7 +529,12 @@ export function ConversationPage() {
         <input
           className="input"
           value={typed}
-          onChange={(e) => setTyped(e.target.value)}
+          onChange={(e) => {
+            setTyped(e.target.value);
+            // Not written on every keystroke - just kept ready, so the
+            // pagehide handler above parks the sentence in progress too.
+            draftRef.current = { ...draftRef.current, typed: e.target.value };
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
