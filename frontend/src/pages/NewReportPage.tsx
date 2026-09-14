@@ -30,6 +30,7 @@ import { GuidedInterview } from '@/components/report/GuidedInterview';
 import { getProfileKey, buildInterviewState, materializeActivities } from '@/lib/reportFlow';
 import { Doc, DocHeader, DocStatus } from '@/components/ui/Doc';
 import { useToast } from '@/components/ui/ConfirmProvider';
+import { loadResourceAliases } from '@/lib/resourceMatcher';
 import { formatReportDate, formatQty } from '@/lib/formatters';
 
 const REPORT_SECTIONS: NavSection[] = [
@@ -60,6 +61,14 @@ export function NewReportPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+
+  // Load the synced PMWeb catalogue before anything needs to match against it.
+  // The interview builds its activities when the LAST question is answered, by
+  // which time this has long since resolved; without it the matcher would only
+  // ever know the built-in lists.
+  useEffect(() => {
+    loadResourceAliases();
+  }, []);
 
   const {
     report,

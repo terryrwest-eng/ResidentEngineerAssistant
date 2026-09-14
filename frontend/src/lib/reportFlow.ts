@@ -7,6 +7,7 @@
  */
 
 import type { Report, Activity } from '@/types';
+import { getResourceMatcher } from '@/lib/resourceMatcher';
 
 /**
  * Every name a project answers to → its profile key. Mirrors the backend.
@@ -126,6 +127,64 @@ function timeToMinutes(raw: string): number | null {
  * app must never produce. A stop time before the start is read as a shift that
  * ran past midnight.
  */
+
+/**
+ * Put PMWeb resource codes on rows the interview produced.
+ *
+ * The interview asks for crew and plant in plain words, and the parser answers
+ * in plain words — "Foreman", "pickup". Every OTHER route into a report
+ * (dictation, dispatch import, the editor) runs its rows through the matcher
+ * before storing them; the interview never did, so an interview-built report
+ * carried raw names in its tables while every other report carried codes.
+ *
+ * The export maps names again on its way out, so PMWeb was mostly getting the
+ * right thing regardless — but the table on screen is what the inspector
+ * checks before submitting, and it was showing something different from what
+ * would be filed.
+ *
+ * A name the matcher cannot place confidently is left exactly as spoken. That
+ * is deliberate: an unrecognised name is a prompt to add an alias, and a
+ * confident wrong code is worse than a plain word.
+ */
+function withPmwebCodes<T extends Record<string, unknown>>(rows: T[], kind: 'crew' | 'equipment'): T[] {
+  if (!rows.length) return rows;
+  try {
+    const matcher = getResourceMatcher();
+    const result = kind === 'crew'
+      ? matcher.processManpower(rows as Record<string, unknown>[])
+      : matcher.processEquipment(rows as Record<string, unknown>[]);
+    return result.rows as T[];
+  } catch (err) {
+    // Never lose rows over a matching failure — unmatched names still carry
+    // the answer, and the export maps them again anyway.
+    console.warn('[reportFlow] Could not apply PMWeb codes:', err);
+    return rows;
+  }
+}
+
+
+/**
+ * How many hours a resource row gets.
+ *
+ * WHY THIS IS NOT JUST num(r.hours, shift): the lunch question says, in the
+ * profile's own words, that yes "deducts 0.5 from every crew member on this
+ * activity". The shift fallback honoured that; a figure the parser read out of
+ * the answer did not. So an answer that spelled out a range - "1 Foreman 6:30
+ * AM to 1:00 PM" - produced 6.5, while the labourer on the same line, with no
+ * range stated, produced 6.0. One report, one shift, two numbers, and the
+ * larger one overstates hours on a document that goes to the owner.
+ *
+ * A stated figure still beats the shift length, because a crew rarely all
+ * works the same hours. It just gets the same lunch rule applied to it.
+ */
+function rowHours(stated: unknown, shiftHrs: number, deductLunch: boolean): number {
+  const own = num(stated, 0);
+  if (!own) return shiftHrs;
+  if (!deductLunch) return own;
+  return Math.max(0, Math.round((own - 0.5) * 100) / 100);
+}
+
+
 export function shiftHours(start: string, stop: string, deductLunch: boolean): number {
   const a = timeToMinutes(start);
   const b = timeToMinutes(stop);
@@ -259,12 +318,12 @@ export function materializeActivities(
       work_area: location || prior?.work_area || '',
       stations: keep(at('stations'), prior?.stations || '', emptyStr),
       summary: keep(lines.join('\n'), prior?.summary || '', emptyStr),
-      manpower: keep((rows[passKey('crew', pass)] || []).map((r) => ({
+      manpower: keep(withPmwebCodes((rows[passKey('crew', pass)] || []).map((r) => ({
         id: newId(),
         trade: String(r.trade ?? r.name ?? '').trim(),
         name: String(r.person ?? '').trim(),
         qty: num(r.qty, 1),
-        hours: num(r.hours, hours),
+        hours: rowHours(r.hours, hours, lunch),
         start_time: start,
         stop_time: stop,
         company: String(r.company ?? '').trim(),
@@ -274,13 +333,13 @@ export function materializeActivities(
         is_consultant: false,
         locked: false,
         apply_end_time: true,
-      })).filter((r) => r.trade), prior?.manpower || [], emptyArr),
-      equipment: keep((rows[passKey('equipment', pass)] || []).map((r) => ({
+      })).filter((r) => r.trade), 'crew'), prior?.manpower || [], emptyArr),
+      equipment: keep(withPmwebCodes((rows[passKey('equipment', pass)] || []).map((r) => ({
         id: newId(),
         name: String(r.name ?? r.trade ?? '').trim(),
         description: String(r.note ?? '').trim(),
         qty: num(r.qty, 1),
-        hours: num(r.hours, hours),
+        hours: rowHours(r.hours, hours, lunch),
         start_time: start,
         stop_time: stop,
         company: String(r.company ?? '').trim(),
@@ -290,7 +349,7 @@ export function materializeActivities(
         is_rental: false,
         locked: false,
         apply_end_time: true,
-      })).filter((r) => r.name), prior?.equipment || [], emptyArr),
+      })).filter((r) => r.name), 'equipment'), prior?.equipment || [], emptyArr),
       extra_work_manpower: prior?.extra_work_manpower || [],
       extra_work_equipment: prior?.extra_work_equipment || [],
       consultant_manpower: prior?.consultant_manpower || [],
@@ -427,7 +486,7 @@ function buildDayActivity(
     work_area: at('work_area') || prior?.work_area || 'Daily Progress',
     stations,
     summary,
-    manpower: (rows.crew || []).map((r) => ({
+    manpower: withPmwebCodes((rows.crew || []).map((r) => ({
       id: newId(),
       trade: String(r.trade ?? r.name ?? '').trim(),
       name: '',
@@ -435,7 +494,7 @@ function buildDayActivity(
       // Hours stated for THAT craft win. A crew rarely all works the same
       // hours, and stamping the shift length on every row makes up numbers for
       // the ones who did not.
-      hours: num(r.hours, hours),
+      hours: rowHours(r.hours, hours, false),
       start_time: start,
       stop_time: stop,
       company: String(r.company ?? '').trim(),
@@ -445,13 +504,13 @@ function buildDayActivity(
       is_consultant: false,
       locked: false,
       apply_end_time: true,
-    })).filter((r) => r.trade),
-    equipment: (rows.equipment || []).map((r) => ({
+    })).filter((r) => r.trade), 'crew'),
+    equipment: withPmwebCodes((rows.equipment || []).map((r) => ({
       id: newId(),
       name: String(r.name ?? r.trade ?? '').trim(),
       description: String(r.note ?? '').trim(),
       qty: num(r.qty, 1),
-      hours: num(r.hours, hours),
+      hours: rowHours(r.hours, hours, false),
       start_time: start,
       stop_time: stop,
       company: String(r.company ?? '').trim(),
@@ -461,7 +520,7 @@ function buildDayActivity(
       is_rental: false,
       locked: false,
       apply_end_time: true,
-    })).filter((r) => r.name),
+    })).filter((r) => r.name), 'equipment'),
     extra_work_manpower: prior?.extra_work_manpower || [],
     extra_work_equipment: prior?.extra_work_equipment || [],
     consultant_manpower: prior?.consultant_manpower || [],
