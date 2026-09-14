@@ -15,16 +15,44 @@
  * mechanism — it is the same record, parked somewhere a killed WebView cannot
  * take it with it.
  *
- * WHY NOT THE SERVER: a half-finished conversation must not leave a
- * half-finished report in the history, which is the rule the whole feature is
- * built on. The device is the right home for something that is not a report
- * yet.
+ * IT IS ALSO PARKED ON THE SERVER. The device copy is the one that has to
+ * work - it is written synchronously, survives a dead signal, and is there
+ * before the first frame renders. The server copy is what carries the
+ * conversation between devices: started on the phone in the truck, finished on
+ * the laptop at the desk, and still there if the phone is lost. Neither is a
+ * report; nothing reaches the report history until the record is composed.
+ *
+ * WHICH ONE WINS: whichever was written last. Both carry the SERVER's
+ * timestamp - the device copy is restamped with whatever the server returned -
+ * so the comparison is one clock against itself rather than a phone's clock
+ * against a laptop's.
  */
 
 import { getStoredUser } from '@/lib/authClient';
+import { conversationApi, type ParkedDraft } from '@/lib/conversationApi';
 import type { Conflict, Progress, SectionGap } from '@/lib/conversationApi';
 
 export const CONVERSATION_DRAFT_KEY = 'conversationDraft.v1';
+const DEVICE_KEY = 'conversationDevice.v1';
+
+/**
+ * A stable name for this device.
+ *
+ * Only so the resume banner can say a conversation was carried over from
+ * somewhere else rather than picked up where it was left. Never sent anywhere
+ * but this user's own draft.
+ */
+export function deviceId(): string {
+  try {
+    const existing = localStorage.getItem(DEVICE_KEY);
+    if (existing) return existing;
+    const minted = `${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(DEVICE_KEY, minted);
+    return minted;
+  } catch {
+    return '';
+  }
+}
 
 export interface DraftExchange {
   role: 'assistant' | 'inspector';
@@ -48,6 +76,8 @@ export interface ConversationDraft {
   ready: boolean;
   /** Typed but not yet sent. One sentence, but it is the one being written. */
   typed: string;
+  /** Which device wrote it last. Only the banner reads this. */
+  device?: string;
 }
 
 /** Everything except the bookkeeping this module fills in itself. */
@@ -94,6 +124,7 @@ function parseDraft(raw: string): ConversationDraft | null {
     conflicts: Array.isArray(d.conflicts) ? (d.conflicts as Conflict[]) : [],
     ready: d.ready === true,
     typed: typeof d.typed === 'string' ? d.typed : '',
+    device: typeof d.device === 'string' ? d.device : '',
   };
 }
 
@@ -153,6 +184,7 @@ export function saveConversationDraft(input: ConversationDraftInput): void {
     version: 1,
     userId: getStoredUser()?.id || '',
     savedAt: new Date().toISOString(),
+    device: deviceId(),
     ...input,
   };
 
@@ -173,7 +205,101 @@ export function clearConversationDraft(): void {
   }
 }
 
-/** How many answers are actually in a draft — what the resume banner counts. */
-export function draftAnswerCount(draft: ConversationDraft): number {
-  return draft.history.filter((h) => h.role === 'inspector' && h.text.trim()).length;
+// ── The server copy ─────────────────────────────────────────────────────────
+
+/** A parked draft in the shape the page uses. */
+function fromParked(parked: ParkedDraft): ConversationDraft | null {
+  const history = (parked.history || []).filter(
+    (h) => h && (h.role === 'assistant' || h.role === 'inspector') && typeof h.text === 'string',
+  );
+  if (!history.length) return null;
+
+  return {
+    version: 1,
+    userId: getStoredUser()?.id || '',
+    savedAt: parked.saved_at || '',
+    reportDate: parked.report_date || '',
+    profile: parked.profile || 'morena',
+    history,
+    record: parked.record ?? null,
+    askedKeys: parked.asked_keys || [],
+    progress: parked.progress || { total: 0, known: 0, suspect: 0, empty: 0 },
+    gaps: parked.gaps || [],
+    conflicts: parked.conflicts || [],
+    ready: parked.ready === true,
+    typed: parked.typed || '',
+    device: parked.device || '',
+  };
+}
+
+/**
+ * Park it in both places.
+ *
+ * The device write happens first and synchronously, because it is the one that
+ * has to survive the screen closing a moment later. The server write is sent
+ * after and never awaited by the caller - it carries the conversation to the
+ * other device, which matters, but not enough to make answering a question
+ * wait on a signal.
+ */
+export function parkConversation(input: ConversationDraftInput): void {
+  saveConversationDraft(input);
+
+  const said = input.history.some((h) => h.role === 'inspector' && h.text.trim());
+  if (!said && !input.typed.trim()) {
+    void conversationApi.deleteDraft();
+    return;
+  }
+
+  void conversationApi.putDraft({
+    report_date: input.reportDate,
+    profile: input.profile,
+    history: input.history,
+    record: input.record,
+    asked_keys: input.askedKeys,
+    progress: input.progress,
+    gaps: input.gaps,
+    conflicts: input.conflicts,
+    ready: input.ready,
+    typed: input.typed,
+    device: deviceId(),
+  }).then((savedAt) => {
+    // Restamp the device copy with the SERVER's clock, so that comparing the
+    // two later compares one clock with itself. Without this, a phone running
+    // a few minutes fast would always look newer than the laptop.
+    if (!savedAt) return;
+    const local = loadConversationDraft();
+    if (!local) return;
+    try {
+      localStorage.setItem(CONVERSATION_DRAFT_KEY, JSON.stringify({ ...local, savedAt }));
+    } catch {
+      /* the draft is already saved; only the timestamp missed */
+    }
+  });
+}
+
+/** Release it everywhere — it became a report, or was deliberately dropped. */
+export function releaseConversation(): void {
+  clearConversationDraft();
+  void conversationApi.deleteDraft();
+}
+
+/**
+ * The conversation to open with: this device's, the server's, or neither.
+ *
+ * Returns whichever was written last. `carriedOver` says the winner came from
+ * somewhere else, which is the difference between "picked up where you left
+ * off" and "carried over from your other device".
+ */
+export async function newestConversation(
+  local: ConversationDraft | null,
+): Promise<{ draft: ConversationDraft | null; carriedOver: boolean }> {
+  const parked = await conversationApi.getDraft();
+  const remote = parked ? fromParked(parked) : null;
+  if (!remote) return { draft: local, carriedOver: false };
+  if (!local) return { draft: remote, carriedOver: remote.device !== deviceId() };
+
+  // Equal timestamps are the same conversation seen twice - keep the device
+  // copy, which may carry a sentence typed since.
+  if (remote.savedAt <= local.savedAt) return { draft: local, carriedOver: false };
+  return { draft: remote, carriedOver: remote.device !== deviceId() };
 }

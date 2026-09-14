@@ -27,6 +27,10 @@ pays for itself; a fast wrong station number does not.
 
 import json
 import logging
+import os
+import shutil
+import tempfile
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,6 +38,7 @@ from pydantic import BaseModel
 
 from app.core.auth import require_user
 from app.core.config import GEMINI_THINKING_LEVEL
+from app.core.paths import conversation_draft_file, data_dir
 from app.routers.ai import (
     _clean_json,
     _decode_audio,
@@ -529,6 +534,107 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
         raise HTTPException(status_code=502, detail=f'Could not write the report: {exc}')
 
     return {'report': report, 'progress': record.progress()}
+
+
+
+# ── The conversation in progress ────────────────────────────────────────────
+#
+# The record still travels with every turn and is still never half-written into
+# a report - that part of the design does not change. What changes is that the
+# unfinished conversation is no longer stranded on the device it was started
+# on. It is parked here too, so it can be picked up on the phone after being
+# started on the laptop, or the other way round, and so a lost phone is not a
+# lost shift.
+#
+# Deliberately NOT a report. Nothing appears in the report history until the
+# record is complete and the composer has run.
+
+# A whole day of answers is tens of kilobytes. A megabyte is far past anything
+# real and stops a runaway client filling the volume.
+MAX_DRAFT_BYTES = 1_000_000
+
+
+class ConversationDraft(BaseModel):
+    report_date: str = ''
+    profile: str = 'morena'
+    history: list[dict[str, str]] = []
+    record: dict[str, Any] | None = None
+    asked_keys: list[str] = []
+    progress: dict[str, Any] = {}
+    gaps: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    ready: bool = False
+    typed: str = ''
+    # Set by the server on every write. The client keeps its own copy too and
+    # the newer of the two wins, which is how two devices settle it without a
+    # merge nobody could review.
+    saved_at: str = ''
+    # Which device wrote it last, for the banner. Free text, never trusted.
+    device: str = ''
+
+
+@router.get('/draft')
+def get_draft(_user=Depends(require_user)) -> dict[str, Any]:
+    """The unfinished conversation, or nothing. Never an error."""
+    path = conversation_draft_file()
+    if not os.path.exists(path):
+        return {'draft': None}
+    try:
+        with open(path, encoding='utf-8') as fh:
+            return {'draft': json.load(fh)}
+    except (OSError, json.JSONDecodeError) as exc:
+        # A draft that cannot be read is worth a line in the log and nothing
+        # else. Failing the request would stop the conversation starting at
+        # all, which is a worse outcome than starting it fresh.
+        logger.warning('[conversation] Could not read the parked draft: %s', exc)
+        return {'draft': None}
+
+
+@router.put('/draft')
+def put_draft(draft: ConversationDraft, _user=Depends(require_user)) -> dict[str, Any]:
+    """
+    Park the conversation.
+
+    Written on every turn, so it has to be cheap and it has to be atomic - a
+    torn file here is the whole day, and it would be read back as a corrupt
+    draft on the next launch.
+    """
+    body = draft.model_dump()
+    body['saved_at'] = datetime.now(timezone.utc).isoformat()
+
+    blob = json.dumps(body, indent=2, default=str)
+    if len(blob.encode('utf-8')) > MAX_DRAFT_BYTES:
+        raise HTTPException(status_code=413, detail='That conversation is too large to park.')
+
+    directory = data_dir()
+    os.makedirs(directory, exist_ok=True)
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', dir=directory, delete=False, suffix='.tmp',
+        ) as tmp:
+            tmp.write(blob)
+            tmp_path = tmp.name
+        shutil.move(tmp_path, conversation_draft_file())
+    except OSError as exc:
+        logger.error('[conversation] Could not park the draft: %s', exc)
+        raise HTTPException(status_code=500, detail=f'Could not save the conversation: {exc}')
+
+    return {'saved_at': body['saved_at']}
+
+
+@router.delete('/draft')
+def delete_draft(_user=Depends(require_user)) -> dict[str, bool]:
+    """
+    Release it. Called when the conversation has become a report, or when the
+    inspector deliberately starts over.
+    """
+    try:
+        os.remove(conversation_draft_file())
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning('[conversation] Could not release the parked draft: %s', exc)
+    return {'released': True}
 
 
 @router.post('/gaps')

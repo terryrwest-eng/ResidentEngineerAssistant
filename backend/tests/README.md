@@ -11,6 +11,7 @@ python3 backend/tests/test_word_export.py
 python3 backend/tests/test_extension_context.py
 python3 backend/tests/test_duplicate_date_guard.py
 python3 backend/tests/test_multiuser.py
+python3 backend/tests/test_conversation_draft.py
 python3 backend/tests/test_migration.py
 ```
 

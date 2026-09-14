@@ -101,6 +101,17 @@ def settings_file() -> str:
     return os.path.join(data_dir(), "settings.json")
 
 
+def conversation_draft_file() -> str:
+    """
+    The conversation this user has started and not yet written.
+
+    One per user, not one per day: a conversation is a single sitting, and a
+    second one started before the first was written replaces it - which is
+    exactly what the person doing it meant.
+    """
+    return os.path.join(data_dir(), "conversation_draft.json")
+
+
 def db_path() -> str:
     """The current user's database. Each user gets their own SQLite file."""
     return os.path.join(data_dir(), "reporter.db")

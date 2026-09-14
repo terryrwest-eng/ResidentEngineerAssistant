@@ -1,10 +1,15 @@
 /**
  * Daily Reporter V4 — the conversation API
  *
- * Three calls. `turn` is the loop: what was said goes in, the next question
- * comes back, and the whole record travels with it in both directions — the
- * server keeps nothing between turns, so a dropped connection or a reloaded
- * page loses a question, not a shift.
+ * `turn` is the loop: what was said goes in, the next question comes back, and
+ * the whole record travels with it in both directions — the server decides
+ * nothing between turns, so a dropped connection or a reloaded page loses a
+ * question, not a shift.
+ *
+ * `draft` is the exception, and only a parking space. The unfinished
+ * conversation is stored so it can be picked up on a different device, or
+ * after the one it was started on was closed. It is never a report: nothing
+ * reaches the report history until the record is complete and composed.
  */
 
 import { createAuthedClient, BASE_URL } from '@/lib/authClient';
@@ -80,11 +85,68 @@ export interface TurnInput {
   asked_keys?: string[];
 }
 
+/** The unfinished conversation as the server stores it. */
+export interface ParkedDraft {
+  report_date: string;
+  profile: string;
+  history: { role: 'assistant' | 'inspector'; text: string }[];
+  record: Record<string, unknown> | null;
+  asked_keys: string[];
+  progress: Progress;
+  gaps: SectionGap[];
+  conflicts: Conflict[];
+  ready: boolean;
+  typed: string;
+  saved_at: string;
+  device: string;
+}
+
+// Parking is a file write, not a model call, so it must not inherit the five
+// minute turn timeout - a save that hangs on a bad signal would hold the
+// pagehide handler open and still not land.
+const DRAFT_TIMEOUT_MS = 12000;
+
 export const conversationApi = {
   /** One exchange. Send nothing on the first call to get the opening question. */
   turn: async (input: TurnInput): Promise<TurnResult> => {
     const response = await api.post('/turn', input);
     return response.data as TurnResult;
+  },
+
+  /**
+   * The conversation parked on the server, or null.
+   *
+   * Never throws: the device's own copy is the one that has to work, and a
+   * lookup that cannot run must not stop a conversation starting.
+   */
+  getDraft: async (): Promise<ParkedDraft | null> => {
+    try {
+      const response = await api.get('/draft', { timeout: DRAFT_TIMEOUT_MS });
+      return (response.data?.draft ?? null) as ParkedDraft | null;
+    } catch (err) {
+      console.warn('[conversation] Could not read the parked conversation:', err);
+      return null;
+    }
+  },
+
+  /** Park it. Returns the server's timestamp, which is what decides newest. */
+  putDraft: async (draft: Omit<ParkedDraft, 'saved_at'>): Promise<string | null> => {
+    try {
+      const response = await api.put('/draft', draft, { timeout: DRAFT_TIMEOUT_MS });
+      return (response.data?.saved_at ?? null) as string | null;
+    } catch (err) {
+      console.warn('[conversation] Could not park the conversation:', err);
+      return null;
+    }
+  },
+
+  /** Release it — the conversation became a report, or was started over. */
+  deleteDraft: async (): Promise<void> => {
+    try {
+      await api.delete('/draft', { timeout: DRAFT_TIMEOUT_MS });
+    } catch (err) {
+      console.warn('[conversation] Could not release the parked conversation:', err);
+    }
   },
 
   /** What is still unknown, without spending a turn. No model call. */

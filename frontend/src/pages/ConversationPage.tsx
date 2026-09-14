@@ -14,12 +14,13 @@
  * complete and the composer has run, so a half-finished conversation cannot
  * leave a half-finished report in the history.
  *
- * IT IS STILL PARKED ON THE DEVICE. Keeping the record only in React state
- * meant the screen closing threw the whole day away - it happened twice in the
- * field, both times on the last question. After every turn the record is
- * written to local storage and picked up again when the page reopens, so the
- * backend stays stateless and no report appears until it is written, but a
- * killed WebView no longer takes an hour of answers with it. See
+ * IT IS STILL PARKED. Keeping the record only in React state meant the screen
+ * closing threw the whole day away - it happened twice in the field, both
+ * times on the last question. After every turn the record is written to the
+ * device AND to the server: the device copy is instant and works with no
+ * signal, the server copy carries the conversation between the phone and the
+ * laptop and survives losing the phone. Neither is a report; nothing reaches
+ * the report history until the record is composed. See
  * lib/conversationDraft.ts.
  */
 
@@ -33,10 +34,11 @@ import { conversationApi, type Conflict, type Progress, type SectionGap } from '
 import { reportApi } from '@/lib/api';
 import { useConfirm, useToast } from '@/components/ui/ConfirmProvider';
 import {
-  clearConversationDraft,
-  draftAnswerCount,
   loadConversationDraft,
-  saveConversationDraft,
+  newestConversation,
+  parkConversation,
+  releaseConversation,
+  type ConversationDraft,
   type ConversationDraftInput,
 } from '@/lib/conversationDraft';
 import { useMicLevel, MIC_SILENCE_THRESHOLD } from '@/hooks/useMicLevel';
@@ -108,6 +110,8 @@ export function ConversationPage() {
   const [error, setError] = useState<string | null>(null);
   /** Shown until the conversation is carried on or started over. */
   const [resumed, setResumed] = useState(!!restored);
+  /** The resumed conversation came from another device, not this one. */
+  const [carriedOver, setCarriedOver] = useState(false);
 
   // A resumed conversation belongs to the day it was started, not to today.
   // Taking today's date would file a Friday shift under Saturday.
@@ -145,9 +149,18 @@ export function ConversationPage() {
    */
   const released = useRef(false);
 
+  /**
+   * A turn has landed in this session.
+   *
+   * The server is asked for its copy on mount, and the answer can arrive after
+   * the inspector has already said something. Adopting it then would talk over
+   * a live conversation with a stale one.
+   */
+  const answered = useRef(false);
+
   const park = useCallback(() => {
     if (released.current) return;
-    saveConversationDraft(draftRef.current);
+    parkConversation(draftRef.current);
   }, []);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -182,6 +195,7 @@ export function ConversationPage() {
       if (result.reply) next.push({ role: 'assistant', text: result.reply });
       historyRef.current = next;
       setHistory(next);
+      answered.current = true;
 
       // Parked NOW, with the answer that was just understood. Everything above
       // this line is React state, which the screen closing takes with it.
@@ -252,14 +266,53 @@ export function ConversationPage() {
     }
   }, [applyTurn]);
 
+  /** Open on a parked conversation instead of a blank one. */
+  const adopt = useCallback((draft: ConversationDraft, fromElsewhere: boolean) => {
+    historyRef.current = draft.history;
+    setHistory(draft.history);
+    setRecord(draft.record);
+    setAskedKeys(draft.askedKeys);
+    setProgress(draft.progress);
+    setGaps(draft.gaps);
+    setConflicts(draft.conflicts);
+    setReady(draft.ready);
+    setTyped(draft.typed);
+    setReportDate(draft.reportDate || localDateString());
+    setCarriedOver(fromElsewhere);
+    setResumed(true);
+    setPhase('listening');
+    draftRef.current = {
+      reportDate: draft.reportDate,
+      profile: draft.profile,
+      history: draft.history,
+      record: draft.record,
+      askedKeys: draft.askedKeys,
+      progress: draft.progress,
+      gaps: draft.gaps,
+      conflicts: draft.conflicts,
+      ready: draft.ready,
+      typed: draft.typed,
+    };
+  }, []);
+
   useEffect(() => {
-    // A conversation was parked on this device - carry on with it. Asking the
-    // opening question here would talk over an answer already given.
-    if (restored) return;
-    // The opening question has to be fetched, and the answer to it is state.
-    // That is the one thing this screen cannot do any other way.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void askOpening(reportDate);
+    let cancelled = false;
+    (async () => {
+      // The device copy is already on screen. Ask the server whether there is
+      // a newer one - a conversation started on the phone and continued here.
+      const { draft, carriedOver: elsewhere } = await newestConversation(restored);
+      if (cancelled || answered.current) return;
+
+      if (draft && draft !== restored) {
+        adopt(draft, elsewhere);
+        return;
+      }
+      // Something is already on screen and it is the newest there is.
+      if (restored) return;
+
+      await askOpening(reportDate);
+    })();
+    return () => { cancelled = true; };
     // Deliberately once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -295,7 +348,7 @@ export function ConversationPage() {
     });
     if (!ok) return;
 
-    clearConversationDraft();
+    releaseConversation();
     historyRef.current = [];
     setHistory([]);
     setRecord(null);
@@ -307,6 +360,7 @@ export function ConversationPage() {
     setTyped('');
     setError(null);
     setResumed(false);
+    setCarriedOver(false);
     setPhase('opening');
 
     const today = localDateString();
@@ -394,7 +448,7 @@ export function ConversationPage() {
       // It is a report now, so the parked copy has nothing left to protect -
       // and must not come back when leaving this screen unmounts it.
       released.current = true;
-      clearConversationDraft();
+      releaseConversation();
       toast('Report written');
       navigate(`/report/${created.id}`, { replace: true });
     } catch (err) {
@@ -413,7 +467,9 @@ export function ConversationPage() {
     }
   }
 
-  const restoredCount = restored ? draftAnswerCount(restored) : 0;
+  // Counted from the thread on screen, not from what was restored - adopting
+  // a newer conversation from the server replaces it.
+  const restoredCount = history.filter((h) => h.role === 'inspector' && h.text.trim()).length;
   const pct = progress.total ? Math.round((progress.known / progress.total) * 100) : 0;
   const busy = phase === 'thinking' || phase === 'writing' || phase === 'opening';
   const stillOpen = gaps.flatMap((g) => [...g.missing, ...g.suspect]);
@@ -439,8 +495,8 @@ export function ConversationPage() {
         }}>
           <RotateCcw size={15} style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 160 }}>
-            Picked up where you left off - {restoredCount}{' '}
-            {restoredCount === 1 ? 'answer' : 'answers'} saved on this device
+            {carriedOver ? 'Carried over from your other device' : 'Picked up where you left off'}
+            {' '}- {restoredCount} {restoredCount === 1 ? 'answer' : 'answers'} saved
             {reportDate !== localDateString() ? ` for ${reportDate}` : ''}.
           </span>
           <button className="btn btn-ghost btn-sm" onClick={() => void startOver()}>

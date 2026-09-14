@@ -10,10 +10,12 @@
  * already a dependency here and imported, against a fake localStorage. So what
  * is asserted below is what ships, not a copy of it that can drift.
  *
- * The ONE thing stubbed is getStoredUser, which is four lines of authClient
- * reading the same localStorage - stubbed only because authClient pulls in
- * axios, which will not resolve from a temp directory. The guard under test
- * lives in conversationDraft, not in the stub.
+ * Two things are stubbed, both only because they drag axios in and axios will
+ * not resolve from a temp directory: getStoredUser (four lines of authClient
+ * reading the same localStorage) and the conversation API, which here is a
+ * recording fake so the server side of the sync can be driven on demand. The
+ * logic under test - what is parked, what is restored, and which copy wins -
+ * is all conversationDraft's own.
  *
  * No test framework, matching the backend suites and reportStore.race.test.mjs.
  *
@@ -63,8 +65,19 @@ export function getStoredUser() {
 }
 `);
 
+// The server, as a fake that records and can be posed.
+writeFileSync(join(outDir, 'conversationApi.mjs'), `
+export const server = { draft: null, puts: [], deletes: 0, savedAt: null };
+export const conversationApi = {
+  getDraft: async () => server.draft,
+  putDraft: async (d) => { server.puts.push(d); return server.savedAt; },
+  deleteDraft: async () => { server.deletes += 1; },
+};
+`);
+
 const source = readFileSync(join(here, 'conversationDraft.ts'), 'utf8')
-  .replace("'@/lib/authClient'", "'./authClient.mjs'");
+  .replace("'@/lib/authClient'", "'./authClient.mjs'")
+  .replaceAll("'@/lib/conversationApi'", "'./conversationApi.mjs'");
 
 writeFileSync(outFile, ts.transpileModule(source, {
   compilerOptions: {
@@ -76,8 +89,33 @@ writeFileSync(outFile, ts.transpileModule(source, {
 
 const {
   CONVERSATION_DRAFT_KEY, loadConversationDraft, saveConversationDraft,
-  clearConversationDraft, draftAnswerCount,
+  clearConversationDraft, parkConversation, releaseConversation, newestConversation,
 } = await import(pathToFileURL(outFile).href);
+
+const { server } = await import(pathToFileURL(join(outDir, 'conversationApi.mjs')).href);
+
+/** Let the fake server's promises settle. */
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+/** A draft in the shape the SERVER returns it — snake_case, its own clock. */
+const parked = (savedAt, overrides = {}) => ({
+  report_date: '2026-09-12',
+  profile: 'morena',
+  history: [
+    { role: 'assistant', text: 'Where did you work today?' },
+    { role: 'inspector', text: 'Genesee Avenue, from the bridge north' },
+  ],
+  record: { slots: [{ key: 'locations', value: 'Genesee Avenue' }] },
+  asked_keys: ['locations'],
+  progress: { total: 20, known: 6, suspect: 0, empty: 14 },
+  gaps: [],
+  conflicts: [],
+  ready: false,
+  typed: '',
+  saved_at: savedAt,
+  device: 'the-other-phone',
+  ...overrides,
+});
 
 const USER = { id: 'u-1', name: 'Terry', email: 't@example.com', role: 'user', is_approved: true };
 const signIn = (user) => {
@@ -112,7 +150,7 @@ check('  the record survives', JSON.stringify(back?.record) === JSON.stringify(d
 check('  the thread survives', back?.history.length === 3);
 check('  its own day survives, not today', back?.reportDate === '2026-09-12');
 check('  asked keys survive', JSON.stringify(back?.askedKeys) === '["locations"]');
-check('  the answer count is what the banner shows', draftAnswerCount(back) === 1);
+check('  the device it was written on is remembered', typeof back?.device === 'string');
 
 // ── 2. Nothing said, nothing parked ─────────────────────────────────────────
 clearConversationDraft();
@@ -196,6 +234,81 @@ clearConversationDraft();
 saveConversationDraft(draft());
 clearConversationDraft();
 check('clearing releases it', loadConversationDraft() === null);
+
+
+// ── 9. It reaches the other device ──────────────────────────────────────────
+clearConversationDraft();
+server.puts.length = 0;
+server.deletes = 0;
+server.savedAt = '2026-09-14T18:00:00Z';
+parkConversation(draft());
+await settle();
+check('parking sends it to the server too', server.puts.length === 1);
+check('  in the shape the server stores', server.puts[0]?.report_date === '2026-09-12'
+  && Array.isArray(server.puts[0]?.asked_keys));
+check('  and it is still on the device', loadConversationDraft() !== null);
+check(
+  "  stamped with the server's clock, not the phone's",
+  loadConversationDraft()?.savedAt === '2026-09-14T18:00:00Z',
+  'two devices cannot be compared on two clocks',
+);
+
+// ── 10. Nothing said, nothing parked anywhere ───────────────────────────────
+server.puts.length = 0;
+server.deletes = 0;
+parkConversation(draft({ history: [{ role: 'assistant', text: 'Where did you work?' }] }));
+await settle();
+check('an untouched conversation parks nowhere', server.puts.length === 0 && server.deletes === 1);
+
+// ── 11. Whichever was written last is the one you get ───────────────────────
+server.savedAt = null;
+clearConversationDraft();
+storage.setItem(CONVERSATION_DRAFT_KEY, JSON.stringify({
+  ...draft(), version: 1, userId: 'u-1', savedAt: '2026-09-14T12:00:00Z', device: 'this-one',
+}));
+const mine = loadConversationDraft();
+
+server.draft = parked('2026-09-14T15:00:00Z');
+let picked = await newestConversation(mine);
+check('a newer conversation on the server wins', picked.draft?.record?.slots[0].value === 'Genesee Avenue');
+check('  and is flagged as carried over', picked.carriedOver === true);
+
+server.draft = parked('2026-09-14T09:00:00Z');
+picked = await newestConversation(mine);
+check('an older one on the server does not', picked.draft?.savedAt === '2026-09-14T12:00:00Z');
+check('  and is not flagged', picked.carriedOver === false);
+
+server.draft = parked('2026-09-14T12:00:00Z');
+picked = await newestConversation(mine);
+check(
+  'the same conversation seen twice keeps the device copy',
+  picked.draft?.savedAt === '2026-09-14T12:00:00Z',
+  'the device copy may carry a sentence typed since',
+);
+
+// ── 12. Either side alone still works ───────────────────────────────────────
+server.draft = parked('2026-09-14T15:00:00Z');
+picked = await newestConversation(null);
+check('nothing on the device, something on the server', picked.draft !== null && picked.carriedOver === true);
+
+server.draft = null;
+picked = await newestConversation(mine);
+check('nothing on the server, something on the device', picked.draft?.savedAt === '2026-09-14T12:00:00Z');
+
+picked = await newestConversation(null);
+check('nothing anywhere is nothing, not a crash', picked.draft === null);
+
+server.draft = parked('2026-09-14T15:00:00Z', { history: [] });
+picked = await newestConversation(null);
+check('a server draft with no thread is not restored', picked.draft === null);
+
+// ── 13. Releasing releases both ─────────────────────────────────────────────
+server.deletes = 0;
+saveConversationDraft(draft());
+releaseConversation();
+await settle();
+check('releasing clears the device', loadConversationDraft() === null);
+check('  and the server', server.deletes === 1);
 
 rmSync(outDir, { recursive: true, force: true });
 
