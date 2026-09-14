@@ -67,9 +67,12 @@ export function getStoredUser() {
 
 // The server, as a fake that records and can be posed.
 writeFileSync(join(outDir, 'conversationApi.mjs'), `
-export const server = { draft: null, puts: [], deletes: 0, savedAt: null };
+export const server = { draft: null, puts: [], deletes: 0, savedAt: null, reachable: true };
 export const conversationApi = {
-  getDraft: async () => server.draft,
+  getDraft: async () => {
+    if (!server.reachable) return { status: 'unavailable' };
+    return server.draft ? { status: 'found', draft: server.draft } : { status: 'none' };
+  },
   putDraft: async (d) => { server.puts.push(d); return server.savedAt; },
   deleteDraft: async () => { server.deletes += 1; },
 };
@@ -90,6 +93,7 @@ writeFileSync(outFile, ts.transpileModule(source, {
 const {
   CONVERSATION_DRAFT_KEY, loadConversationDraft, saveConversationDraft,
   clearConversationDraft, parkConversation, releaseConversation, newestConversation,
+  checkForNewerConversation,
 } = await import(pathToFileURL(outFile).href);
 
 const { server } = await import(pathToFileURL(join(outDir, 'conversationApi.mjs')).href);
@@ -309,6 +313,58 @@ releaseConversation();
 await settle();
 check('releasing clears the device', loadConversationDraft() === null);
 check('  and the server', server.deletes === 1);
+
+
+// ── 14. The phone left running catches up with the laptop ──────────────────
+//
+// This is the workflow the whole thing is for: answer on the phone, carry on
+// at the laptop, shut the laptop, pick the phone back up. The phone was never
+// closed, so anything that only runs on mount never runs at all.
+server.reachable = true;
+server.draft = parked('2026-09-14T15:00:00Z');
+
+let update = await checkForNewerConversation('2026-09-14T12:00:00Z');
+check('a phone that has fallen behind is told so', update.status === 'newer');
+check('  and is handed the newer conversation', update.draft?.reportDate === '2026-09-12');
+
+update = await checkForNewerConversation('2026-09-14T15:00:00Z');
+check('its own last write is not an update', update.status === 'unchanged');
+
+update = await checkForNewerConversation('2026-09-14T18:00:00Z');
+check('an older copy on the server is not an update', update.status === 'unchanged');
+
+// ── 15. A dead spot is not the end of the conversation ─────────────────────
+server.reachable = false;
+update = await checkForNewerConversation('2026-09-14T12:00:00Z');
+check(
+  'a lookup that could not run changes nothing',
+  update.status === 'unavailable',
+  'treating this as "gone" would wipe the screen every time the signal dipped',
+);
+server.reachable = true;
+
+// ── 16. Written up on the other device ─────────────────────────────────────
+server.draft = null;
+update = await checkForNewerConversation('2026-09-14T12:00:00Z');
+check('a released draft reads as gone', update.status === 'gone');
+
+update = await checkForNewerConversation('');
+check(
+  'but a device that never parked anything is not told it is gone',
+  update.status === 'unchanged',
+  'otherwise a fresh conversation would announce its own death',
+);
+
+// ── 17. Parking hands back the stamp to compare against ────────────────────
+clearConversationDraft();
+server.puts.length = 0;
+server.savedAt = '2026-09-14T20:00:00Z';
+const stamp = await parkConversation(draft());
+check('parking reports the stamp the server gave it', stamp === '2026-09-14T20:00:00Z');
+
+server.draft = parked('2026-09-14T20:00:00Z');
+update = await checkForNewerConversation(stamp);
+check('  which then reads as unchanged, not as an update', update.status === 'unchanged');
 
 rmSync(outDir, { recursive: true, force: true });
 

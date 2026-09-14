@@ -22,6 +22,13 @@
  * laptop and survives losing the phone. Neither is a report; nothing reaches
  * the report history until the record is composed. See
  * lib/conversationDraft.ts.
+ *
+ * AND IT CATCHES UP WHILE IT IS OPEN. Answer on the phone, carry on at the
+ * laptop, shut the laptop, pick the phone back up - the phone was never
+ * closed, so anything that only ran on mount would never run. This checks
+ * again whenever the page comes back to the front, and quietly while it is
+ * there. A device that has fallen behind adopts the newer conversation; one
+ * that is mid-answer is left alone until it has finished.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -34,6 +41,8 @@ import { conversationApi, type Conflict, type Progress, type SectionGap } from '
 import { reportApi } from '@/lib/api';
 import { useConfirm, useToast } from '@/components/ui/ConfirmProvider';
 import {
+  checkForNewerConversation,
+  deviceId,
   loadConversationDraft,
   newestConversation,
   parkConversation,
@@ -76,6 +85,16 @@ function pickMimeType(): string {
 /** The only format this screen talks about, named once. */
 const PROFILE = 'morena';
 
+/**
+ * How often an open page looks for a newer conversation.
+ *
+ * A turn takes the better part of a minute, so this is already far finer than
+ * the thing it is tracking. It is one small GET, only while the page is
+ * actually on screen, and it is what lets a phone left running catch up with
+ * the laptop rather than sitting on a stale thread.
+ */
+const LIVE_CHECK_MS = 15000;
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -112,6 +131,8 @@ export function ConversationPage() {
   const [resumed, setResumed] = useState(!!restored);
   /** The resumed conversation came from another device, not this one. */
   const [carriedOver, setCarriedOver] = useState(false);
+  /** It was written up or started over elsewhere while this page sat open. */
+  const [finishedElsewhere, setFinishedElsewhere] = useState(false);
 
   // A resumed conversation belongs to the day it was started, not to today.
   // Taking today's date would file a Friday shift under Saturday.
@@ -158,9 +179,24 @@ export function ConversationPage() {
    */
   const answered = useRef(false);
 
+  /**
+   * The server stamp this device last wrote or adopted.
+   *
+   * The check for a newer conversation compares against THIS, not a local
+   * clock, so a device never mistakes its own last write for somebody else's
+   * update - and two devices are never compared on two clocks.
+   */
+  const lastSeenAt = useRef(restored?.savedAt ?? '');
+
+  /** A turn is in the air. Nothing may be adopted over the top of it. */
+  const inFlight = useRef(false);
+
   const park = useCallback(() => {
     if (released.current) return;
-    parkConversation(draftRef.current);
+    void parkConversation(draftRef.current).then((savedAt) => {
+      // Our own write must not read back as somebody else's update.
+      if (savedAt) lastSeenAt.current = savedAt;
+    });
   }, []);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -223,6 +259,7 @@ export function ConversationPage() {
       setPhase('thinking');
       setError(null);
       setResumed(false);
+      inFlight.current = true;
       try {
         const result = await conversationApi.turn({
           profile: PROFILE,
@@ -241,6 +278,8 @@ export function ConversationPage() {
         console.error('[Conversation] turn failed:', err);
         setError(message);
         setPhase('failed');
+      } finally {
+        inFlight.current = false;
       }
     },
     [record, askedKeys, reportDate, applyTurn, toast],
@@ -268,6 +307,11 @@ export function ConversationPage() {
 
   /** Open on a parked conversation instead of a blank one. */
   const adopt = useCallback((draft: ConversationDraft, fromElsewhere: boolean) => {
+    // A sentence half typed on THIS device outranks an empty box arriving from
+    // the other one. It is the only thing on screen that exists nowhere else.
+    const mine = draftRef.current.typed;
+    const typedNow = mine.trim() ? mine : draft.typed;
+
     historyRef.current = draft.history;
     setHistory(draft.history);
     setRecord(draft.record);
@@ -276,11 +320,12 @@ export function ConversationPage() {
     setGaps(draft.gaps);
     setConflicts(draft.conflicts);
     setReady(draft.ready);
-    setTyped(draft.typed);
+    setTyped(typedNow);
     setReportDate(draft.reportDate || localDateString());
     setCarriedOver(fromElsewhere);
     setResumed(true);
     setPhase('listening');
+    lastSeenAt.current = draft.savedAt;
     draftRef.current = {
       reportDate: draft.reportDate,
       profile: draft.profile,
@@ -291,7 +336,7 @@ export function ConversationPage() {
       gaps: draft.gaps,
       conflicts: draft.conflicts,
       ready: draft.ready,
-      typed: draft.typed,
+      typed: typedNow,
     };
   }, []);
 
@@ -308,7 +353,10 @@ export function ConversationPage() {
         return;
       }
       // Something is already on screen and it is the newest there is.
-      if (restored) return;
+      if (restored) {
+        lastSeenAt.current = restored.savedAt;
+        return;
+      }
 
       await askOpening(reportDate);
     })();
@@ -316,6 +364,48 @@ export function ConversationPage() {
     // Deliberately once, on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Catch up with whatever happened on the other device.
+   *
+   * Refuses to act while a turn is in the air: adopting a conversation over
+   * the top of an answer being transcribed would throw that answer away, which
+   * is the exact failure all of this exists to prevent.
+   */
+  const syncFromServer = useCallback(async () => {
+    if (released.current || inFlight.current) return;
+
+    const update = await checkForNewerConversation(lastSeenAt.current);
+    if (released.current || inFlight.current) return;
+
+    if (update.status === 'newer') {
+      adopt(update.draft, update.draft.device !== deviceId());
+      return;
+    }
+    if (update.status === 'gone') {
+      // Written up, or started over, somewhere else. Stop parking it - putting
+      // it back would leave a draft of a conversation that is already a report.
+      released.current = true;
+      setFinishedElsewhere(true);
+    }
+  }, [adopt]);
+
+  useEffect(() => {
+    const catchUp = () => {
+      if (document.visibilityState === 'visible') void syncFromServer();
+    };
+    // Coming back to the page is the moment that matters: the laptop was shut
+    // and the phone picked back up.
+    document.addEventListener('visibilitychange', catchUp);
+    window.addEventListener('focus', catchUp);
+    // And quietly while it sits open, for two devices in use at once.
+    const timer = window.setInterval(catchUp, LIVE_CHECK_MS);
+    return () => {
+      document.removeEventListener('visibilitychange', catchUp);
+      window.removeEventListener('focus', catchUp);
+      window.clearInterval(timer);
+    };
+  }, [syncFromServer]);
 
   // The last line of defence. Every turn is parked already, so this covers the
   // sentence typed but not yet sent - and the Android case this whole fix is
@@ -361,6 +451,9 @@ export function ConversationPage() {
     setError(null);
     setResumed(false);
     setCarriedOver(false);
+    setFinishedElsewhere(false);
+    released.current = false;
+    lastSeenAt.current = '';
     setPhase('opening');
 
     const today = localDateString();
@@ -482,6 +575,26 @@ export function ConversationPage() {
           {reportDate} · answer in your own words, it will ask for whatever is missing
         </p>
       </header>
+
+      {/* This conversation ended somewhere else while this page sat open.
+          Said plainly rather than silently wiping the thread, which would look
+          exactly like the bug all of this was built to fix. */}
+      {finishedElsewhere && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          border: '1px solid var(--color-warn, #b45309)',
+          borderRadius: 8, padding: '8px 12px', fontSize: '0.85rem',
+        }}>
+          <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 160 }}>
+            This conversation was written up or started over on your other device.
+            What is on screen here is no longer being saved.
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={() => void startOver()}>
+            Start a new one
+          </button>
+        </div>
+      )}
 
       {/* Picked up from the device. Shown until it is carried on or dropped,
           because silently resuming yesterday's conversation would be its own

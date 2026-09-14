@@ -26,10 +26,16 @@
  * timestamp - the device copy is restamped with whatever the server returned -
  * so the comparison is one clock against itself rather than a phone's clock
  * against a laptop's.
+ *
+ * IT IS CHECKED AGAIN WHILE THE PAGE IS OPEN, not only when it opens. The
+ * whole point is to answer on the phone, carry on at the laptop, shut the
+ * laptop and pick the phone back up - and the phone was never closed, so a
+ * check that only runs on mount would never run at all. See
+ * checkForNewerConversation.
  */
 
 import { getStoredUser } from '@/lib/authClient';
-import { conversationApi, type ParkedDraft } from '@/lib/conversationApi';
+import { conversationApi, type DraftLookup, type ParkedDraft } from '@/lib/conversationApi';
 import type { Conflict, Progress, SectionGap } from '@/lib/conversationApi';
 
 export const CONVERSATION_DRAFT_KEY = 'conversationDraft.v1';
@@ -241,16 +247,15 @@ function fromParked(parked: ParkedDraft): ConversationDraft | null {
  * other device, which matters, but not enough to make answering a question
  * wait on a signal.
  */
-export function parkConversation(input: ConversationDraftInput): void {
+export function parkConversation(input: ConversationDraftInput): Promise<string | null> {
   saveConversationDraft(input);
 
   const said = input.history.some((h) => h.role === 'inspector' && h.text.trim());
   if (!said && !input.typed.trim()) {
-    void conversationApi.deleteDraft();
-    return;
+    return conversationApi.deleteDraft().then(() => null);
   }
 
-  void conversationApi.putDraft({
+  return conversationApi.putDraft({
     report_date: input.reportDate,
     profile: input.profile,
     history: input.history,
@@ -266,14 +271,16 @@ export function parkConversation(input: ConversationDraftInput): void {
     // Restamp the device copy with the SERVER's clock, so that comparing the
     // two later compares one clock with itself. Without this, a phone running
     // a few minutes fast would always look newer than the laptop.
-    if (!savedAt) return;
+    if (!savedAt) return null;
     const local = loadConversationDraft();
-    if (!local) return;
-    try {
-      localStorage.setItem(CONVERSATION_DRAFT_KEY, JSON.stringify({ ...local, savedAt }));
-    } catch {
-      /* the draft is already saved; only the timestamp missed */
+    if (local) {
+      try {
+        localStorage.setItem(CONVERSATION_DRAFT_KEY, JSON.stringify({ ...local, savedAt }));
+      } catch {
+        /* the draft is already saved; only the timestamp missed */
+      }
     }
+    return savedAt;
   });
 }
 
@@ -293,8 +300,8 @@ export function releaseConversation(): void {
 export async function newestConversation(
   local: ConversationDraft | null,
 ): Promise<{ draft: ConversationDraft | null; carriedOver: boolean }> {
-  const parked = await conversationApi.getDraft();
-  const remote = parked ? fromParked(parked) : null;
+  const found = await conversationApi.getDraft();
+  const remote = found.status === 'found' ? fromParked(found.draft) : null;
   if (!remote) return { draft: local, carriedOver: false };
   if (!local) return { draft: remote, carriedOver: remote.device !== deviceId() };
 
@@ -302,4 +309,36 @@ export async function newestConversation(
   // copy, which may carry a sentence typed since.
   if (remote.savedAt <= local.savedAt) return { draft: local, carriedOver: false };
   return { draft: remote, carriedOver: remote.device !== deviceId() };
+}
+
+/** What a re-check while the page is open found. */
+export type ConversationUpdate =
+  | { status: 'newer'; draft: ConversationDraft }
+  | { status: 'unchanged' }
+  | { status: 'gone' }
+  | { status: 'unavailable' };
+
+/**
+ * Has this conversation moved on somewhere else since `since`?
+ *
+ * This is what makes a phone that has been sitting in a pocket catch up with
+ * the laptop it was left on, without being reloaded. It answers 'unchanged'
+ * for our own last write, which is why the caller has to keep the stamp the
+ * server gave it rather than a local clock reading.
+ *
+ * 'gone' means the draft was released - written up as a report, or started
+ * over, on the other device. That is a real event worth telling the inspector
+ * about. A dead spot answers 'unavailable' and nothing happens, which is the
+ * distinction the whole DraftLookup type exists to preserve.
+ */
+export async function checkForNewerConversation(since: string): Promise<ConversationUpdate> {
+  const found: DraftLookup = await conversationApi.getDraft(true);
+  if (found.status === 'unavailable') return { status: 'unavailable' };
+  if (found.status === 'none') return since ? { status: 'gone' } : { status: 'unchanged' };
+
+  const remote = fromParked(found.draft);
+  if (!remote) return { status: 'unchanged' };
+  if (since && remote.savedAt <= since) return { status: 'unchanged' };
+  if (remote.device === deviceId() && remote.savedAt === since) return { status: 'unchanged' };
+  return { status: 'newer', draft: remote };
 }

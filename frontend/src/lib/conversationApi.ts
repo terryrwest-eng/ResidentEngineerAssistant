@@ -101,10 +101,28 @@ export interface ParkedDraft {
   device: string;
 }
 
+/**
+ * What a lookup found.
+ *
+ * 'none' and 'unavailable' are NOT the same answer and must never collapse
+ * into one. 'none' means the conversation was written up or dropped somewhere
+ * else, which is worth acting on. 'unavailable' means a lift went through a
+ * dead spot, which is worth ignoring - and treating that as 'none' would wipe
+ * a live conversation off the screen every time the signal dipped.
+ */
+export type DraftLookup =
+  | { status: 'found'; draft: ParkedDraft }
+  | { status: 'none' }
+  | { status: 'unavailable' };
+
 // Parking is a file write, not a model call, so it must not inherit the five
 // minute turn timeout - a save that hangs on a bad signal would hold the
 // pagehide handler open and still not land.
 const DRAFT_TIMEOUT_MS = 12000;
+
+// The check that runs while the page is open is quieter still: it is a
+// courtesy, and one that must never queue up behind itself on a bad signal.
+const DRAFT_POLL_TIMEOUT_MS = 6000;
 
 export const conversationApi = {
   /** One exchange. Send nothing on the first call to get the opening question. */
@@ -114,18 +132,23 @@ export const conversationApi = {
   },
 
   /**
-   * The conversation parked on the server, or null.
+   * The conversation parked on the server.
    *
    * Never throws: the device's own copy is the one that has to work, and a
-   * lookup that cannot run must not stop a conversation starting.
+   * lookup that cannot run must not stop a conversation starting. Pass
+   * `quiet` for the repeating check while the page is open, which gets a
+   * shorter timeout and does not complain to the console each time.
    */
-  getDraft: async (): Promise<ParkedDraft | null> => {
+  getDraft: async (quiet = false): Promise<DraftLookup> => {
     try {
-      const response = await api.get('/draft', { timeout: DRAFT_TIMEOUT_MS });
-      return (response.data?.draft ?? null) as ParkedDraft | null;
+      const response = await api.get('/draft', {
+        timeout: quiet ? DRAFT_POLL_TIMEOUT_MS : DRAFT_TIMEOUT_MS,
+      });
+      const draft = (response.data?.draft ?? null) as ParkedDraft | null;
+      return draft ? { status: 'found', draft } : { status: 'none' };
     } catch (err) {
-      console.warn('[conversation] Could not read the parked conversation:', err);
-      return null;
+      if (!quiet) console.warn('[conversation] Could not read the parked conversation:', err);
+      return { status: 'unavailable' };
     }
   },
 
