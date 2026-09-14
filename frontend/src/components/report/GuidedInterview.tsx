@@ -364,13 +364,54 @@ export function GuidedInterview({
     }
   }, [current, profileKey, reportDate, mic, onAnswer]);
 
-  const commit = useCallback((value: string) => {
+  /**
+   * Kinds whose answer has to become STRUCTURED ROWS, not just text.
+   *
+   * A crew answer is what fills the manpower table; the text is only what the
+   * inspector said. Everything else - times, yes/no, narrative - is used as
+   * written and needs no parse.
+   */
+  const ROW_KINDS = useMemo(() => new Set(['crew', 'equipment', 'list']), []);
+
+  const commit = useCallback(async (value: string) => {
     if (!current) return;
-    onAnswer(current.key, value, rows[current.key] || []);
-  }, [current, onAnswer, rows]);
+    const existing = rows[current.key] || [];
+
+    // A spoken answer is transcribed AND parsed by the server, which is where
+    // rows come from. A TYPED answer used to skip that entirely and be stored
+    // with whatever rows happened to be there - none, normally - so a crew
+    // typed rather than spoken produced an empty manpower table in the
+    // finished report. The text was saved; it just never became rows.
+    if (!ROW_KINDS.has(current.question.kind) || !value.trim()) {
+      onAnswer(current.key, value, existing);
+      return;
+    }
+
+    setIsThinking(true);
+    setError(null);
+    try {
+      const result = await interviewApi.answer({
+        profile: profileKey,
+        section_id: current.section.id,
+        question_id: baseId(current.key),
+        text: value,
+        report_date: reportDate,
+      });
+      onAnswer(current.key, result.value || value, result.rows || []);
+    } catch (err) {
+      // Never lose the answer over a failed parse. Keep the text, keep going,
+      // and say so - an empty table in the finished report is the thing this
+      // whole path exists to prevent, and silence is how it happened before.
+      console.error('[Interview] Could not parse a typed answer:', err);
+      onAnswer(current.key, value, existing);
+      setError('Saved what you typed, but could not read it into rows — check the table in the editor.');
+    } finally {
+      setIsThinking(false);
+    }
+  }, [current, onAnswer, rows, ROW_KINDS, profileKey, reportDate]);
 
   const goNext = useCallback(async () => {
-    if (draft !== (answers[current?.key ?? ''] || '')) commit(draft);
+    if (draft !== (answers[current?.key ?? ''] || '')) await commit(draft);
     if (index + 1 < asked.length) { setIndex(index + 1); return; }
 
     // Last question: write the report. Awaited and flagged, so the button
@@ -505,7 +546,7 @@ export function GuidedInterview({
               key={choice}
               className={`btn ${draft === choice ? 'btn-primary' : 'btn-secondary'}`}
               style={{ flex: 1, textTransform: 'capitalize' }}
-              onClick={() => { setDraft(choice); commit(choice); }}
+              onClick={() => { setDraft(choice); void commit(choice); }}
             >
               {choice}
             </button>
@@ -531,7 +572,7 @@ export function GuidedInterview({
             className="input"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => commit(draft)}
+            onBlur={() => void commit(draft)}
             placeholder="Speak, or type it here"
             rows={current.question.kind === 'narrative' || current.question.kind === 'segments' ? 5 : 2}
             style={{ width: '100%', resize: 'vertical' }}
