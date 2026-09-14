@@ -48,6 +48,10 @@ RESOURCE_MAP: dict[str, str] = {
     "superintendent": "LL-01- Superintendent",
     "foreman": "LL-02- Foreman",
     "laborer": "LL-03- Laborers",
+    # British spelling: the transcriber writes what it hears, and an
+    # inspector who says it that way should not land on an unresolved row.
+    "labourer": "LL-03- Laborers",
+    "labourers": "LL-03- Laborers",
     "laborers": "LL-03- Laborers",
     "labor": "LL-03- Laborers",
     "operator": "LL-04- Operator",
