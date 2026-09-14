@@ -1,24 +1,33 @@
 <!--
   Daily Reporter — browser tab icon.
 
-  The same length of pipe as the Android launcher icon, in the same amber on
-  the same slate, so a pinned tab and a home screen shortcut are recognisably
-  the same app. Geometry mirrors scripts/make_app_icon.py; change one and
-  change the other.
+  The same isometric pipe run as the Android launcher icon, in the same amber
+  on the same slate, so a pinned tab and a home screen shortcut are
+  recognisably the same app.
+
+  Geometry mirrors scripts/make_app_icon.py — a run, a riser, another run,
+  centred on a 108 canvas. Change one and change the other.
 
   SVG rotates clockwise for a positive angle and Pillow rotates the other way,
-  which is why this is -27 where the generator says 27.
+  which is why the bores are rotated -30 here where the generator says 30.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
   <rect width="108" height="108" rx="24" fill="#132A3E"/>
-  <g transform="rotate(-27 54 54)">
-    <!-- far end, drawn first so the body covers the join -->
-    <ellipse cx="87" cy="54" rx="9" ry="17" fill="#C97205"/>
-    <rect x="21" y="37" width="66" height="34" fill="#F59E0B"/>
-    <!-- underside: a light direction, so it is a cylinder and not a flat bar -->
-    <rect x="21" y="65.5" width="66" height="5.5" fill="#C97205"/>
-    <!-- near end: the wall, then the bore through it -->
-    <ellipse cx="21" cy="54" rx="9" ry="17" fill="#F59E0B"/>
-    <ellipse cx="21" cy="54" rx="5" ry="10.5" fill="#0C1C2A"/>
-  </g>
+
+  <!-- The underside, offset down, so the run has a light direction rather
+       than reading as a flat ribbon. -->
+  <polyline points="28.02,85.5 54,70.5 54,43.5 79.98,28.5"
+            fill="none" stroke="#C97205" stroke-width="15"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- The pipe. -->
+  <polyline points="28.02,82.5 54,67.5 54,40.5 79.98,25.5"
+            fill="none" stroke="#F59E0B" stroke-width="15"
+            stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Open bores, square to the run. A circle here reads as a rivet. -->
+  <ellipse cx="28.02" cy="82.5" rx="2.4" ry="4.5" fill="#0C1C2A"
+           transform="rotate(-30 28.02 82.5)"/>
+  <ellipse cx="79.98" cy="25.5" rx="2.4" ry="4.5" fill="#0C1C2A"
+           transform="rotate(-30 79.98 25.5)"/>
 </svg>
