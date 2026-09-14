@@ -473,25 +473,46 @@ def lookup_resource(user_input: str, catalog: list[str] | None = None) -> str:
 
 
 def lookup_company(user_input: str) -> str:
-    """Map user input to PMWeb company dropdown value."""
+    """Map user input to a PMWeb company, or leave it alone.
+
+    Same rule as lookup_resource, for the same reason: a bare substring test
+    rewrites any name that merely CONTAINS a short key. "Ohlone Construction"
+    became "OHL NA", "Cityscape Builders" became "City of San Diego", and
+    "Paleontology Services" became "Paleo Solutions Inc." — a different company
+    on the page from the one that did the work, with nothing to show it
+    happened.
+    """
     if not user_input:
         return COMPANY_MAP["_default"]
 
-    normalized = user_input.lower().strip()
+    raw = user_input.strip()
+    normalized = raw.lower()
 
+    # 1. A shorthand the table knows outright.
     if normalized in COMPANY_MAP:
         return COMPANY_MAP[normalized]
 
-    for key, value in COMPANY_MAP.items():
-        if key != "_default" and key in normalized:
+    # 2. Already exactly a PMWeb company.
+    for value in COMPANY_MAP.values():
+        if normalized == value.lower():
             return value
 
-    for key, value in COMPANY_MAP.items():
-        if key != "_default" and normalized in key:
+    # 3. A key appearing as WHOLE WORDS in the input, longest key first, so
+    # "ohl" can no longer match inside "Ohlone". Longest-first stops a short
+    # key winning over a more specific one that also fits.
+    for key, value in sorted(COMPANY_MAP.items(), key=lambda kv: -len(kv[0])):
+        if key == "_default":
+            continue
+        if _contains_words(normalized, key):
             return value
 
+    # 4. An abbreviation OF a known company ("hdr" for "HDR Engineering INC").
     for key, value in COMPANY_MAP.items():
-        if key != "_default" and normalized in value.lower():
+        if key != "_default" and normalized and normalized in key:
+            return value
+    for value in COMPANY_MAP.values():
+        if _contains_words(value.lower(), normalized):
             return value
 
-    return user_input
+    # 5. Nothing is sure. Keep the name that was given.
+    return raw

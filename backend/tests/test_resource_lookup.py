@@ -23,7 +23,9 @@ import sys
 
 sys.path.insert(0, "backend")
 
-from app.services.pmweb_mappings import lookup_resource, _builtin_catalog  # noqa: E402
+from app.services.pmweb_mappings import (  # noqa: E402
+    lookup_resource, lookup_company, _builtin_catalog,
+)
 
 results = []
 
@@ -119,6 +121,24 @@ check("bare 'dump truck' does not become a crew truck",
       lookup_resource("dump truck", CATALOG) != "LE-01- Crew Truck",
       f"got {lookup_resource('dump truck', CATALOG)!r}")
 
+
+
+# --- companies have the same rule, for the same reason ---------------------
+# A bare substring test rewrote any name that merely CONTAINED a short key, so
+# a different company appeared on the page from the one that did the work.
+for typed in ("Ohlone Construction", "Cityscape Builders", "Paleontology Services",
+              "Sukuto Inc", "Rasich Brothers"):
+    got = lookup_company(typed)
+    check("company left alone: %r" % typed, got == typed, "got %r" % got)
+
+# The shorthand the table exists for still has to work.
+for typed, expected in (("ohla", "OHL NA"), ("ohl", "OHL NA"),
+                        ("city", "City of San Diego"),
+                        ("hdr", "HDR Engineering INC"),
+                        ("NV5", "NV5 Inc"),
+                        ("pcl", "PCL Construction, Inc.")):
+    got = lookup_company(typed)
+    check("company maps: %r" % typed, got == expected, "got %r" % got)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
