@@ -50,11 +50,12 @@ BORE = (12, 28, 42, 255)
 
 SS = 8          # supersample factor
 
-# Adaptive icons are 108dp, of which the mask keeps about 72dp. Art stays inside
-# that. 66dp is the strict safe circle, but drawing to it looks timid next to
-# everything else on a home screen.
+# An adaptive icon is a 108dp canvas of which only the central 72dp survives —
+# the outer 18dp on every side is cropped whatever mask the launcher uses. The
+# art is scaled to sit inside that with a little air, because a route that runs
+# to the very edge of the circle looks like it was cropped by accident.
 CANVAS = 108.0
-SAFE = 74.0
+SAFE = 64.0
 
 LEGACY = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
 FOREGROUND = {'mdpi': 108, 'hdpi': 162, 'xhdpi': 216, 'xxhdpi': 324, 'xxxhdpi': 432}
@@ -69,8 +70,14 @@ ISO_UP = (0.0, -1.0)
 
 # How far the valve body reaches along the run. The pipe stops here on each
 # side and the bowtie spans the gap.
-VALVE_LEN = 7.4
-VALVE_HT = 9.0
+WEIGHT = 6.0
+VALVE_LEN = 5.6
+VALVE_HT = 6.4
+# The run is cut this far out, not at the valve body itself: the stroke has a
+# round cap, and cutting flush lets that cap reach half its width INTO the
+# triangle and fill the notch. One side ends up blunt and the other sharp, and
+# the bowtie looks lopsided for a reason that is not obvious at all.
+VALVE_CUT = VALVE_LEN + WEIGHT / 2
 
 
 def _routes() -> tuple[list[list[tuple[float, float]]], list[tuple]]:
@@ -94,8 +101,8 @@ def _routes() -> tuple[list[list[tuple[float, float]]], list[tuple]]:
 
     # Run, riser, run. Two turns is what makes it a route rather than a bend,
     # and the offset between the two ends is what shows the riser did something.
-    legs = [(ISO_UP_RIGHT, 30), (ISO_UP, 22), (ISO_UP_RIGHT, 30)]
-    spacing = 22.0
+    legs = [(ISO_UP_RIGHT, 36), (ISO_UP, 20), (ISO_UP_RIGHT, 36)]
+    spacing = 27.0
     offset = (ISO_DOWN_RIGHT[0] * spacing, ISO_DOWN_RIGHT[1] * spacing)
 
     upper = walk((0.0, 0.0), legs)
@@ -107,10 +114,11 @@ def _routes() -> tuple[list[list[tuple[float, float]]], list[tuple]]:
         (x0, y0), (x1, y1) = path[leg], path[leg + 1]
         return (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t), legs[leg][0], leg
 
-    # One on the upper run's outgoing leg, one on the lower run's approach.
-    # Both on the same leg reads as a mirrored pair; spreading them along the
-    # route also keeps them out of the crowded ends.
-    valves = [on_leg(upper, 2, 0.44), on_leg(lower, 0, 0.54)]
+    # Mid-leg on the two legs that are furthest apart: the upper run's
+    # approach and the lower run's outgoing. Put them on the inner legs and
+    # both valves land in the middle of the frame, on top of the elbows and on
+    # top of each other — which is exactly what the first attempt did.
+    valves = [on_leg(upper, 0, 0.5), on_leg(lower, 2, 0.5)]
 
     xs = [x for path in paths for x, _ in path]
     ys = [y for path in paths for _, y in path]
@@ -126,8 +134,8 @@ def _routes() -> tuple[list[list[tuple[float, float]]], list[tuple]]:
     # isometric, and interrupting it here is also what makes it legible.
     cut = []
     for path, ((vx, vy), axis, leg) in zip(paths, valves):
-        back = (vx - axis[0] * VALVE_LEN, vy - axis[1] * VALVE_LEN)
-        fwd = (vx + axis[0] * VALVE_LEN, vy + axis[1] * VALVE_LEN)
+        back = (vx - axis[0] * VALVE_CUT, vy - axis[1] * VALVE_CUT)
+        fwd = (vx + axis[0] * VALVE_CUT, vy + axis[1] * VALVE_CUT)
         cut.append(path[:leg + 1] + [back])
         cut.append([fwd] + path[leg + 1:])
 
@@ -199,7 +207,7 @@ def _pipe_layer(size: int) -> Image.Image:
     u = size / CANVAS
 
     paths, valves = _routes()
-    weight = 5.0 * u        # about a third of the old solid-pipe diameter
+    weight = WEIGHT * u     # line work, not a rendered tube
 
     for path in paths:
         pts = [(x * u, y * u) for x, y in path]
@@ -259,7 +267,6 @@ def write_favicon(path: str) -> None:
     removes the chance.
     """
     paths, valves = _routes()
-    weight = 5.0
 
     out = [
         '<!--',
@@ -273,7 +280,7 @@ def write_favicon(path: str) -> None:
         '-->',
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">',
         f'  <rect width="108" height="108" rx="24" fill="{_hex(SLATE)}"/>',
-        f'  <g fill="none" stroke="{_hex(AMBER)}" stroke-width="{weight:g}"'
+        f'  <g fill="none" stroke="{_hex(AMBER)}" stroke-width="{WEIGHT:g}"'
         ' stroke-linecap="round" stroke-linejoin="round">',
     ]
     for run in paths:

@@ -9,14 +9,14 @@
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
   <rect width="108" height="108" rx="24" fill="#132A3E"/>
-  <g fill="none" stroke="#F59E0B" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-    <polyline points="18.49,74.50 44.47,59.50 44.47,37.50 49.50,34.60"/>
-    <polyline points="62.31,27.20 70.45,22.50"/>
-    <polyline points="37.55,85.50 45.17,81.10"/>
-    <polyline points="57.98,73.70 63.53,70.50 63.53,48.50 89.51,33.50"/>
+  <g fill="none" stroke="#F59E0B" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="11.13,75.25 19.27,70.55"/>
+    <polyline points="34.17,61.95 42.31,57.25 42.31,37.25 73.48,19.25"/>
+    <polyline points="34.52,88.75 65.69,70.75 65.69,50.75 73.83,46.05"/>
+    <polyline points="88.73,37.45 96.87,32.75"/>
   </g>
-  <polygon points="45.00,26.81 54.00,42.39 55.91,30.90" fill="#F59E0B"/>
-  <polygon points="57.81,19.41 66.81,34.99 55.91,30.90" fill="#F59E0B"/>
-  <polygon points="40.67,73.31 49.67,88.89 51.58,77.40" fill="#F59E0B"/>
-  <polygon points="53.48,65.91 62.48,81.49 51.58,77.40" fill="#F59E0B"/>
+  <polygon points="18.67,63.51 25.07,74.59 26.72,66.25" fill="#F59E0B"/>
+  <polygon points="28.37,57.91 34.77,68.99 26.72,66.25" fill="#F59E0B"/>
+  <polygon points="73.23,39.01 79.63,50.09 81.28,41.75" fill="#F59E0B"/>
+  <polygon points="82.93,33.41 89.33,44.49 81.28,41.75" fill="#F59E0B"/>
 </svg>
