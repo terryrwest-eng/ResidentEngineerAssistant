@@ -25,6 +25,7 @@ allowed to take as long as it takes. A pause that produces a sharper question
 pays for itself; a fast wrong station number does not.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -174,7 +175,7 @@ def _history_text(history: list[dict[str, str]], limit: int = 12) -> str:
     return '\n'.join(out)
 
 
-def _call_json(client, model_name, prompt: str, where: str) -> dict[str, Any]:
+def _ask(client, model_name, prompt: str) -> str:
     from google.genai import types as genai_types
     response = _gemini_call_with_retry(
         client, model_name,
@@ -184,7 +185,37 @@ def _call_json(client, model_name, prompt: str, where: str) -> dict[str, Any]:
             max_output_tokens=8192,
         ),
     )
-    return _clean_json(_strip_reasoning(response.text or '', where))
+    return response.text or ''
+
+
+def _call_json(client, model_name, prompt: str, where: str) -> dict[str, Any]:
+    """
+    Ask for JSON, and give it one chance to correct itself.
+
+    _clean_json copes with fencing and with trailing commentary, but not with
+    JSON that is genuinely malformed - an unescaped quote or a raw newline
+    inside a string value, which is what a long spoken answer full of station
+    numbers and company names tends to produce. That surfaced as a 502, and a
+    502 costs the inspector the sentence they just said.
+
+    Handing the broken text back and asking again fixes it nearly every time,
+    and costs one call only when something actually went wrong.
+    """
+    raw = _ask(client, model_name, prompt)
+    try:
+        return _clean_json(_strip_reasoning(raw, where))
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning('[%s] reply was not valid JSON (%s). First 300 chars: %r',
+                       where, exc, raw[:300])
+        repair = (
+            prompt
+            + '\n\nYour previous reply could NOT be parsed as JSON:\n'
+            + '--- begin ---\n' + raw[:4000] + '\n--- end ---\n'
+            + 'Return the same content as strictly valid JSON and nothing else. '
+              'No markdown fence and no commentary. Every quote and every '
+              'newline inside a string value must be escaped.'
+        )
+        return _clean_json(_strip_reasoning(_ask(client, model_name, repair), where))
 
 
 def _extract(client, model_name, record: DayRecord, transcript: str,
@@ -375,8 +406,21 @@ async def take_turn(request: TurnRequest, _user=Depends(require_user)):
         try:
             found = _extract(client, model_name, record, transcript, request.history, request.asked_keys)
         except Exception as exc:
+            # Ask again rather than failing the request. The record is
+            # untouched, so nothing is lost by repeating one sentence - whereas
+            # a 502 drops the inspector out of the conversation entirely and
+            # loses what they just said.
             logger.exception('[conversation] extract failed: %s', exc)
-            raise HTTPException(status_code=502, detail=f'Could not read that answer: {exc}')
+            return TurnResponse(
+                transcript=transcript,
+                reply="Sorry - I lost that one. Say it again?",
+                record=record.to_dict(),
+                progress=record.progress(),
+                gaps=[g.to_dict() for g in record.gaps()],
+                conflicts=record.conflicts,
+                status='repeat',
+                reason='That answer could not be read back cleanly.',
+            )
 
         for upd in (found.get('updates') or []):
             key = str(upd.get('key', '')).strip()
