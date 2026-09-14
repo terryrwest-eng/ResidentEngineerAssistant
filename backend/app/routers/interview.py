@@ -18,6 +18,7 @@ gap is worse than a visible one in a document that can end up as evidence.
 """
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -357,6 +358,49 @@ async def answer_question(request: AnswerRequest, _user=Depends(require_user)):
 # Compose — answers in, a written report out
 # ============================================
 
+# Start Time / End Time, however the model chose to punctuate it. "Stop" and
+# "Finish" both mean End - the questions use all three words, so the writing
+# comes back using all three.
+_TIME_LINE = re.compile(
+    r'^[\s>*\-•]*(start|end|stop|finish)\s*time\s*[:\-–—]?\s*(.*?)\s*$',
+    re.IGNORECASE,
+)
+
+
+def _normalise_time_lines(body: str) -> str:
+    """
+    One shape for the shift times, whatever came back.
+
+    The reader scans for these two lines on every report, which only works if
+    they are the same two lines every time. The prompt asks for
+    "Start Time: 6:30 AM"; asking is not the same as getting, and reports have
+    come back with "Start Time - 6:30 AM", a bullet in front of it, and the
+    times folded into a sentence.
+
+    A label with no time after it is DROPPED rather than printed. "Start Time:"
+    on its own reads as a fact that went missing between the field and the
+    page, which is worse than not mentioning the time at all.
+    """
+    if not body:
+        return body
+
+    out: list[str] = []
+    for line in body.splitlines():
+        match = _TIME_LINE.match(line)
+        if not match:
+            out.append(line)
+            continue
+
+        word, value = match.group(1).lower(), match.group(2).strip()
+        if not value:
+            continue  # a label with nothing after it is not a fact
+
+        label = 'Start Time' if word == 'start' else 'End Time'
+        out.append(f'{label}: {value}')
+
+    return "\n".join(out)
+
+
 COMPOSE_PROMPT = """You are the Resident Engineer writing today's daily report.
 
 You are given the answers to the questions the app asked during the shift. Your
@@ -434,9 +478,16 @@ HOW A SECTION ABOUT WORK AT A LOCATION OPENS AND CLOSES
 The reader checks the same things on every report and should not have to hunt
 for them, so a location's write-up has a frame:
 
-- OPEN with the shift times for that location: "Work was performed from 6:30 AM
-  to 1:00 PM." The times are a fact about the shift, not a detail of the
-  traffic control, and folding them into a traffic control sentence hides them.
+- OPEN with the shift times for that location, as two labelled lines and
+  nothing else on them, in EXACTLY this shape:
+
+      Start Time: 6:30 AM
+      End Time: 3:00 PM
+
+  A colon after the label, one space, then the time. Not a dash, not brackets,
+  not a sentence. The reader looks for these two lines on every report and
+  scans straight to them, which only works if they are the same two lines
+  every time. Do not put them in a bullet.
 - Then the traffic control that was set, and where.
 - Then the work itself, in the order it happened, naming the crew and the plant
   that did it.
@@ -446,6 +497,11 @@ for them, so a location's write-up has a frame:
 If an answer for one of those was not given, leave that part out and write the
 rest. Do NOT decide that traffic control was removed because the shift ended,
 and do not invent times. A missing fact stays missing.
+
+NEVER WRITE A LABEL WITH NOTHING AFTER IT
+"Traffic control" on its own line, or "Start Time:" with no time, is worse than
+leaving it out: it reads as a fact that went missing between the field and the
+page. If you have nothing to put after a label, do not write the label.
 
 DO NOT MIMIC THE SHAPE FOR ITS OWN SAKE
 The sub-topic labels exist because the work has natural groupings, not because

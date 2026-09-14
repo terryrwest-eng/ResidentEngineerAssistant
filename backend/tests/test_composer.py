@@ -184,9 +184,14 @@ print("\n--- falling back ---")
 PROSE = {"locations": [], "day_notes": ""}
 rec = build_record()
 report = compose(rec, *FAKE)
+summary = report["activities"][0]["summary"]
 check("a location the model skipped keeps the inspector's own words",
-      report["activities"][0]["summary"] == "striping and layout at Nobel Dr",
-      report["activities"][0]["summary"])
+      summary.endswith("striping and layout at Nobel Dr"), summary)
+# The shift times open every location, placed by code rather than written by
+# the model - so they are here even on the fallback, where there is no prose.
+check("and the shift times still open it",
+      summary.startswith("Start Time: 11:30 PM" + chr(10) + "End Time: 3:45 AM"),
+      summary)
 
 
 # ─────────────────────────────────────────────────────────
