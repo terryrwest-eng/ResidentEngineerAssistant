@@ -58,3 +58,7 @@ desktop/build/
 # Railway CLI local link state (project/service IDs, per machine)
 .railway/
 frontend/android/build_old/
+
+# Staged front end for the desktop bundle — a copy of frontend/dist, produced
+# at build time. Committing it would be a second copy of the build output.
+desktop/web/

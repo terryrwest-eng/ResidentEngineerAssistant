@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+# The built front end, shipped inside the app so it does not have to be
+# fetched from the cloud on every launch. Staged into desktop/web by the build
+# step; see app.py's _bundled_web_root().
+datas = [('web', 'web')]
 binaries = []
 hiddenimports = ['pythonnet', 'clr_loader']
 tmp_ret = collect_all('webview')
