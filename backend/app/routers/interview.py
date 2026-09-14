@@ -628,8 +628,8 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     # model can still write its reasoning INTO a body field - that is exactly
     # how "Let's check Section 5" reached a finished report.
     by_id = {
-        str(item.get('id', '')): _strip_reasoning(
-            str(item.get('body', '') or '').strip(), 'compose')
+        str(item.get('id', '')): _normalise_time_lines(_strip_reasoning(
+            str(item.get('body', '') or '').strip(), 'compose'))
         for item in (data.get('sections') or []) if isinstance(item, dict)
     }
 

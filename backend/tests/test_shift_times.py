@@ -124,6 +124,29 @@ check(
 check("an empty body stays empty", _normalise_time_lines("") == "")
 
 
+# ── It is actually wired in ────────────────────────────────────────────────
+#
+# This guard exists because it once was not. The normaliser shipped without
+# its call site, so every check above passed against a function nothing
+# called. A helper that is never reached is worse than no helper: the tests
+# say the behaviour is there.
+
+import inspect  # noqa: E402
+
+from app.routers.interview import compose_report  # noqa: E402
+from app.services import composer as composer_module  # noqa: E402
+
+check(
+    "the V3 compose endpoint actually calls the normaliser",
+    "_normalise_time_lines" in inspect.getsource(compose_report),
+)
+check(
+    "the V4 composer actually places the times",
+    "_opening_times" in inspect.getsource(composer_module.compose)
+    or "_opening_times" in inspect.getsource(composer_module),
+)
+
+
 failed = results.count(False)
 print(f"\n{len(results) - failed}/{len(results)} passed")
 sys.exit(1 if failed else 0)
