@@ -107,6 +107,36 @@ class TurnResponse(BaseModel):
     reason: str = ''
 
 
+def _labels_from_text(value: str) -> list[str]:
+    """
+    The named items, from a value that should have arrived as rows.
+
+    Normally a list question comes back as rows and this is never used. When it
+    does not, the value arrives as the model rendered it - and
+    "['Nobel Drive', 'Genesee Avenue']" split on newlines is ONE label, so the
+    whole day becomes a single activity named after the bracketed list. Cheap
+    to tolerate; the failure it prevents is not cheap at all.
+    """
+    text = (value or '').strip()
+    if not text:
+        return []
+
+    if text.startswith('[') and text.endswith(']'):
+        import ast
+        try:
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, (list, tuple)):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except (ValueError, SyntaxError):
+            pass
+        text = text[1:-1]
+
+    parts = text.splitlines()
+    if len(parts) == 1 and ',' in text:
+        parts = text.split(',')
+    return [p.strip().strip('\'"') for p in parts if p.strip().strip('\'"')]
+
+
 def _load(request: TurnRequest) -> DayRecord:
     if request.record:
         try:
@@ -196,7 +226,12 @@ RULES:
    Never mark "ok" to avoid a follow-up question. An unclear value that gets
    written as certain is the worst outcome available to you.
 3. Stations keep every decimal exactly as spoken. Times are 12-hour with AM/PM.
-3a. A field of kind "crew" or "equipment" is answered with "rows", not "value".
+3a. A field of kind "list" is answered with "rows", ONE ROW PER ITEM, not with
+   a value: {{"rows": [{{"item": "Nobel Drive"}}, {{"item": "Genesee Avenue"}}]}}.
+   Never put a list into "value" as text - the locations named here become
+   the separate activities the rest of the report hangs off, and a list
+   rendered into one string becomes one activity with a bracketed name.
+3b. A field of kind "crew" or "equipment" is answered with "rows", not "value".
    Use these keys and leave out what was not said - a missing key is honest,
    an invented value is not:
      crew       {{"trade": "LL-03- Laborers", "name": "Dan Griffin", "qty": 1,
@@ -374,8 +409,7 @@ async def take_turn(request: TurnRequest, _user=Depends(require_user)):
                           if s.question_id == src and s.state == 'ok'), None)
             if named and not record.instances.get(section.id):
                 labels = [str(r.get('item') or r.get('name') or '').strip()
-                          for r in named.rows] or \
-                         [l.strip() for l in named.value.splitlines() if l.strip()]
+                          for r in named.rows] or _labels_from_text(named.value)
                 if labels:
                     record.set_instances(section.id, labels)
                     logger.info('[conversation] %s -> %d instances', section.id, len(labels))
