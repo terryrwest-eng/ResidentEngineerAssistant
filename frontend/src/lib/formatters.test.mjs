@@ -1,11 +1,17 @@
 /**
- * The summary cleaner keeps the shift-time lines as the labelled lines they are.
+ * The summary cleaner keeps the shift-time lines as the labelled lines they are,
+ * and a second dictation into the same activity keeps them at the top, once.
  *
  * THE BUG: cleanSummaryBullets put "• " in front of every line. It runs when an
  * activity is added (Dictate All), when the interview's activities replace the
  * old ones, and on EVERY report load - so the "Start Time: 6:30 AM" lines the
  * backend placed without a bullet came back as "• Start Time: 6:30 AM" the
  * first time the report was opened, on every path that writes them.
+ *
+ * AND: the Dictate button appended each new recording to the summary, so
+ * dictating twice into one activity buried the second "Start Time:" mid-way
+ * down, or printed the times twice. mergeDictatedSummary is what the editor
+ * now uses instead.
  *
  * Drives the REAL formatters.ts, transpiled with the TypeScript compiler that is
  * already a dependency here. It has no imports, so nothing is stubbed.
@@ -36,7 +42,7 @@ writeFileSync(outFile, ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText);
 
-const { cleanSummaryBullets: clean } = await import(pathToFileURL(outFile).href);
+const { cleanSummaryBullets: clean, mergeDictatedSummary: merge } = await import(pathToFileURL(outFile).href);
 
 const same = (name, input, expected, why = '') => {
   const got = clean(input);
@@ -109,6 +115,44 @@ same('a numbered section heading is kept as a heading',
   '1. Work Summary & Pipe Installation\n• Laid pipe\n• plain line');
 
 check('nothing in, nothing out', clean('') === '' && clean(null) === '' && clean(undefined) === '');
+
+// ── Dictating into the same activity more than once ──────────────────────────
+const morning = [
+  'Start Time: 6:30 AM',
+  'End Time: 3:00 PM',
+  '• Traffic control was set in the southbound #1 lane.',
+  '• The crew grouted all joints.',
+].join('\n');
+
+check('the first dictation into an empty activity is taken as it came',
+  merge('', morning) === morning);
+
+let got = merge(morning, '• The crew backfilled to Sta 12+50.\n• Traffic control was picked up at 3:00 PM.');
+check('a second dictation with no times keeps the times at the top and adds to the end',
+  got === `${morning}\n• The crew backfilled to Sta 12+50.\n• Traffic control was picked up at 3:00 PM.`,
+  JSON.stringify(got));
+
+got = merge(morning, 'Start Time: 7:00 AM\n• The crew arrived late.');
+check('a time in the new dictation is a correction, and wins',
+  got.startsWith('Start Time: 7:00 AM\nEnd Time: 3:00 PM\n'), JSON.stringify(got));
+check('  the times are never printed twice',
+  got.split('Start Time').length === 2 && got.split('End Time').length === 2, JSON.stringify(got));
+check('  nothing already written is lost, and the new words go last',
+  got.includes('• The crew grouted all joints.') && got.endsWith('• The crew arrived late.'),
+  JSON.stringify(got));
+
+got = merge('• Traffic control was set.', 'Start Time: 6:30 AM\nEnd Time: 3:00 PM\n• The crew grouted all joints.');
+check('times that arrive with a later dictation are lifted above what was already written',
+  got === 'Start Time: 6:30 AM\nEnd Time: 3:00 PM\n• Traffic control was set.\n• The crew grouted all joints.',
+  JSON.stringify(got));
+
+check('with no times on either side it is exactly the old append',
+  merge('• First.', '• Second.') === '• First.\n• Second.');
+
+check('an empty new dictation changes nothing', merge(morning, '') === morning);
+
+const merged = merge(morning, 'Start Time: 7:00 AM\n• The crew arrived late.');
+check('a merged summary survives being reopened unchanged', clean(merged) === merged, JSON.stringify(clean(merged)));
 
 rmSync(outDir, { recursive: true, force: true });
 

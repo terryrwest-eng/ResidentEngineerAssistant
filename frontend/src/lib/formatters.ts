@@ -148,3 +148,63 @@ export function cleanSummaryBullets(text: string | null | undefined): string {
 
   return cleanedLines.join('\n');
 }
+
+/** A summary taken apart into its shift times and everything else. */
+interface ShiftSplit {
+  start: string;
+  end: string;
+  body: string[];
+  hadTimeLines: boolean;
+}
+
+function splitShiftTimes(text: string): ShiftSplit {
+  const body: string[] = [];
+  let start = '';
+  let end = '';
+  let hadTimeLines = false;
+
+  for (const line of text.split('\n')) {
+    const time = TIME_LINE.exec(line.trim());
+    if (!time) {
+      if (line.trim()) body.push(line);
+      continue;
+    }
+    hadTimeLines = true;
+    const value = (time[2] ?? time[3] ?? '').trim();
+    if (!value) continue;
+    if (time[1].toLowerCase() === 'start') start = start || value;
+    else end = end || value;
+  }
+
+  return { start, end, body, hadTimeLines };
+}
+
+/**
+ * Add a new dictation to what an activity already says.
+ *
+ * WHY NOT JUST APPEND: the Dictate button can be pressed more than once on the
+ * same activity - the morning, then the afternoon. Appending put the second
+ * recording's "Start Time:" line in the middle of the write-up, or printed the
+ * times twice. The times belong at the top, once.
+ *
+ * A time in the NEW dictation wins - saying "we actually started at 7" is a
+ * correction. A time it does not mention keeps whatever was already there.
+ * Everything else keeps its order: what was already written, then what was
+ * just said. With no time lines on either side this is exactly the old append.
+ */
+export function mergeDictatedSummary(current: string, incoming: string): string {
+  if (!incoming) return current || '';
+  if (!current) return incoming;
+
+  const cur = splitShiftTimes(current);
+  const inc = splitShiftTimes(incoming);
+  if (!cur.hadTimeLines && !inc.hadTimeLines) return `${current}\n${incoming}`;
+
+  const start = inc.start || cur.start;
+  const end = inc.end || cur.end;
+  const head = [
+    ...(start ? [`Start Time: ${start}`] : []),
+    ...(end ? [`End Time: ${end}`] : []),
+  ];
+  return [...head, ...cur.body, ...inc.body].join('\n');
+}

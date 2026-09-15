@@ -128,3 +128,37 @@ def with_opening_times(start: str, end: str, body: str) -> str:
 
     remainder = '\n'.join(rest).strip()
     return '\n'.join(head) + ('\n' + remainder if remainder else '')
+
+
+# The shape rules every DICTATION prompt carries - Dictate (one activity), the
+# Scan page's voice dictation, and Dictate All. Held once here so a change to
+# the shape reaches all three, instead of being agreed for one prompt and
+# quietly never reaching the others, which is how they drifted apart before.
+#
+# The model is told NOT to write the times into the bullets because the code
+# places them - see with_opening_times. These rules cover what code cannot
+# place: the order of the write-up, and what is said about traffic control.
+DICTATION_SHAPE_RULES = (
+    'SHIFT TIMES AND THE SHAPE OF EACH ACTIVITY:\n'
+    '- start_time and end_time: the shift at THAT location, only if the speaker '
+    'said it ("we started at 6:30 and wrapped at 3"). 12-hour AM/PM. If it was not '
+    'said, leave the field empty. NEVER copy a crew row time into it and NEVER '
+    'work a time out from hours.\n'
+    '- Do NOT write the times into summary_html. The system puts them at the top of '
+    'the activity as "Start Time:" and "End Time:" lines, and writing them into the '
+    'bullets as well prints them twice.\n'
+    '- summary_html reads in this order for every location:\n'
+    '   1. The traffic control that was set, and where.\n'
+    '   2. The work itself, in the order it happened, naming the crew and the plant '
+    'that did it - the trade and the machine, not a count. Counts live in the '
+    'manpower and equipment arrays.\n'
+    '   3. Any other comment the inspector made about that location.\n'
+    '   4. LAST: what became of the traffic control - picked up, or left standing '
+    'and why.\n'
+    '   Leave out any part that was not said and write the rest.\n'
+    '- NEVER decide traffic control was picked up because the shift ended. If the '
+    'speaker did not say what happened to it, say nothing about it.\n'
+    '- NEVER write a label with nothing after it. A bullet reading only "Traffic '
+    'control", or "Start Time:" with no time, reads as a fact lost between the '
+    'field and the page. If there is nothing to put after it, leave the line out.\n'
+)

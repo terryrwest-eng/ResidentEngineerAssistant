@@ -196,6 +196,34 @@ check(
     "bulk_parse(" in inspect.getsource(ai_module.bulk_dictate_activities_v2),
 )
 
+check(
+    "Dictate (one activity) places the times",
+    "with_opening_times(" in inspect.getsource(ai_module.transcribe_smart),
+)
+check(
+    "the Scan page's voice dictation places the times",
+    "with_opening_times(" in inspect.getsource(ai_module.transcribe),
+)
+
+dictation_prompts = {
+    "Dictate All": ai_module.bulk_parse,
+    "Dictate": ai_module.transcribe_smart,
+    "Scan-page dictation": ai_module.transcribe,
+}
+missing_rules = [
+    name for name, fn in dictation_prompts.items()
+    if "DICTATION_SHAPE_RULES" not in inspect.getsource(fn)
+]
+check(
+    "every dictation prompt carries the one shared set of shape rules",
+    not missing_rules,
+    f"missing from: {missing_rules}" if missing_rules else "",
+)
+check(
+    "the shape rules are written once, not pasted into each prompt",
+    "NEVER decide traffic control was picked up" not in inspect.getsource(ai_module),
+)
+
 private_copies = [
     m.__name__ for m in (ai_module, interview_module, composer_module)
     if any(marker in inspect.getsource(m)

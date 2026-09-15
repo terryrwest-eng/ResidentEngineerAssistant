@@ -263,6 +263,54 @@ check("  and never prints a label with nothing after it",
 STATE.update(parse=None)
 
 
+# ── 12. Dictate (one activity) opens with the same shift times ──────────────
+STATE.update(transcript=GOOD_TRANSCRIPT, reason="STOP", parse={
+    "work_area": "Genesee and Centurion - OHLA - Blowoff #6",
+    "start_time": "6:30 AM", "end_time": "3:00 PM",
+    "summary_html": "• Traffic control was set in the southbound #1 lane.\nStart Time - 6:30 AM\n• The crew grouted all joints.",
+    "manpower": [], "equipment": [],
+})
+r = client.post("/api/ai/transcribe-smart", json={
+    "audio_data": AUDIO, "mime_type": "audio/webm", "context": {"duration_seconds": 300}})
+check("Dictate 200", r.status_code == 200, f"HTTP {r.status_code} {r.text[:120]}")
+smart = r.json()
+check("Dictate: the times open the activity, labelled",
+      smart["summary_html"].startswith("Start Time: 6:30 AM\nEnd Time: 3:00 PM\n• Traffic control was set"),
+      repr(smart["summary_html"][:90]))
+check("  a time also written into the bullets is not printed twice",
+      smart["summary_html"].count("Start Time") == 1, repr(smart["summary_html"]))
+check("  the times come back as fields too",
+      smart.get("start_time") == "6:30 AM" and smart.get("end_time") == "3:00 PM",
+      f"{smart.get('start_time')!r} {smart.get('end_time')!r}")
+prompt = STATE["last_parse_prompt"]
+check("the Dictate prompt carries the same shape rules as Dictate All",
+      "NEVER decide traffic control was picked up because the shift ended" in prompt
+      and "what became of the traffic control" in prompt
+      and "Do NOT write the times into summary_html" in prompt
+      and "NEVER write a label with nothing after it" in prompt)
+check("  and asks for start_time and end_time as fields",
+      '"start_time"' in prompt and '"end_time"' in prompt)
+
+# ── 13. The Scan page's voice dictation opens each location the same way ───
+STATE.update(transcript=GOOD_TRANSCRIPT, reason="STOP", parse={
+    "activities": [{
+        "work_area": "Nobel Drive", "start_time": "7:00 AM", "end_time": "3:30 PM",
+        "summary_html": "• Striping and layout.", "manpower": [], "equipment": [],
+    }],
+})
+r = client.post("/api/ai/transcribe", json={
+    "audio_data": AUDIO, "mime_type": "audio/webm", "context": {"duration_seconds": 300}})
+check("Scan-page dictation 200", r.status_code == 200, f"HTTP {r.status_code} {r.text[:120]}")
+voice = r.json()["activities"][0]["summary_html"]
+check("Scan-page dictation: the times open the activity, labelled",
+      voice == "Start Time: 7:00 AM\nEnd Time: 3:30 PM\n• Striping and layout.", repr(voice))
+prompt = STATE["last_parse_prompt"]
+check("  and its prompt carries the same shape rules",
+      "NEVER write a label with nothing after it" in prompt
+      and "what became of the traffic control" in prompt)
+STATE.update(parse=None)
+
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

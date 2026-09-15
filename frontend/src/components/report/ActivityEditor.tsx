@@ -26,6 +26,7 @@ import { scanApi } from '@/lib/api';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
 import { applyEndTimeToRows, isEndTimeApplied, formatEndTime } from '@/lib/dispatchHelpers';
 import { findActivityGaps } from '@/lib/activityGaps';
+import { mergeDictatedSummary } from '@/lib/formatters';
 import { ActivityGapChips } from '@/components/report/ActivityGapChips';
 import type { Activity, ManpowerRow, EquipmentRow } from '@/types';
 import { useMicLevel } from '@/hooks/useMicLevel';
@@ -355,8 +356,10 @@ export function ActivityEditor({
               const data = await scanApi.transcribeSmart(base64, 'summary', 'audio/webm', {});
               const updates: Partial<Activity> = {};
               if (data.summary_html) {
-                const cur = activity.summary || '';
-                updates.summary = cur ? `${cur}\n${data.summary_html}` : data.summary_html;
+                // Not a plain append: a second recording into the same activity
+                // keeps Start Time / End Time at the top, once, and a time it
+                // mentions corrects the one already there.
+                updates.summary = mergeDictatedSummary(activity.summary || '', data.summary_html);
               }
               if (data.work_area && !activity.work_area) updates.work_area = data.work_area;
               if (data.manpower?.length) {
