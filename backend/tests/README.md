@@ -13,6 +13,7 @@ python3 backend/tests/test_duplicate_date_guard.py
 python3 backend/tests/test_multiuser.py
 python3 backend/tests/test_conversation_draft.py
 python3 backend/tests/test_shift_times.py
+python3 backend/tests/test_rewrite_shape.py
 python3 backend/tests/test_migration.py
 ```
 

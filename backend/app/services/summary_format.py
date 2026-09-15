@@ -130,14 +130,59 @@ def with_opening_times(start: str, end: str, body: str) -> str:
     return '\n'.join(head) + ('\n' + remainder if remainder else '')
 
 
+def shift_times(text: str) -> tuple[str, str]:
+    """
+    The shift times already written into some text, as (start, end).
+
+    Rewrite hands the notes to the model and takes back a new version. The
+    times in the notes are facts the inspector wrote down; the rewrite is only
+    wording. So the times are read out of the ORIGINAL here and placed back over
+    whatever the rewrite produced - a model can reword a time away, bullet it or
+    "correct" it, and this is what stops that reaching the report.
+    """
+    start = end = ''
+    for line in (text or '').splitlines():
+        match = _TIME_LINE.match(line)
+        if not match:
+            continue
+        value = _time_value(match)
+        if not value:
+            continue
+        if _time_label(match) == 'Start Time':
+            start = start or value
+        else:
+            end = end or value
+    return start, end
+
+
+# What a location's write-up says, and in what order. Shared by every prompt
+# that writes one - the three dictation paths and Rewrite - so the order and the
+# traffic control rules cannot drift between them the way the times once did.
+_WRITE_UP_ORDER_RULES = (
+    '- The write-up for a location reads in this order:\n'
+    '   1. The traffic control that was set, and where.\n'
+    '   2. The work itself, in the order it happened, naming the crew and the plant '
+    'that did it - the trade and the machine, not a count. Counts live in the '
+    'manpower and equipment tables.\n'
+    '   3. Any other comment the inspector made about that location.\n'
+    '   4. LAST: what became of the traffic control - picked up, or left standing '
+    'and why.\n'
+    '   Leave out any part that was not said and write the rest.\n'
+    '- NEVER decide traffic control was picked up because the shift ended. If the '
+    'notes do not say what happened to it, say nothing about it.\n'
+    '- NEVER write a label with nothing after it. A bullet reading only "Traffic '
+    'control", or "Start Time:" with no time, reads as a fact lost between the '
+    'field and the page. If there is nothing to put after it, leave the line out.\n'
+)
+
 # The shape rules every DICTATION prompt carries - Dictate (one activity), the
 # Scan page's voice dictation, and Dictate All. Held once here so a change to
 # the shape reaches all three, instead of being agreed for one prompt and
 # quietly never reaching the others, which is how they drifted apart before.
 #
 # The model is told NOT to write the times into the bullets because the code
-# places them - see with_opening_times. These rules cover what code cannot
-# place: the order of the write-up, and what is said about traffic control.
+# places them - see with_opening_times. The rest covers what code cannot place:
+# the order of the write-up, and what is said about traffic control.
 DICTATION_SHAPE_RULES = (
     'SHIFT TIMES AND THE SHAPE OF EACH ACTIVITY:\n'
     '- start_time and end_time: the shift at THAT location, only if the speaker '
@@ -147,18 +192,18 @@ DICTATION_SHAPE_RULES = (
     '- Do NOT write the times into summary_html. The system puts them at the top of '
     'the activity as "Start Time:" and "End Time:" lines, and writing them into the '
     'bullets as well prints them twice.\n'
-    '- summary_html reads in this order for every location:\n'
-    '   1. The traffic control that was set, and where.\n'
-    '   2. The work itself, in the order it happened, naming the crew and the plant '
-    'that did it - the trade and the machine, not a count. Counts live in the '
-    'manpower and equipment arrays.\n'
-    '   3. Any other comment the inspector made about that location.\n'
-    '   4. LAST: what became of the traffic control - picked up, or left standing '
-    'and why.\n'
-    '   Leave out any part that was not said and write the rest.\n'
-    '- NEVER decide traffic control was picked up because the shift ended. If the '
-    'speaker did not say what happened to it, say nothing about it.\n'
-    '- NEVER write a label with nothing after it. A bullet reading only "Traffic '
-    'control", or "Start Time:" with no time, reads as a fact lost between the '
-    'field and the page. If there is nothing to put after it, leave the line out.\n'
+    + _WRITE_UP_ORDER_RULES
+)
+
+# The same shape for Rewrite, which returns plain text rather than fields, so the
+# times are asked for as the first two lines instead of a field. The code still
+# places them afterwards from the ORIGINAL notes (see shift_times), so this only
+# has to keep the model from folding them into a bullet or a sentence.
+REWRITE_SHAPE_RULES = (
+    'SHIFT TIMES AND THE SHAPE OF THE WRITE-UP:\n'
+    '- If the notes give the shift start or end time, the rewrite OPENS with them '
+    'as their own lines, exactly "Start Time: 6:30 AM" and "End Time: 3:00 PM". '
+    'Not bullets, and not folded into a sentence. NEVER invent a time the notes '
+    'do not give.\n'
+    + _WRITE_UP_ORDER_RULES
 )

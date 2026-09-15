@@ -30,7 +30,12 @@ from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_L
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user
-from app.services.summary_format import DICTATION_SHAPE_RULES, with_opening_times
+from app.services.summary_format import (
+    DICTATION_SHAPE_RULES,
+    REWRITE_SHAPE_RULES,
+    shift_times,
+    with_opening_times,
+)
 
 # Every route below requires a signed-in user, declared once here rather than on
 # each endpoint: a per-endpoint decorator is something you can forget to add,
@@ -2486,7 +2491,7 @@ QUALITY STANDARDS:
 2. TECHNICAL PRECISION: Use correct industry terminology (excavation, embedment, restrained joint, CLSM, thrust block, line and grade, etc.).
 3. OBJECTIVE TONE: Write in third person past tense. "Excavation was completed..." not "We did excavation..."
 4. PRESERVE ALL DATA: Keep ALL stations, measurements, quantities, dates, and times exactly as provided. Never round or approximate.
-5. FORMAT: Output ONLY bullet points starting with "• ". One complete thought per bullet.
+5. FORMAT: Bullet points starting with "• ", one complete thought per bullet - EXCEPT the Start Time / End Time lines described below, which come first and are not bullets.
 
 TONE (CRITICAL):
 - The author is a Resident Engineer. Verifying that work conforms to the contract
@@ -2508,7 +2513,7 @@ BANNED WORDS AND PHRASES:
 - NEVER spell out acronyms the audience knows — "BMP" NOT "Best Management Practice (BMP)"
 
 OUTPUT FORMAT — CRITICAL:
-- Output ONLY bullet points starting exactly with "• ". Do NOT use asterisks (*) or dashes (-).
+- Output bullet points starting exactly with "• ", apart from the Start Time / End Time lines. Do NOT use asterisks (*) or dashes (-).
 - Zero conversational text. No preamble or closing statement.
 - Use periods at the end of every bullet point.
 - Write entirely in past tense."""
@@ -2517,7 +2522,7 @@ OUTPUT FORMAT — CRITICAL:
             client,
             model_name,
             contents=[
-                system_prompt + _vocabulary_block(),
+                system_prompt + '\n\n' + REWRITE_SHAPE_RULES + _vocabulary_block(),
                 f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}',
             ],
             config=genai_types.GenerateContentConfig(
@@ -2553,6 +2558,14 @@ OUTPUT FORMAT — CRITICAL:
                 status_code=502,
                 detail='The AI response could not be formatted into bullets. Try again.',
             )
+
+        # The times in the ORIGINAL notes are facts; the rewrite is wording. Read
+        # them from what was sent and place them over whatever came back, so the
+        # rewrite can reword and reorder but cannot drop, bullet or change a time.
+        # This is also what takes back off the bullet the cleaner above put in
+        # front of them. Same shape as every other path (services/summary_format.py).
+        start, end = shift_times(request.text)
+        cleaned_text = with_opening_times(start, end, cleaned_text)
 
         logger.info(f'[rewrite] Polished {len(cleaned_text)} chars')
         return {'status': 'success', 'text': cleaned_text}

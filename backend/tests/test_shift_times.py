@@ -224,6 +224,31 @@ check(
     "NEVER decide traffic control was picked up" not in inspect.getsource(ai_module),
 )
 
+from app.services.summary_format import shift_times  # noqa: E402
+
+check(
+    "shift_times reads both times out of labelled lines",
+    shift_times("Start Time: 6:30 AM\n• Work.\nEnd Time - 3:00 PM") == ("6:30 AM", "3:00 PM"),
+)
+check(
+    "  in any of the shapes a line can arrive in",
+    shift_times("• start time 6:30 am\nFinish Time: 4 PM") == ("6:30 am", "4 PM"),
+)
+check(
+    "  and finds nothing in a sentence that only mentions the words",
+    shift_times("Start time was pushed to 8 because of the rain.") == ("", ""),
+)
+
+check(
+    "Rewrite places the times from the original notes",
+    "shift_times(request.text)" in inspect.getsource(ai_module.ai_rewrite)
+    and "with_opening_times(" in inspect.getsource(ai_module.ai_rewrite),
+)
+check(
+    "Rewrite carries the shared write-up rules",
+    "REWRITE_SHAPE_RULES" in inspect.getsource(ai_module.ai_rewrite),
+)
+
 private_copies = [
     m.__name__ for m in (ai_module, interview_module, composer_module)
     if any(marker in inspect.getsource(m)
