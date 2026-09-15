@@ -35,7 +35,7 @@ class FakeResponse:
 
 
 # What pass 1 "hears" and what pass 2 returns are set per-test.
-STATE = {"transcript": "", "reason": "STOP", "parse": None}
+STATE = {"transcript": "", "reason": "STOP", "parse": None, "last_parse_prompt": ""}
 
 GOOD_TRANSCRIPT = (
     "WORK DESCRIPTION:\n"
@@ -75,6 +75,7 @@ def fake_client():
         cfg = kw.get("config")
         # Any JSON-mode call is a parse pass; text-mode calls are transcription.
         if getattr(cfg, "response_mime_type", None) == "application/json":
+            STATE["last_parse_prompt"] = str((kw.get("contents") or [""])[0])
             return FakeResponse(json.dumps(STATE["parse"] or PARSE_JSON))
         return FakeResponse(STATE["transcript"], STATE["reason"])
 
@@ -210,6 +211,57 @@ r = client.post("/api/ai/transcribe", json={
     "audio_data": AUDIO, "mime_type": "audio/webm",
     "context": {"duration_seconds": 300}})
 check("/transcribe still works on good audio", r.status_code == 200, f"HTTP {r.status_code}")
+
+# ── 11. Dictate All opens each location with its shift times ────────────────
+STATE.update(transcript=GOOD_TRANSCRIPT, reason="STOP", parse={
+    "activities": [
+        {   # times given as fields, and the model ALSO wrote one into the bullets
+            "work_area": "Genesee and Centurion - OHLA - Blowoff #6", "stations": "",
+            "start_time": "6:30 AM", "end_time": "3:00 PM",
+            "summary_html": "• Traffic control was set in the southbound #1 lane.\nStart Time - 6:30 AM\n• The crew grouted all joints.\n• Traffic control was picked up at 3:00 PM.",
+            "manpower": [], "equipment": [],
+        },
+        {   # no fields, but the writing carries a time in the wrong shape
+            "work_area": "Nobel Drive", "stations": "", "start_time": "", "end_time": "",
+            "summary_html": "start time: 7:00 AM\n• Striping and layout.",
+            "manpower": [], "equipment": [],
+        },
+        {   # no time anywhere
+            "work_area": "Executive and Judicial", "stations": "", "start_time": "", "end_time": "",
+            "summary_html": "• No other work was performed.",
+            "manpower": [], "equipment": [],
+        },
+    ],
+    "locations": "", "general_notes": "", "questions": [],
+})
+r = client.post("/api/ai/bulk-parse", json={"transcription": GOOD_TRANSCRIPT})
+check("Dictate All parse 200", r.status_code == 200, f"HTTP {r.status_code} {r.text[:120]}")
+acts = r.json()["activities"]
+first = acts[0]["summary_html"]
+check("Dictate All: the times open the activity, labelled",
+      first.startswith("Start Time: 6:30 AM\nEnd Time: 3:00 PM\n• Traffic control was set"), repr(first[:90]))
+check("  a time the model also wrote into the bullets is not printed twice",
+      first.count("Start Time") == 1, repr(first))
+check("  the rest of the write-up keeps its order, traffic control last",
+      first.endswith("• The crew grouted all joints.\n• Traffic control was picked up at 3:00 PM."), repr(first))
+check("a time that only arrived in the writing is still used, in the one shape",
+      acts[1]["summary_html"] == "Start Time: 7:00 AM\n• Striping and layout.", repr(acts[1]["summary_html"]))
+check("no time anywhere means no time line",
+      acts[2]["summary_html"] == "• No other work was performed.", repr(acts[2]["summary_html"]))
+
+prompt = STATE["last_parse_prompt"]
+check("the Dictate All prompt asks for the shift times as fields",
+      "start_time and end_time" in prompt)
+check("  and tells the model not to write them into the bullets",
+      "Do NOT write the times into summary_html" in prompt)
+check("  and closes each location on what became of the traffic control",
+      "what became of the traffic control" in prompt)
+check("  and never infers the traffic control was picked up from the shift end",
+      "NEVER decide traffic control was picked up because the shift ended" in prompt)
+check("  and never prints a label with nothing after it",
+      "NEVER write a label with nothing after it" in prompt)
+STATE.update(parse=None)
+
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

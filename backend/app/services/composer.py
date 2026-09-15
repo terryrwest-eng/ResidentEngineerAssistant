@@ -34,6 +34,7 @@ from typing import Any
 
 from app.routers.interview import HOUSE_STYLE
 from app.services.day_record import DayRecord
+from app.services.summary_format import with_opening_times
 
 logger = logging.getLogger(__name__)
 
@@ -189,37 +190,6 @@ def _facts_for_prose(record: DayRecord) -> dict[str, Any]:
     return {'day': day_level, 'locations': by_instance}
 
 
-def _opening_times(start: str, stop: str, narrative: str) -> str:
-    """
-    Open a location's write-up with its shift times, labelled.
-
-    The reader checks these on every report and should not have to read a
-    paragraph to find them, so they are two fixed lines in a fixed shape:
-
-        Start Time: 6:30 AM
-        End Time: 3:00 PM
-
-    PLACED HERE, NOT ASKED FOR IN THE PROMPT. The model was writing them as
-    "Start Time - 6:30 AM" one day and folding them into a sentence the next,
-    because a prompt is a request. These are known facts and the rest of this
-    module already follows the same rule: the model writes prose, the numbers
-    are placed by code.
-
-    A time that was never given produces no line. A label with nothing after it
-    reads as a fact lost between the field and the page.
-    """
-    lines = []
-    if start.strip():
-        lines.append(f'Start Time: {start.strip()}')
-    if stop.strip():
-        lines.append(f'End Time: {stop.strip()}')
-    if not lines:
-        return narrative
-
-    body = (narrative or '').strip()
-    return '\n'.join(lines) + ('\n' + body if body else '')
-
-
 # ── the one model call ────────────────────────────────────────────
 
 def _write_prose(client, model_name, record: DayRecord) -> dict[str, str]:
@@ -317,7 +287,7 @@ def compose(record: DayRecord, client, model_name) -> dict[str, Any]:
         # The model's paragraph where there is one, otherwise the inspector's
         # own words. Never nothing, and never invented.
         narrative = prose.get(label) or _value(record, ACTIVITY_SECTION, 'summary', label)
-        narrative = _opening_times(start, stop, narrative)
+        narrative = with_opening_times(start, stop, narrative)
 
         activities.append({
             'id': str(uuid.uuid4()),

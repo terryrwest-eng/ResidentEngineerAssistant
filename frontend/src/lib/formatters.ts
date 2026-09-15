@@ -6,10 +6,6 @@
  */
 
 /**
- * Clean summary text to ensure plain-text bullet points starting with '• '
- * and remove raw HTML tags like <ul>, <li>, <p>, etc.
- */
-/**
  * Returns today's date as YYYY-MM-DD in the LOCAL timezone.
  *
  * WHY NOT toISOString(): that converts to UTC first, so anywhere west of
@@ -66,6 +62,31 @@ export function formatReportDate(date: string | null | undefined): string {
   });
 }
 
+/**
+ * A shift-time LABEL line: Start / End / Stop / Finish, then "time", then either
+ * a separator or a time. "Stop" and "Finish" both mean End.
+ *
+ * KEPT IN STEP WITH _TIME_LINE in backend/app/services/summary_format.py, which
+ * places "Start Time: 6:30 AM" / "End Time: 3:00 PM" at the top of every
+ * location's write-up. If the two ever disagree about what a time line is, this
+ * cleaner puts a bullet back in front of lines the backend placed without one.
+ *
+ * The separator-or-digit requirement keeps an ordinary sentence out: "Start time
+ * was pushed to 8 because of the rain" has neither straight after "time", so it
+ * stays a bulleted sentence. A bare "Start Time" still matches, so it is dropped.
+ */
+const TIME_LINE = /^[\s>*•–—-]*(start|end|stop|finish)\s*time\s*(?:[:–—-]\s*(.*?)|(\d.*?))?\s*$/i;
+
+/**
+ * Clean summary text to ensure plain-text bullet points starting with '• '
+ * and remove raw HTML tags like <ul>, <li>, <p>, etc.
+ *
+ * EXCEPT the shift-time lines, which stay unbulleted, in the one shape. This
+ * runs when an activity is added, when the interview replaces the activities,
+ * and on EVERY report load - so without the exception, the labelled time lines
+ * came back as "• Start Time: 6:30 AM" the first time a report was opened, on
+ * every path that writes them.
+ */
 export function cleanSummaryBullets(text: string | null | undefined): string {
   if (!text) return '';
   let t = String(text).trim();
@@ -94,6 +115,19 @@ export function cleanSummaryBullets(text: string | null | undefined): string {
   const cleanedLines: string[] = [];
 
   for (const line of rawLines) {
+    // The shift times are labelled lines, not list items. Kept unbulleted and
+    // put in the one shape; a label with nothing after it is not a fact, so it
+    // is dropped rather than printed.
+    const time = TIME_LINE.exec(line);
+    if (time) {
+      const value = (time[2] ?? time[3] ?? '').trim();
+      if (value) {
+        const label = time[1].toLowerCase() === 'start' ? 'Start Time' : 'End Time';
+        cleanedLines.push(`${label}: ${value}`);
+      }
+      continue;
+    }
+
     // "1. Work Summary & Pipe Installation" is a section heading, not a list
     // item. The old strip pattern was a character class matching ONE character,
     // so it removed the digit and left the dot — printing as ". Work Summary" —
@@ -104,7 +138,9 @@ export function cleanSummaryBullets(text: string | null | undefined): string {
     }
 
     // Strip leading bullet chars/symbols/numbers if present
-    const content = line.replace(/^[•\-\*\–]\s*/, '').replace(/^\d+[.)]\s+/, '').trim();
+    // Same four characters as before (bullet, star, en dash, hyphen), without the
+    // escapes lint rejects - the hyphen goes last so it cannot read as a range.
+    const content = line.replace(/^[•*–-]\s*/, '').replace(/^\d+[.)]\s+/, '').trim();
     if (content) {
       cleanedLines.push(`• ${content}`);
     }

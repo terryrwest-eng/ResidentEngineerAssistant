@@ -30,6 +30,7 @@ from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_L
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user
+from app.services.summary_format import with_opening_times
 
 # Every route below requires a signed-in user, declared once here rather than on
 # each endpoint: a per-endpoint decorator is something you can forget to add,
@@ -2852,6 +2853,11 @@ class DictatedEquipment(BaseModel):
 class DictatedActivity(BaseModel):
     work_area: str = ''
     stations: str = ''
+    # The shift at THIS location, only when spoken. Placed at the top of
+    # summary_html by code (summary_format.with_opening_times) rather than
+    # written into the prose, so the shape cannot drift between reports.
+    start_time: str = ''
+    end_time: str = ''
     summary_html: str = ''
     manpower: list[DictatedManpower] = []
     equipment: list[DictatedEquipment] = []
@@ -3204,6 +3210,30 @@ async def bulk_parse(request: BulkParseRequest):
             'L. Still build activities from everything you DID understand. The questions '
             'sit alongside the activities; they do not replace them.\n\n'
 
+            'SHIFT TIMES AND THE SHAPE OF EACH ACTIVITY:\n'
+            'M. start_time and end_time: the shift at THAT location, only if the '
+            'speaker said it ("we started at 6:30 and wrapped at 3"). 12-hour AM/PM. '
+            'If it was not said, leave the field empty. NEVER copy a crew row time '
+            'into it and NEVER work a time out from hours.\n'
+            'N. Do NOT write the times into summary_html. The system puts them at the '
+            'top of the activity as "Start Time:" and "End Time:" lines, and writing '
+            'them into the bullets as well prints them twice.\n'
+            'O. summary_html reads in this order for every location:\n'
+            '   1. The traffic control that was set, and where.\n'
+            '   2. The work itself, in the order it happened, naming the crew and the '
+            'plant that did it - the trade and the machine, not a count. Counts live '
+            'in the manpower and equipment arrays.\n'
+            '   3. Any other comment the inspector made about that location.\n'
+            '   4. LAST: what became of the traffic control - picked up, or left '
+            'standing and why.\n'
+            '   Leave out any part that was not said and write the rest.\n'
+            'P. NEVER decide traffic control was picked up because the shift ended. '
+            'If the speaker did not say what happened to it, say nothing about it.\n'
+            'Q. NEVER write a label with nothing after it. A bullet reading only '
+            '"Traffic control", or "Start Time:" with no time, reads as a fact lost '
+            'between the field and the page. If there is nothing to put after it, '
+            'leave the line out.\n\n'
+
             'TRANSCRIPTION TO PARSE:\n---\n' + transcription + '\n---\n'
             + answers_block
             # Spoken references to a past day ("same crew as 8/14") resolve to
@@ -3234,6 +3264,19 @@ async def bulk_parse(request: BulkParseRequest):
         data = _clean_json(raw_text)
         activities = data.get('activities', []) or []
         questions = data.get('questions', []) or []
+
+        # The shift times open each location as two fixed lines, placed here
+        # from the schema fields rather than trusted to the prose - the same
+        # rule every other path follows (services/summary_format.py). A time
+        # the model wrote into summary_html anyway is lifted out and used when
+        # the field is empty, so it appears once, at the top, in one shape.
+        for act in activities:
+            if isinstance(act, dict):
+                act['summary_html'] = with_opening_times(
+                    str(act.get('start_time') or ''),
+                    str(act.get('end_time') or ''),
+                    str(act.get('summary_html') or ''),
+                )
 
         # An answered question must never come back a second time — the model is
         # told not to re-ask, but a dropped id would strand the user in a loop
