@@ -62,3 +62,6 @@ frontend/android/build_old/
 # Staged front end for the desktop bundle — a copy of frontend/dist, produced
 # at build time. Committing it would be a second copy of the build output.
 desktop/web/
+
+# Installer output — 14 MB build artifact, rebuilt by ISCC from the .iss
+desktop/installer/*.exe
