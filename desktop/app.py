@@ -94,17 +94,52 @@ def _bundled_web_root():
     return root if os.path.isfile(os.path.join(root, 'index.html')) else None
 
 
+# The port the bundled front end is served on, and why it is not just "any
+# free port".
+#
+# The browser keys localStorage by ORIGIN, and the port is part of the origin.
+# Asking the OS for a free port gave a different one every launch
+# (51314, then 56554, then 61467), so every launch was a brand new origin with
+# an empty localStorage - no signed-in token. The app then failed its first
+# save with 401 and showed "Save failed", which is what sent Terry looking.
+#
+# A fixed port makes the origin the same every time, so the session survives a
+# restart. The alternates are for the rare case where something else already
+# holds the first one; they are tried in order so the origin is at least
+# predictable rather than random.
+STABLE_PORTS = (17851, 17852, 17853, 17854)
+
+
 def _serve(root):
-    """Start a local server for `root` on a free port. Returns its URL."""
+    """
+    Start a local server for `root` on a stable port. Returns its URL.
+
+    Falls back to any free port only if every stable port is taken - the app
+    still works, but the sign-in will not carry over from the last launch, so
+    that case is logged as a warning rather than passing silently.
+    """
+    handler = functools.partial(_SpaHandler, directory=root)
+
+    for port in STABLE_PORTS:
+        try:
+            httpd = http.server.ThreadingHTTPServer(('127.0.0.1', port), handler)
+        except OSError as exc:
+            logger.info("Port %d is taken (%s) - trying the next one", port, exc)
+            continue
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        logger.info("Serving bundled front end from %s on port %d", root, port)
+        return f'http://127.0.0.1:{port}'
+
     sock = socket.socket()
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
     sock.close()
-
-    handler = functools.partial(_SpaHandler, directory=root)
     httpd = http.server.ThreadingHTTPServer(('127.0.0.1', port), handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    logger.info("Serving bundled front end from %s on port %d", root, port)
+    logger.warning(
+        "Every stable port was taken - serving on %d instead. The sign-in from "
+        "the last launch will not be recognised on this one.", port,
+    )
     return f'http://127.0.0.1:{port}'
 
 
@@ -360,8 +395,20 @@ def main():
         height=900,
     )
 
+    # Keep the browser profile between launches.
+    #
+    # pywebview defaults to private mode, which puts the WebView2 profile in a
+    # temp folder and deletes it on close - so localStorage went with it, and
+    # the signed-in token with that. Together with the old random port (see
+    # STABLE_PORTS) every launch started signed out, and the first save came
+    # back 401, which the app showed as "Save failed". A profile of our own
+    # under APPDATA is what makes the session survive a restart.
+    profile_dir = os.path.join(CONFIG_DIR, 'webview')
+    os.makedirs(profile_dir, exist_ok=True)
+    logger.info("WebView profile: %s", profile_dir)
+
     # Start the event loop (blocks until window is closed)
-    webview.start()
+    webview.start(private_mode=False, storage_path=profile_dir)
     logger.info("Desktop app closed")
 
 
