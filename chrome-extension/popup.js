@@ -205,8 +205,19 @@ async function fetchData() {
         const dataResp = await apiFetch(`${API_BASE}/api/reports/${reportId}/consolidated`);
         rowsData = await dataResp.json();
 
-        // Store in extension storage for content script
-        chrome.storage.local.set({ pmwebRows: rowsData });
+        // Stamped with WHICH report and WHEN. The floating Fill button on the
+        // PMWeb page reads these rows straight out of storage and never
+        // re-fetches, so without a stamp there is nothing on screen telling
+        // you whether you are about to fill this report or one from last week.
+        const picked = pickerReports.find(r => r.id === reportId);
+        chrome.storage.local.set({
+            pmwebRows: rowsData,
+            pmwebRowsMeta: {
+                reportId,
+                reportDate: (picked && picked.report_date) || '',
+                fetchedAt: Date.now(),
+            },
+        });
 
         const container = document.getElementById('rowCountContainer');
         const msg = document.getElementById('rowCountMsg');
@@ -764,6 +775,16 @@ async function selectReport(reportId) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ report_id: reportId }),
+        });
+        // Changing report invalidates any fetched rows. They belong to the
+        // report they came from, and leaving them in place is how the wrong
+        // report's crew ends up in PMWeb.
+        chrome.storage.local.get(['pmwebRowsMeta'], (stored) => {
+            const meta = stored.pmwebRowsMeta;
+            if (meta && meta.reportId && meta.reportId !== reportId) {
+                chrome.storage.local.remove(['pmwebRows', 'pmwebRowsMeta']);
+                console.log('[picker] Cleared rows fetched for a different report');
+            }
         });
         chrome.storage.local.set({ selectedReportId: reportId });
         renderActiveReport(report);
