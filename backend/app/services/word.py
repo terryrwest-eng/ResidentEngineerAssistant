@@ -31,16 +31,81 @@ logger = logging.getLogger(__name__)
 STANDARD_HOURS = 8.0
 
 
-def add_hours_to_time(time_str: str, add_hours: float) -> str:
-    """Helper to add hours to a 12-hour AM/PM time string."""
-    from datetime import timedelta
-    try:
-        t = datetime.strptime(time_str.strip(), "%I:%M %p")
-        t += timedelta(hours=add_hours)
-        return t.strftime("%I:%M %p").lstrip("0")
-    except Exception:
-        return time_str
+# Every shape a start time actually arrives in. General info stores 24-hour
+# ("19:30"), the interview and the resource rows store 12-hour, PMWeb echoes
+# back seconds, and hand-typed values lose the space before AM/PM.
+_TIME_FORMATS = (
+    "%I:%M %p", "%I:%M:%S %p", "%I:%M%p", "%I:%M:%S%p",
+    "%H:%M", "%H:%M:%S",
+)
 
+
+def parse_clock(time_str: str) -> "datetime | None":
+    """A clock time from any of the formats this app stores, or None."""
+    text = (time_str or "").strip().upper().replace(".", "")
+    if not text:
+        return None
+    for fmt in _TIME_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def add_hours_to_time(time_str: str, add_hours: float) -> str:
+    """
+    Add hours to a clock time, returned as 12-hour AM/PM.
+
+    WHY THE PARSING IS BROAD: this only ever understood "%I:%M %p". A 24-hour
+    value - which is exactly how general info stores start_time - failed to
+    parse and the function returned its INPUT unchanged. The caller uses the
+    result to split a shift into regular and overtime, so an unparsed time
+    collapsed the regular row to a zero-length window and handed the overtime
+    row the ENTIRE shift, which is how overtime rows ended up showing the full
+    7:30 PM to 4:30 AM span instead of just the overtime portion.
+
+    Failing to parse now returns nothing rather than the input, so a caller
+    can tell the difference between "the split is here" and "I could not work
+    out where the split is".
+    """
+    from datetime import timedelta
+    t = parse_clock(time_str)
+    if t is None:
+        logger.warning(f"[pmweb] Could not parse time {time_str!r}; no split time available")
+        return ""
+    return (t + timedelta(hours=add_hours)).strftime("%I:%M %p").lstrip("0")
+
+
+
+LUNCH_HOURS = 0.5   # unpaid; 8 paid hours spans 8.5 on the clock
+
+
+def fmt_clock(time_str: str) -> str:
+    """A stored time as PMWeb shows them: 12-hour with AM/PM."""
+    t = parse_clock(time_str)
+    return t.strftime("%I:%M %p").lstrip("0") if t else (time_str or "").strip()
+
+
+def overtime_window(start: str, stop: str, overtime_hours: float) -> str:
+    """
+    When the overtime portion of a shift begins.
+
+    Overtime is the TAIL of the shift, so the honest definition is measured
+    back from the end: it starts overtime_hours before the crew went home.
+    Measuring forward from the start - 8 paid hours plus the unpaid lunch -
+    gives the same answer whenever the row is internally consistent, and is
+    preferred because it is the rule the timesheets are written against.
+
+    Falling back to the stop time matters because the forward calculation
+    needs a parseable start, and it is the start that is most often stored in
+    a format that does not parse.
+    """
+    if parse_clock(start):
+        return add_hours_to_time(start, STANDARD_HOURS + LUNCH_HOURS)
+    if parse_clock(stop) and overtime_hours > 0:
+        return add_hours_to_time(stop, -overtime_hours)
+    return ""
 
 
 # ============================================
@@ -604,13 +669,33 @@ def aggregate_for_pmweb(report: dict) -> list:
                 if is_equip and item.get("is_rental"):
                     remarks = "Rental"
 
-                item_start = item.get("start_time") or default_start
-                item_stop = item.get("stop_time") or default_stop
+                # Normalised for PMWeb, which wants 12-hour AM/PM. General info
+                # stores start_time as 24-hour, and that was going across raw.
+                item_start = fmt_clock(item.get("start_time") or default_start)
+                item_stop = fmt_clock(item.get("stop_time") or default_stop)
 
                 # OT split for manpower
                 if not is_equip and hours > STANDARD_HOURS:
-                    # Calculate the split time based on standard 8 hours + 0.5 lunch
-                    split_time = add_hours_to_time(item_start, STANDARD_HOURS + 0.5)
+                    overtime_hours = hours - STANDARD_HOURS
+                    split_time = overtime_window(item_start, item_stop, overtime_hours)
+                    if not split_time:
+                        # Without a split time the overtime row would inherit the
+                        # whole shift, which reads as the crew working overtime
+                        # all day. One row at the real hours is wrong in a way
+                        # somebody notices; the other is wrong quietly.
+                        logger.warning(
+                            f"[pmweb] {resource!r}: {hours}h but no usable times "
+                            f"({item_start!r} to {item_stop!r}); not splitting"
+                        )
+                        rows.append({
+                            "resource": resource, "pay_type": pay_type,
+                            "classification": "LR - Labor Regular Time",
+                            "specialist": is_consultant, "remarks": remarks,
+                            "subcontractor": is_3rd_party, "qty": qty,
+                            "company": company, "total_hours": qty * hours,
+                            "start_time": item_start, "finish_time": item_stop,
+                        })
+                        continue
 
                     rows.append({
                         "resource": resource,
@@ -634,9 +719,16 @@ def aggregate_for_pmweb(report: dict) -> list:
                         "subcontractor": is_3rd_party,
                         "qty": qty,
                         "company": company,
-                        "total_hours": qty * (hours - STANDARD_HOURS),
+                        "total_hours": qty * overtime_hours,
                         "start_time": split_time,
-                        "finish_time": item_stop,
+                        # A finish equal to the split is a zero-length overtime
+                        # window: it happens when the stop time came from the
+                        # report default and contradicts the hours on the row.
+                        # The hours are what the crew was paid for, so they win.
+                        "finish_time": (
+                            item_stop if item_stop != split_time
+                            else add_hours_to_time(split_time, overtime_hours)
+                        ),
                     })
                 else:
                     rows.append({
