@@ -14,25 +14,21 @@ let API_BASE = ''; // Will be set from storage or detected
 //
 // apiFetch attaches it to every call. The token is stored alongside apiBase in
 // chrome.storage.local, which is per-profile and not readable by pages.
+//
+// The logic itself is in core.js, shared with the side panel on PMWeb pages.
 
 async function getAuthToken() {
-    const stored = await chrome.storage.local.get(['apiToken']);
-    return stored.apiToken || '';
+    return PMCore.getAuthToken();
 }
 
-/** fetch() with the stored access token attached. */
+/** fetch() with the stored access token attached; a 401 or 403 opens the token box. */
 async function apiFetch(url, options = {}) {
-    const token = await getAuthToken();
-    const headers = Object.assign({}, options.headers || {});
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const resp = await fetch(url, Object.assign({}, options, { headers }));
-    if (resp.status === 401 || resp.status === 403) {
-        // Distinguishable from "the server is down", which is the other way
-        // these calls fail and needs an entirely different fix from the user.
-        showTokenPrompt();
-    }
-    return resp;
+    return PMCore.apiFetch(url, options, showTokenPrompt);
 }
+
+const fmtPickerDate = PMCore.fmtPickerDate;
+const fmtShift = PMCore.fmtShift;
+const htmlToPlainText = PMCore.htmlToPlainText;
 
 /** Tell the user the extension needs a token, without wiping the popup. */
 function showTokenPrompt() {
@@ -72,69 +68,9 @@ function initTokenBox() {
 document.addEventListener('DOMContentLoaded', initTokenBox);
 
 
-// Get saved API URL or detect it
+// Get saved API URL or detect it (core.js)
 async function getApiBase() {
-    // Check storage first
-    const stored = await chrome.storage.local.get(['apiBase']);
-    if (stored.apiBase) {
-        // Validate cached URL is still reachable
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
-            const resp = await fetch(`${stored.apiBase}/api/health`, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (resp.ok) return stored.apiBase;
-        } catch (e) { /* cached URL unreachable, clear and re-discover */ }
-        await chrome.storage.local.remove(['apiBase']);
-        console.log('Cleared stale apiBase, re-discovering...');
-    }
-
-    // Try Railway URL first — V3 is the active deployment
-    const railwayUrls = [
-        'https://residentengineerassistant-production.up.railway.app',
-        'https://daily-observation-application-production.up.railway.app',
-        'https://daily-reporting-app-main-production.up.railway.app',
-        'https://daily-reporting-app.up.railway.app'
-    ];
-
-    for (const url of railwayUrls) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-            const resp = await fetch(`${url}/api/health`, {
-                method: 'GET',
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-
-            if (resp.ok) {
-                await chrome.storage.local.set({ apiBase: url });
-                return url;
-            }
-        } catch (e) { }
-    }
-
-    // Try localhost as fallback
-    for (const port of [8000, 3001, 5000, 8080]) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-            const resp = await fetch(`http://localhost:${port}/api/health`, {
-                signal: controller.signal
-            });
-            clearTimeout(timeoutId);
-
-            if (resp.ok) {
-                const url = `http://localhost:${port}`;
-                await chrome.storage.local.set({ apiBase: url });
-                return url;
-            }
-        } catch (e) { }
-    }
-
-    return null;
+    return PMCore.getApiBase();
 }
 
 // Check connection to app
@@ -205,19 +141,9 @@ async function fetchData() {
         const dataResp = await apiFetch(`${API_BASE}/api/reports/${reportId}/consolidated`);
         rowsData = await dataResp.json();
 
-        // Stamped with WHICH report and WHEN. The floating Fill button on the
-        // PMWeb page reads these rows straight out of storage and never
-        // re-fetches, so without a stamp there is nothing on screen telling
-        // you whether you are about to fill this report or one from last week.
+        // Stamped with WHICH report and WHEN, for the side panel's Fill step.
         const picked = pickerReports.find(r => r.id === reportId);
-        chrome.storage.local.set({
-            pmwebRows: rowsData,
-            pmwebRowsMeta: {
-                reportId,
-                reportDate: (picked && picked.report_date) || '',
-                fetchedAt: Date.now(),
-            },
-        });
+        await PMCore.storeResourceRows(rowsData, reportId, (picked && picked.report_date) || '');
 
         const container = document.getElementById('rowCountContainer');
         const msg = document.getElementById('rowCountMsg');
@@ -310,11 +236,13 @@ async function clearPMWeb() {
             return;
         }
 
-        // Execute clear script in the page
-        await chrome.scripting.executeScript({
+        // Execute clear script in the page (core.js, shared with the side panel)
+        const results = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: injectClearScript
+            func: PMCore.clearTimesheetFields
         });
+        const cleared = results && results[0] ? results[0].result : 0;
+        alert('✅ Cleared ' + cleared + ' fields!');
 
         clearBtn.textContent = '✓ Cleared!';
         setTimeout(() => {
@@ -327,51 +255,6 @@ async function clearPMWeb() {
         clearBtn.textContent = '🗑️ Clear All Data';
         clearBtn.disabled = false;
     }
-}
-
-// This function runs in the PMWeb page context to clear rows
-function injectClearScript() {
-    console.log('🗑️ PMWeb Clear: Starting...');
-
-    // Find all editable text inputs in the grid and clear them
-    const inputs = document.querySelectorAll('input[type="text"][id*="DailyReportTimesheet"]');
-    let clearedCount = 0;
-
-    inputs.forEach(inp => {
-        if (inp.offsetParent !== null && inp.value && !inp.id.includes('Filter')) {
-            inp.focus();
-            inp.value = '';
-            inp.dispatchEvent(new Event('input', { bubbles: true }));
-            inp.dispatchEvent(new Event('change', { bubbles: true }));
-            inp.dispatchEvent(new Event('blur', { bubbles: true }));
-            clearedCount++;
-        }
-    });
-
-    // Clear checkboxes
-    const checkboxes = document.querySelectorAll('input[type="checkbox"][id*="DailyReportTimesheet"]');
-    checkboxes.forEach(chk => {
-        if (chk.offsetParent !== null && chk.checked) {
-            chk.click();
-            clearedCount++;
-        }
-    });
-
-    // Clear textareas (Remarks/Memo fields)
-    const textareas = document.querySelectorAll('textarea[id*="DailyReportTimesheet"], textarea[id*="txtMemo"]');
-    textareas.forEach(ta => {
-        if (ta.offsetParent !== null && ta.value) {
-            ta.focus();
-            ta.value = '';
-            ta.dispatchEvent(new Event('input', { bubbles: true }));
-            ta.dispatchEvent(new Event('change', { bubbles: true }));
-            ta.dispatchEvent(new Event('blur', { bubbles: true }));
-            clearedCount++;
-        }
-    });
-
-    console.log('✅ Cleared ' + clearedCount + ' fields');
-    alert('✅ Cleared ' + clearedCount + ' fields!');
 }
 
 // ============================================
@@ -679,142 +562,15 @@ async function autoFillEverything() {
             return;
         }
 
-        // Build the record code: "1470 Day"
-        const recordCode = `${recordNum} ${shift}`;
-
-        // Determine shift emoji for PMWeb dropdown
-        const shiftEmojis = {
-            'Day': '☀️ Day',
-            'Evening': '🌙 Evening',
-            'Night': '🌑 Night'
-        };
-        const shiftValue = shiftEmojis[shift] || `☀️ ${shift}`;
-
-        // Determine working day value
-        const dayTypeValue = fullData.general.is_working_day
-            ? '1 -Working Day'
-            : '2 -Non-Working Day';
-
-        // PMWeb's Location box rejects a long value - a 192-character location
-        // makes the whole document save fail with "String or binary data would
-        // be truncated", which is a SQL error, not a validation message, so the
-        // record simply will not save. The control reports maxLength=1000, so
-        // the real column is smaller than the page claims.
-        //
-        // The fix is not to truncate, though. Terry, 2026-09-27, on a location
-        // listing every station, vault and manway: "THATS WAY TOO LONG EVEN IF
-        // IT IDDNT CAUSE THE ERROR. THAT SHOULD SAY Genesee, Nobel." So PMWeb
-        // gets the streets, and the report itself keeps the full detail.
-        //
-        // Longest first, so "Town Centre Dr" is not caught by a bare "Town".
-        const PLACES = [
-            ['rose canyon', 'Rose Canyon'], ['marian bear', 'Marian Bear'],
-            ['town cent', 'Town Centre'], ['towne cent', 'Town Centre'],
-            ['genesee', 'Genesee'], ['nobel', 'Nobel'], ['executive', 'Executive'],
-            ['renaissance', 'Renaissance'], ['governor', 'Governor'],
-            ['sr-52', 'SR-52'], ['sr 52', 'SR-52'],
-            ['i-805', 'I-805'], ['805', 'I-805'],
-            ['utc', 'UTC'], ['morena', 'Morena'], ['regents', 'Regents'],
-            ['la jolla', 'La Jolla'], ['eastgate', 'Eastgate'],
-            ['campus point', 'Campus Point'],
-        ];
-        const placesIn = (text) => {
-            const hay = String(text || '').toLowerCase();
-            const out = [];
-            PLACES.forEach(([needle, name]) => {
-                if (hay.indexOf(needle) >= 0 && out.indexOf(name) < 0) out.push(name);
-            });
-            return out;
-        };
-        const shortLocation = (loc, activities) => {
-            let found = placesIn(loc);
-            if (!found.length) {
-                // Some reports carry no location at all - 2026-04-21 is empty -
-                // but the activities still name where the work was.
-                const fromActs = (activities || [])
-                    .map(a => (a.location || '') + ' ' + (a.title || '')).join(' ');
-                found = placesIn(fromActs);
-            }
-            if (found.length) return found.join(', ');
-            // Nothing recognised. 2025-11-11 is just "SDG&E trench" - short
-            // already, and better than nothing.
-            return String(loc || '').slice(0, 60);
-        };
-
-        // The two time boxes on the Main tab are military digits and nothing
-        // else - PMWeb renders them class="Integer". Terry, 2026-09-27: "these
-        // two time slots are supposedto be in military time, only these thought".
-        //
-        // The API's own start_time_military only understands "6:30 AM", and the
-        // reports say "Hours: 07:00 - 05:00", so times without a meridiem were
-        // coming through with the colon still in them. Reading it the way Terry
-        // writes it: the start is the clock as written, and an end at or before
-        // the start is PM when that lands within 16 hours of the start, otherwise
-        // the next morning. 2025-11-11's night shift 20:30 - 05:00 therefore gives
-        // 2030 and 500, while 2025-10-29's 07:00 - 05:00 gives 700 and 1700.
-        const timeMinutes = (t) => {
-            const s = String(t || '').trim();
-            let m = /^(\d{1,2}):(\d{2})\s*([APap])\.?[Mm]?\.?$/.exec(s);
-            if (m) {
-                let h = parseInt(m[1], 10) % 12;
-                if (m[3].toUpperCase() === 'P') h += 12;
-                return h * 60 + parseInt(m[2], 10);
-            }
-            m = /^(\d{1,2}):(\d{2})$/.exec(s);
-            if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-            m = /^(\d{1,2})(\d{2})$/.exec(s);   // already military
-            if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-            return null;
-        };
-        const militaryDigits = (mins) => {
-            if (mins === null) return '';
-            const h = Math.floor(mins / 60) % 24;
-            return String(h * 100 + (mins % 60));   // 6:30 -> 630, as PMWeb writes it
-        };
-        const militaryPair = (startRaw, endRaw) => {
-            const a = timeMinutes(startRaw);
-            let b = timeMinutes(endRaw);
-            if (a !== null && b !== null && b <= a && b + 720 > a && b + 720 <= a + 16 * 60) {
-                b += 720;   // an end written 05:00 for five in the afternoon
-            }
-            return { start: militaryDigits(a), end: militaryDigits(b) };
-        };
-        const times = militaryPair(
-            fullData.general.start_time || fullData.general.start_time_military,
-            fullData.general.end_time || fullData.general.end_time_military
-        );
-        if (!times.start || !times.end) {
-            console.warn('The report does not give both shift times: '
-                + JSON.stringify([fullData.general.start_time, fullData.general.end_time]));
-        }
-
-        // Bundle everything for injected.js
-        const payload = {
-            // Phase 1: Main Tab
-            reportDate: fullData.general.report_date,
-            recordCode: recordCode,
-            location: shortLocation(fullData.general.project_location, fullData.activities),
-            weatherConditions: fullData.general.sky_conditions_pmweb,
-            temperature: fullData.general.temperature_avg != null
-                ? String(fullData.general.temperature_avg)
-                : '',
-            precipAmount: '0.00',
-            startTimeMilitary: times.start,
-            endTimeMilitary: times.end,
-            shiftValue: shiftValue,
-            // Phase 2: Activities
-            activities: fullData.activities,
-            // Phase 3: Resources
-            resources: fullData.resources,
+        // Bundle everything for injected.js. core.js builds it - the short
+        // location, the military times, the shift value - so the side panel
+        // sends exactly the same thing.
+        const payload = PMCore.buildFullPayload(fullData, {
+            recordNum: recordNum,
+            shift: shift,
             resourceMode: resourceMode,
-            // Phase 4: Additional Info
-            dayTypeValue: dayTypeValue,
-            // Phase 5: Notes
-            notesHtml: fullData.notes_html,
-            // Not used to fill anything - it comes back with the run's result so
-            // the queue knows which entry finished.
             reportId: (await chrome.storage.local.get(['selectedReportId'])).selectedReportId || null
-        };
+        });
 
         // Get current tab
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -920,22 +676,6 @@ let pickerFilter = '';
 let pickerTotal = 0;
 let pickerReports = [];
 
-function fmtPickerDate(iso) {
-    if (!iso) return 'No date';
-    const d = new Date(`${iso}T12:00:00`);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleDateString('en-US', {
-        weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    });
-}
-
-function fmtShift(report) {
-    const a = report.start_time || '';
-    const b = report.end_time || '';
-    if (!a && !b) return '';
-    return `${a}${a && b ? '–' : ''}${b}`;
-}
-
 function renderActiveReport(report) {
     const dateEl = document.getElementById('activeReportDate');
     const actsEl = document.getElementById('activeReportActs');
@@ -956,22 +696,9 @@ function renderActiveReport(report) {
 async function selectReport(reportId) {
     const report = pickerReports.find(r => r.id === reportId);
     try {
-        await apiFetch(`${API_BASE}/api/extension/context`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ report_id: reportId }),
-        });
-        // Changing report invalidates any fetched rows. They belong to the
-        // report they came from, and leaving them in place is how the wrong
-        // report's crew ends up in PMWeb.
-        chrome.storage.local.get(['pmwebRowsMeta'], (stored) => {
-            const meta = stored.pmwebRowsMeta;
-            if (meta && meta.reportId && meta.reportId !== reportId) {
-                chrome.storage.local.remove(['pmwebRows', 'pmwebRowsMeta']);
-                console.log('[picker] Cleared rows fetched for a different report');
-            }
-        });
-        chrome.storage.local.set({ selectedReportId: reportId });
+        // Points the app's context at the report and drops rows fetched for a
+        // different one (core.js, shared with the side panel).
+        await PMCore.setContextReport(API_BASE, reportId, showTokenPrompt);
         renderActiveReport(report);
         renderReportList();
         console.log('[picker] Selected report', reportId);
@@ -1078,7 +805,8 @@ function renderReportList() {
 // ============================================
 // One entry per report, each carrying the record number and shift PMWeb needs.
 // Held in chrome.storage so it survives the popup closing - which it does every
-// time Terry clicks into the PMWeb page.
+// time Terry clicks into the PMWeb page - and so the side panel shows the same
+// queue. The queue logic is in core.js; this file only draws it.
 //
 // status: 'pending' -> 'sent' (the run was started) -> 'done' or 'problems',
 // the last two set from what the page reports back when it finishes.
@@ -1086,36 +814,21 @@ function renderReportList() {
 let queue = { items: [] };
 
 async function loadQueue() {
-    const stored = await chrome.storage.local.get(['pmwebQueue']);
-    queue = (stored.pmwebQueue && Array.isArray(stored.pmwebQueue.items))
-        ? stored.pmwebQueue
-        : { items: [] };
+    queue = await PMCore.loadQueue();
     await applyLastRun();
     renderQueue();
 }
 
 async function saveQueue() {
-    await chrome.storage.local.set({ pmwebQueue: queue });
+    await PMCore.saveQueue(queue);
 }
 
 function queueHas(id) {
-    return queue.items.some((i) => i.id === id);
+    return PMCore.queueHas(queue, id);
 }
 
 function toggleQueue(report) {
-    const at = queue.items.findIndex((i) => i.id === report.id);
-    if (at >= 0) {
-        queue.items.splice(at, 1);
-    } else {
-        queue.items.push({
-            id: report.id,
-            date: report.report_date || '',
-            record: '',
-            shift: 'Day',
-            mode: getResourceMode(),
-            status: 'pending',
-        });
-    }
+    PMCore.toggleQueueItem(queue, report, getResourceMode());
     saveQueue();
     renderQueue();
     renderReportList();
@@ -1124,21 +837,11 @@ function toggleQueue(report) {
 // What the page said when it finished. injected.js raises PMWEB_RUN_RESULT,
 // content.js writes it to storage; the popup is usually shut by then.
 async function applyLastRun() {
-    const stored = await chrome.storage.local.get(['pmwebLastRun']);
-    const run = stored.pmwebLastRun;
-    if (!run) return;
-    const item = queue.items.find((i) => i.id === run.reportId && i.status === 'sent')
-        || queue.items.find((i) => i.date && i.date === run.reportDate && i.status === 'sent');
-    if (item) {
-        item.status = (run.problems && run.problems.length) ? 'problems' : 'done';
-        item.problems = run.problems || [];
-        await saveQueue();
-    }
-    await chrome.storage.local.remove(['pmwebLastRun']);
+    await PMCore.applyStoredLastRun(queue);
 }
 
 function nextInQueue() {
-    return queue.items.find((i) => i.status === 'pending') || null;
+    return PMCore.nextInQueue(queue);
 }
 
 function renderQueue() {
@@ -1351,31 +1054,14 @@ async function loadReportPicker() {
         return;
     }
     try {
-        // Walk every page. The endpoint pages because it reads each report to
-        // get its activity names; asking for one huge page just moves the cost
-        // rather than removing it. The ceiling is a runaway guard, not a limit
-        // on what can be shown - it is far above any real report count.
-        pickerReports = [];
-        let total = 0;
-        for (let offset = 0; offset < 20000; offset += 200) {
-            const resp = await apiFetch(
-                `${API_BASE}/api/extension/reports?limit=200&offset=${offset}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const data = await resp.json();
-            const page = data.reports || [];
-            pickerReports = pickerReports.concat(page);
-            total = data.total || pickerReports.length;
-            if (page.length === 0 || pickerReports.length >= total) break;
-        }
-        pickerTotal = total;
+        // Every report, every page (core.js, shared with the side panel).
+        const loaded = await PMCore.loadReports(API_BASE, showTokenPrompt);
+        pickerReports = loaded.reports;
+        pickerTotal = loaded.total;
 
         // Show whichever report is currently active, so the popup opens
         // reflecting reality rather than a guess.
-        let activeId = null;
-        try {
-            const ctx = await apiFetch(`${API_BASE}/api/extension/context`);
-            activeId = (await ctx.json()).report_id || null;
-        } catch (e) { /* non-fatal */ }
+        const activeId = await PMCore.getContextReportId(API_BASE, showTokenPrompt);
 
         if (activeId) chrome.storage.local.set({ selectedReportId: activeId });
         renderActiveReport(pickerReports.find(r => r.id === activeId) || null);
@@ -1399,20 +1085,6 @@ async function loadReportPicker() {
 // rich editor (PMWeb Notes, Word, Outlook) keeps the bold labels and bullets,
 // and pasting into a plain text field still gives readable text rather than
 // raw markup.
-
-function htmlToPlainText(html) {
-    const el = document.createElement('div');
-    el.innerHTML = html
-        .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
-        .replace(/<br\s*\/?>/gi, '\n');
-    const text = el.textContent || '';
-    return text
-        .split('\n')
-        .map(line => line.trim())
-        .filter((line, i, arr) => line || (arr[i - 1] || '').trim())  // collapse blank runs
-        .join('\n')
-        .trim();
-}
 
 function showCopyMsg(text, isError) {
     const el = document.getElementById('copyReportMsg');
@@ -1504,4 +1176,12 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fillActBtn').addEventListener('click', fillActivities);
     document.getElementById('fillNotesBtn').addEventListener('click', fillNotesOnly);
     document.getElementById('syncResourcesBtn').addEventListener('click', syncPMWebResources);
+    // The side panel watches this setting on every PMWeb tab and opens.
+    const showPanelBtn = document.getElementById('showPanelBtn');
+    if (showPanelBtn) {
+        showPanelBtn.addEventListener('click', async () => {
+            await chrome.storage.local.set({ pmwebPanelOpen: true });
+            showPanelBtn.textContent = 'Side panel shown on PMWeb tabs';
+        });
+    }
 });

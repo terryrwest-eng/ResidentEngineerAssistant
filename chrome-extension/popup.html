@@ -109,6 +109,13 @@
     Checking connection...
   </div>
 
+  <!-- The side panel on PMWeb pages does everything this popup does, inside
+       the page itself, where Claude in Chrome can reach it. Closing it hides
+       it completely; this button and Alt+Shift+P bring it back. -->
+  <button id="showPanelBtn" class="btn btn-secondary" style="margin-bottom: 12px;">
+    Show the side panel on PMWeb (Alt+Shift+P)
+  </button>
+
   <!-- ═══════ ACCESS TOKEN ═══════
        Reports belong to individual accounts now, so the extension has to say
        who it is. Hidden until a request comes back unauthorised, then it stays
@@ -313,6 +320,7 @@
     Make sure your Daily Reporting App is running locally
   </div>
 
+  <script src="core.js"></script>
   <script src="popup.js"></script>
 </body>
 

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PMWeb Auto-Fill",
-    "version": "2.1",
+    "version": "2.2",
     "description": "Automatically fill PMWeb Daily Report Timesheet from Daily Reporting App",
     "permissions": [
         "activeTab",
@@ -30,7 +30,9 @@
                 "https://*.pmweb.com/*"
             ],
             "js": [
-                "content.js"
+                "core.js",
+                "content.js",
+                "panel.js"
             ],
             "run_at": "document_idle"
         },

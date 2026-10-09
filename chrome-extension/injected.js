@@ -513,6 +513,36 @@
         alert(msg);
     }
 
+    // What the side panel shows. Until now a run said how it was going only in
+    // the console, which the side panel - and Claude in Chrome, which drives it -
+    // cannot see. These announce it on the page; content scripts hear them.
+    function pmProgress(phase, label) {
+        try {
+            window.dispatchEvent(new CustomEvent('PMWEB_RUN_PROGRESS', {
+                detail: { phase: phase, total: 5, label: label }
+            }));
+        } catch (e) { /* the run carries on regardless */ }
+    }
+    function pmStepResult(step, ok, message) {
+        try {
+            window.dispatchEvent(new CustomEvent('PMWEB_STEP_RESULT', {
+                detail: { step: step, ok: !!ok, message: String(message || '') }
+            }));
+        } catch (e) { /* the step finished regardless */ }
+    }
+
+    // The side panel's Stop button. Same effect as Escape or the red STOP button.
+    window.addEventListener('PMWEB_STOP', () => {
+        shouldStop = true;
+        console.log('🛑 STOP requested from the side panel');
+    });
+
+    // The side panel checks this script is on the page before it sends a run,
+    // so a run sent to nothing says so instead of waiting forever.
+    window.addEventListener('PMWEB_PING', () => {
+        window.dispatchEvent(new CustomEvent('PMWEB_PONG'));
+    });
+
     window.addEventListener('PMWEB_FILL_TRIGGER', async (event) => {
         shouldStop = false; // Reset stop flag
         const detail = event.detail || {};
@@ -530,17 +560,27 @@
 
         if (fast && fast.ok) {
             console.log('✅ Done: ' + fast.filled + ' row(s) filled, ' + fast.total + ' in the grid');
+            pmStepResult('resources', true,
+                fast.filled + ' row(s) filled, ' + fast.total + ' in the grid');
         } else if (fast && fast.stage === 'pre') {
             console.warn('⚠️ Falling back to the row-at-a-time filler — ' + fast.reason);
             await fillAllRows(rows);
+            pmStepResult('resources', !shouldStop, shouldStop
+                ? 'stopped part-way, check the grid'
+                : 'filled one row at a time (' + fast.reason + '); check the grid');
         } else if (fast && fast.stage === 'picker') {
             console.error('❌ Stopped inside the resource picker: ' + fast.reason);
             console.error('   NOTHING was committed - the picker was never saved, so the grid');
             console.error('   is untouched. Close the picker with Cancel.');
+            pmStepResult('resources', false, 'stopped inside the resource picker: ' + fast.reason
+                + '. Nothing was committed. Close the picker with Cancel.');
         } else {
             console.error('❌ Did not finish cleanly: '
                 + (fast ? fast.reason || ('blank ' + fast.blank + ', changed ' + fast.changed) : 'unknown'));
             console.error('   Rows have already been created — check the grid before re-running.');
+            pmStepResult('resources', false, 'did not finish cleanly: '
+                + (fast ? fast.reason || ('blank ' + fast.blank + ', changed ' + fast.changed) : 'unknown')
+                + '. Rows were already created, so check the grid before running it again.');
         }
     });
 
@@ -1258,6 +1298,9 @@
         const rows = event.detail;
         console.log('📥 Activities Worker received', rows.length, 'activity rows');
         await fillAllActivities(rows);
+        pmStepResult('activities', !shouldStop, shouldStop
+            ? 'stopped part-way, check the On Site grid'
+            : 'finished ' + rows.length + ' activity row(s); the console has each row');
     });
 
     // The Notes tab on its own, for a report whose other tabs are already done.
@@ -1280,9 +1323,12 @@
         const r = await fillNote(html);
         if (r.ok) {
             console.log('✅ Note written');
+            pmStepResult('notes', true, 'note written and saved');
         } else {
             console.error('❌ Notes: ' + r.reason);
             console.error('   The note HTML is on the clipboard, so it can still go in by hand.');
+            pmStepResult('notes', false, r.reason
+                + '. The note is on the clipboard, so it can still go in by hand.');
         }
     });
 
@@ -2355,8 +2401,34 @@
     // ============================================
 
     window.addEventListener('PMWEB_FILL_EVERYTHING', async (event) => {
-        await runFullAutoFill(event.detail, 1);
+        await runAndReport(event.detail, 1);
     });
+
+    // A run that ends early - stopped, or the Main tab would not save - used to
+    // return without a word, so its queue entry sat at "running" for good. Its
+    // result is announced here instead, in the same shape as a finished run's.
+    // A run that pauses for a page reload is not over, so it says nothing.
+    let pmRunReported = false;
+    let pmRunEndNote = '';
+    async function runAndReport(data, startPhase) {
+        pmRunReported = false;
+        pmRunEndNote = '';
+        await runFullAutoFill(data, startPhase);
+        if (pmRunReported || pmRunEndNote === 'reloading') return;
+        const why = pmRunEndNote
+            || (shouldStop ? 'was stopped before the end' : 'ended early - the console says where');
+        try {
+            window.dispatchEvent(new CustomEvent('PMWEB_RUN_RESULT', {
+                detail: {
+                    reportId: data.reportId || null,
+                    reportDate: data.reportDate || '',
+                    recordCode: data.recordCode || '',
+                    problems: ['the run ' + why],
+                    finishedAt: Date.now()
+                }
+            }));
+        } catch (e) { /* the run is over regardless */ }
+    }
 
     // Picks the run back up when a Save turned out to be a full page postback:
     // the page reloads, content.js injects this script again, and the run
@@ -2391,7 +2463,7 @@
         );
         if (!go) { console.log('↻ Resume declined'); return; }
 
-        await runFullAutoFill(pending.data, pending.phase);
+        await runAndReport(pending.data, pending.phase);
     }
 
     if (document.readyState === 'complete') {
@@ -2752,6 +2824,7 @@
                 console.log('⏭️ Skipping Phase 1 — the Main tab was saved before the reload');
             } else {
                 console.log('━━━ PHASE 1/5: Main Tab Fields ━━━');
+                pmProgress(1, 'Main tab');
 
                 // Ensure we're on the Main tab
                 await clickTab('Main');
@@ -2819,11 +2892,16 @@
                     // The page is on its way out. Stop quietly; the freshly injected
                     // copy resumes at Phase 2 once the reload finishes.
                     console.log('⏸️ Pausing — the page is reloading, the run continues after it');
+                    pmRunEndNote = 'reloading';
+                    pmProgress(1, 'Main tab saved, the page is reloading - the run carries on after it');
                     hideStopButton();
                     return;
                 }
 
                 if (saveStatus !== 'saved') {
+                    pmRunEndNote = 'stopped after the Main tab: the page Save did not go through, '
+                        + 'so nothing was committed. The fields are still filled in on screen - '
+                        + 'press Save, then run Auto-Fill Everything again';
                     hideStopButton();
                     pmAlert(
                         '⚠️ Auto-fill stopped after the Main tab.\n\n' +
@@ -2843,6 +2921,7 @@
             // PHASE 2: ACTIVITIES (On Site tab)
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 2/5: Activities ━━━');
+            pmProgress(2, 'Activities (On Site)');
 
             if (data.activities && data.activities.length > 0) {
                 await clickTab('On Site');
@@ -2874,6 +2953,7 @@
             // PHASE 3: LABOR & EQUIPMENT
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 3/5: Labor & Equipment ━━━');
+            pmProgress(3, 'Labor and Equipment');
 
             if (data.resources && data.resources.length > 0) {
                 await clickTab('Labor and Equipment');
@@ -2937,6 +3017,7 @@
             // PHASE 4: ADDITIONAL INFORMATION
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 4/5: Additional Information ━━━');
+            pmProgress(4, 'Additional Information');
 
             await clickTab('Additional Information');
             await wait(1500);
@@ -2970,6 +3051,7 @@
             // PHASE 5: NOTES
             // ═══════════════════════════════════════
             console.log('━━━ PHASE 5/5: Notes ━━━');
+            pmProgress(5, 'Notes');
 
             await clickTab('Notes');
             await wait(1500);
@@ -2994,7 +3076,9 @@
         hideStopButton();
 
         // Tell the queue how it went. content.js picks this up and writes it to
-        // storage; the popup reads it the next time it opens.
+        // storage; the popup reads it the next time it opens, and the side panel
+        // hears it straight away.
+        pmRunReported = true;
         try {
             window.dispatchEvent(new CustomEvent('PMWEB_RUN_RESULT', {
                 detail: {
