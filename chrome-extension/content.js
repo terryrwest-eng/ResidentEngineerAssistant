@@ -40,6 +40,18 @@ window.addEventListener('PMWEB_SYNC_RESULT', (event) => {
     chrome.runtime.sendMessage({ type: 'PMWEB_SYNC_RESULT', data: event.detail });
 });
 
+// How a finished run gets back to the queue. The popup is shut for most of a
+// run - Terry clicks into the PMWeb page and it closes - so a runtime message
+// would go nowhere. Storage is still there when the popup next opens.
+window.addEventListener('PMWEB_RUN_RESULT', (event) => {
+    try {
+        chrome.storage.local.set({ pmwebLastRun: event.detail });
+        console.log('📬 run result recorded for the queue', event.detail);
+    } catch (e) {
+        console.warn('Could not record the run result', e);
+    }
+});
+
 // UI Helper: Floating Button
 chrome.storage.local.get(['pmwebRows', 'pmwebRowsMeta', 'selectedReportId'], (result) => {
     if (result.pmwebRows && result.pmwebRows.length > 0) {

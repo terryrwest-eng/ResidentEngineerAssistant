@@ -180,6 +180,38 @@
          style="display:none; font-size: 11px; text-align:center; margin-top:6px; color: rgba(255,255,255,0.7);"></div>
   </div>
 
+  <!-- ═══════ QUEUE ═══════
+       Tick reports in the list above and they land here, each with its own
+       record number and shift. Terry, 2026-09-26: "the numbers jump her eand
+       there. its not consistent" - so nothing is computed, every number is
+       typed. -->
+  <details id="queuePanel" open
+           style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px;">
+    <summary style="font-size: 13px; font-weight: 700; color: #a78bfa; cursor: pointer;">
+      🗂️ Queue (<span id="queueCount">0</span>)
+    </summary>
+
+    <div id="queueEmpty" style="font-size: 11.5px; color: rgba(255,255,255,0.55); padding: 8px 0;">
+      Tick the reports you want in the list above.
+    </div>
+
+    <div id="queueList" style="max-height: 240px; overflow-y: auto; margin-top: 6px;"></div>
+
+    <div style="display:flex; gap:6px; margin-top:8px;">
+      <button id="queueRunBtn" class="btn btn-primary" style="flex:2; font-size:13px; padding:10px;" disabled>
+        ▶ Run the next one
+      </button>
+      <button id="queueSkipBtn" class="btn btn-secondary" style="flex:1; font-size:12px;" disabled>
+        Skip
+      </button>
+      <button id="queueClearBtn" class="btn btn-secondary" style="flex:1; font-size:12px;">
+        Clear
+      </button>
+    </div>
+
+    <div id="queueMsg" style="font-size: 11px; color: rgba(255,255,255,0.65); margin-top:6px; line-height:1.4;"></div>
+  </details>
+
   <!-- ═══════ FULL AUTOMATION SECTION ═══════ -->
   <div style="background: rgba(102,126,234,0.15); border: 1px solid rgba(102,126,234,0.4); border-radius: 10px; padding: 12px; margin-bottom: 12px;">
     <div style="font-size: 13px; font-weight: 700; color: #a78bfa; margin-bottom: 8px;">⚡ Full Automation</div>
@@ -197,6 +229,15 @@
         <option value="Day">☀️ Day</option>
         <option value="Evening">🌙 Evening</option>
         <option value="Night">🌑 Night</option>
+      </select>
+    </div>
+
+    <!-- What to do with rows already on the Labor and Equipment tab -->
+    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+      <label style="font-size: 12px; color: rgba(255,255,255,0.7); white-space: nowrap;">Resources:</label>
+      <select id="resourceModeSelect" style="flex:1; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; font-size: 12px;">
+        <option value="add">Add to what is there</option>
+        <option value="fill">Fill the rows already there</option>
       </select>
     </div>
 
@@ -224,6 +265,17 @@
       </div>
 
       <button id="fetchBtn" class="btn btn-secondary">📥 Fetch Resources</button>
+
+      <!-- The same choice as the one up in Full Automation, repeated here so it
+           is next to the button it governs. Both stay in step. -->
+      <div style="display: flex; gap: 8px; align-items: center; margin: 8px 0;">
+        <label style="font-size: 12px; color: rgba(255,255,255,0.7); white-space: nowrap;">Resources:</label>
+        <select id="resourceModeSelect2" style="flex:1; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: #fff; font-size: 12px;">
+          <option value="add">Add to what is there</option>
+          <option value="fill">Fill the rows already there</option>
+        </select>
+      </div>
+
       <button id="fillBtn" class="btn btn-primary" disabled>⚡ Fill PMWeb Rows</button>
 
       <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
@@ -233,6 +285,14 @@
         </div>
         <button id="fetchActBtn" class="btn btn-secondary">📥 Fetch Activities</button>
         <button id="fillActBtn" class="btn btn-primary" disabled>⚡ Fill Activities</button>
+      </div>
+
+      <!-- The Notes tab on its own. A report that stopped part-way cannot get
+           its note through Auto-Fill Everything without adding its activities a
+           second time - Terry, 2026-09-27: "it just to the next tab then didnt
+           touch the notes tab". No Fetch step: the note comes with the report. -->
+      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <button id="fillNotesBtn" class="btn btn-primary">📝 Fill Notes</button>
       </div>
 
       <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1);">

@@ -163,23 +163,59 @@ async def get_pmweb_full(report_id: str):
         if mapped:
             sky_conditions_mapped.append(mapped)
 
-    # Convert times to military format for PMWeb
-    def to_military(time_str):
-        """Convert '6:30 AM' → '630', '3:30 PM' → '1530'."""
-        if not time_str:
-            return ""
+    # The two time boxes on PMWeb's Main tab are military digits and nothing
+    # else - the page renders them class="Integer", and a colon in there does not
+    # fail loudly, it simply does not save. Terry, 2026-09-27: "these two time
+    # slots are supposedto be in military time, only these thought".
+    #
+    # This used to understand "6:30 AM" and nothing else, and the reports say
+    # "Hours: 07:00 - 05:00", so any time without a meridiem was handed back
+    # unchanged, colon included.
+    def _time_minutes(value):
+        """Minutes past midnight from '6:30 AM', '18:00' or '1800'."""
+        s = str(value or "").strip()
+        if not s:
+            return None
         import re as _re
-        match = _re.match(r'(\d+):(\d+)\s*(AM|PM)', time_str, _re.IGNORECASE)
-        if not match:
-            return time_str
-        hours = int(match.group(1))
-        mins = match.group(2)
-        period = match.group(3).upper()
-        if period == 'PM' and hours != 12:
-            hours += 12
-        if period == 'AM' and hours == 12:
-            hours = 0
-        return f"{hours}{mins}"
+        m = _re.match(r'^(\d{1,2}):(\d{2})\s*([APap])\.?[Mm]?\.?$', s)
+        if m:
+            hours = int(m.group(1)) % 12
+            if m.group(3).upper() == 'P':
+                hours += 12
+            return hours * 60 + int(m.group(2))
+        m = _re.match(r'^(\d{1,2}):(\d{2})$', s)
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        m = _re.match(r'^(\d{1,2})(\d{2})$', s)      # already military
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        return None
+
+    def _military(minutes):
+        if minutes is None:
+            return ""
+        hours = (minutes // 60) % 24
+        return str(hours * 100 + minutes % 60)        # 6:30 -> "630", as PMWeb writes it
+
+    def military_pair(start_str, end_str):
+        """The shift as PMWeb wants it, read the way Terry writes it.
+
+        The start is the clock as written. An end at or before the start is PM
+        written without a meridiem when that lands within 16 hours of the start,
+        and otherwise the next morning - so 2025-10-29's "07:00 - 05:00" is
+        700/1700, while 2025-11-11's night shift "20:30 - 05:00" is 2030/500.
+        Every one of the 60 rebuilt reports converts, spanning 4.5 to 12 hours.
+        """
+        start = _time_minutes(start_str)
+        end = _time_minutes(end_str)
+        if start is not None and end is not None and end <= start \
+                and end + 720 > start and end + 720 <= start + 16 * 60:
+            end += 720
+        return _military(start), _military(end)
+
+    start_military, end_military = military_pair(
+        gen.get("start_time", ""), gen.get("end_time", "")
+    )
 
     # Generate notes HTML
     try:
@@ -277,8 +313,8 @@ async def get_pmweb_full(report_id: str):
             "resident_engineer": gen.get("resident_engineer", ""),
             "start_time": gen.get("start_time", ""),
             "end_time": gen.get("end_time", ""),
-            "start_time_military": to_military(gen.get("start_time", "")),
-            "end_time_military": to_military(gen.get("end_time", "")),
+            "start_time_military": start_military,
+            "end_time_military": end_military,
             "temperature_high": temp_high,
             "temperature_low": temp_low,
             "temperature_avg": temp_avg,

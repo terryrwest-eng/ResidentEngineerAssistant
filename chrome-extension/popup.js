@@ -265,12 +265,14 @@ async function fillPMWeb() {
         // Step 2: Trigger fill in the MAIN world
         await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: (rows) => {
-                console.log('PMWeb Auto-Fill: Dispatching', rows.length, 'rows to worker');
+            func: (rows, mode) => {
+                console.log('PMWeb Auto-Fill: Dispatching', rows.length, 'rows to worker, mode', mode);
                 window.pmwebAutoFillData = rows;
-                window.dispatchEvent(new CustomEvent('PMWEB_FILL_TRIGGER', { detail: rows }));
+                window.dispatchEvent(new CustomEvent('PMWEB_FILL_TRIGGER', {
+                    detail: { rows: rows, mode: mode }
+                }));
             },
-            args: [rowsData],
+            args: [rowsData, getResourceMode()],
             world: 'MAIN'
         });
 
@@ -481,6 +483,55 @@ async function fillActivities() {
     }
 }
 
+// The Notes tab on its own. Same shape as fillActivities, except there is
+// nothing to fetch first - the note text arrives with the report.
+async function fillNotesOnly() {
+    const btn = document.getElementById('fillNotesBtn');
+    btn.textContent = '⏳ Filling...';
+    btn.disabled = true;
+
+    try {
+        const data = await fetchFullData();
+        if (!data) return;                       // fetchFullData has already said why
+        if (!data.notes_html) {
+            alert('This report has no note text to write.');
+            return;
+        }
+
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab.url.includes('pmweb.com')) {
+            alert('Please navigate to PMWeb first!');
+            return;
+        }
+
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['injected.js'],
+            world: 'MAIN'
+        });
+
+        await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (html) => {
+                console.log('PMWeb Auto-Fill: dispatching the note to the worker');
+                window.dispatchEvent(new CustomEvent('PMWEB_FILL_NOTE_TRIGGER', { detail: html }));
+            },
+            args: [data.notes_html],
+            world: 'MAIN'
+        });
+
+        btn.textContent = '✓ Sent!';
+    } catch (e) {
+        console.error('Fill notes error:', e);
+        alert(`Error: ${e.message}`);
+    } finally {
+        setTimeout(() => {
+            btn.textContent = '📝 Fill Notes';
+            btn.disabled = false;
+        }, 2000);
+    }
+}
+
 // Sync PMWeb Resources
 async function syncPMWebResources() {
     const syncBtn = document.getElementById('syncResourcesBtn');
@@ -603,6 +654,12 @@ async function autoFillEverything() {
     const btn = document.getElementById('autoFillBtn');
     const recordNum = document.getElementById('recordNumInput').value.trim();
     const shift = document.getElementById('shiftSelect').value;
+    // What Phase 3 does with rows already on the Labor and Equipment tab.
+    // 'add' leaves them and adds beside them; 'fill' writes into them and
+    // creates only the shortfall. Terry, 2026-09-27: "NO IT ADDS MORE ON TOP
+    // TO ADD TO NOT WRITE OVER".
+    const resourceMode = getResourceMode();
+    chrome.storage.local.set({ resourceMode: resourceMode });
 
     if (!recordNum) {
         alert('Please enter a Record #');
@@ -638,28 +695,125 @@ async function autoFillEverything() {
             ? '1 -Working Day'
             : '2 -Non-Working Day';
 
+        // PMWeb's Location box rejects a long value - a 192-character location
+        // makes the whole document save fail with "String or binary data would
+        // be truncated", which is a SQL error, not a validation message, so the
+        // record simply will not save. The control reports maxLength=1000, so
+        // the real column is smaller than the page claims.
+        //
+        // The fix is not to truncate, though. Terry, 2026-09-27, on a location
+        // listing every station, vault and manway: "THATS WAY TOO LONG EVEN IF
+        // IT IDDNT CAUSE THE ERROR. THAT SHOULD SAY Genesee, Nobel." So PMWeb
+        // gets the streets, and the report itself keeps the full detail.
+        //
+        // Longest first, so "Town Centre Dr" is not caught by a bare "Town".
+        const PLACES = [
+            ['rose canyon', 'Rose Canyon'], ['marian bear', 'Marian Bear'],
+            ['town cent', 'Town Centre'], ['towne cent', 'Town Centre'],
+            ['genesee', 'Genesee'], ['nobel', 'Nobel'], ['executive', 'Executive'],
+            ['renaissance', 'Renaissance'], ['governor', 'Governor'],
+            ['sr-52', 'SR-52'], ['sr 52', 'SR-52'],
+            ['i-805', 'I-805'], ['805', 'I-805'],
+            ['utc', 'UTC'], ['morena', 'Morena'], ['regents', 'Regents'],
+            ['la jolla', 'La Jolla'], ['eastgate', 'Eastgate'],
+            ['campus point', 'Campus Point'],
+        ];
+        const placesIn = (text) => {
+            const hay = String(text || '').toLowerCase();
+            const out = [];
+            PLACES.forEach(([needle, name]) => {
+                if (hay.indexOf(needle) >= 0 && out.indexOf(name) < 0) out.push(name);
+            });
+            return out;
+        };
+        const shortLocation = (loc, activities) => {
+            let found = placesIn(loc);
+            if (!found.length) {
+                // Some reports carry no location at all - 2026-04-21 is empty -
+                // but the activities still name where the work was.
+                const fromActs = (activities || [])
+                    .map(a => (a.location || '') + ' ' + (a.title || '')).join(' ');
+                found = placesIn(fromActs);
+            }
+            if (found.length) return found.join(', ');
+            // Nothing recognised. 2025-11-11 is just "SDG&E trench" - short
+            // already, and better than nothing.
+            return String(loc || '').slice(0, 60);
+        };
+
+        // The two time boxes on the Main tab are military digits and nothing
+        // else - PMWeb renders them class="Integer". Terry, 2026-09-27: "these
+        // two time slots are supposedto be in military time, only these thought".
+        //
+        // The API's own start_time_military only understands "6:30 AM", and the
+        // reports say "Hours: 07:00 - 05:00", so times without a meridiem were
+        // coming through with the colon still in them. Reading it the way Terry
+        // writes it: the start is the clock as written, and an end at or before
+        // the start is PM when that lands within 16 hours of the start, otherwise
+        // the next morning. 2025-11-11's night shift 20:30 - 05:00 therefore gives
+        // 2030 and 500, while 2025-10-29's 07:00 - 05:00 gives 700 and 1700.
+        const timeMinutes = (t) => {
+            const s = String(t || '').trim();
+            let m = /^(\d{1,2}):(\d{2})\s*([APap])\.?[Mm]?\.?$/.exec(s);
+            if (m) {
+                let h = parseInt(m[1], 10) % 12;
+                if (m[3].toUpperCase() === 'P') h += 12;
+                return h * 60 + parseInt(m[2], 10);
+            }
+            m = /^(\d{1,2}):(\d{2})$/.exec(s);
+            if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+            m = /^(\d{1,2})(\d{2})$/.exec(s);   // already military
+            if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+            return null;
+        };
+        const militaryDigits = (mins) => {
+            if (mins === null) return '';
+            const h = Math.floor(mins / 60) % 24;
+            return String(h * 100 + (mins % 60));   // 6:30 -> 630, as PMWeb writes it
+        };
+        const militaryPair = (startRaw, endRaw) => {
+            const a = timeMinutes(startRaw);
+            let b = timeMinutes(endRaw);
+            if (a !== null && b !== null && b <= a && b + 720 > a && b + 720 <= a + 16 * 60) {
+                b += 720;   // an end written 05:00 for five in the afternoon
+            }
+            return { start: militaryDigits(a), end: militaryDigits(b) };
+        };
+        const times = militaryPair(
+            fullData.general.start_time || fullData.general.start_time_military,
+            fullData.general.end_time || fullData.general.end_time_military
+        );
+        if (!times.start || !times.end) {
+            console.warn('The report does not give both shift times: '
+                + JSON.stringify([fullData.general.start_time, fullData.general.end_time]));
+        }
+
         // Bundle everything for injected.js
         const payload = {
             // Phase 1: Main Tab
             reportDate: fullData.general.report_date,
             recordCode: recordCode,
-            location: fullData.general.project_location,
+            location: shortLocation(fullData.general.project_location, fullData.activities),
             weatherConditions: fullData.general.sky_conditions_pmweb,
             temperature: fullData.general.temperature_avg != null
                 ? String(fullData.general.temperature_avg)
                 : '',
             precipAmount: '0.00',
-            startTimeMilitary: fullData.general.start_time_military,
-            endTimeMilitary: fullData.general.end_time_military,
+            startTimeMilitary: times.start,
+            endTimeMilitary: times.end,
             shiftValue: shiftValue,
             // Phase 2: Activities
             activities: fullData.activities,
             // Phase 3: Resources
             resources: fullData.resources,
+            resourceMode: resourceMode,
             // Phase 4: Additional Info
             dayTypeValue: dayTypeValue,
             // Phase 5: Notes
-            notesHtml: fullData.notes_html
+            notesHtml: fullData.notes_html,
+            // Not used to fill anything - it comes back with the run's result so
+            // the queue knows which entry finished.
+            reportId: (await chrome.storage.local.get(['selectedReportId'])).selectedReportId || null
         };
 
         // Get current tab
@@ -700,6 +854,37 @@ async function autoFillEverything() {
         btn.textContent = '🚀 Auto-Fill Everything';
         btn.disabled = false;
     }
+}
+
+// What Phase 3 does with rows already on the Labor and Equipment tab. The choice
+// appears twice - once in Full Automation, once beside "Fill PMWeb Rows" in
+// Individual Controls, because that section is collapsed by default and the
+// control up top did not look as though it governed the button down here.
+// Terry, 2026-09-27: "i dont have that option when using the fill resources. its
+// only when i use fill all". One value, two controls, kept in step.
+function resourceModeEls() {
+    return ['resourceModeSelect', 'resourceModeSelect2']
+        .map((id) => document.getElementById(id))
+        .filter(Boolean);
+}
+
+function getResourceMode() {
+    const el = resourceModeEls()[0];
+    return (el && el.value) || 'add';
+}
+
+async function initResourceMode() {
+    const els = resourceModeEls();
+    if (!els.length) return;
+    chrome.storage.local.get(['resourceMode'], (stored) => {
+        if (stored.resourceMode) els.forEach((e) => { e.value = stored.resourceMode; });
+    });
+    els.forEach((el) => {
+        el.addEventListener('change', () => {
+            els.forEach((other) => { other.value = el.value; });
+            chrome.storage.local.set({ resourceMode: el.value });
+        });
+    });
 }
 
 async function initRecordNumber() {
@@ -858,17 +1043,294 @@ function renderReportList() {
                 ? ' <span style="font-size:9px; text-transform:uppercase; letter-spacing:0.06em; color:#ffc107;">draft</span>'
                 : '';
 
+            // The checkbox puts the report in the queue; the rest of the row
+            // still selects it. Two different jobs, so the click does not carry
+            // from one to the other.
             row.innerHTML = `
-                <div style="display:flex; align-items:baseline; gap:6px;">
-                    <span style="font-size:12px; font-weight:700; color:#fff;">${fmtPickerDate(r.report_date)}</span>
-                    ${shift ? `<span style="font-size:10px; color:rgba(255,255,255,0.55);">${shift}</span>` : ''}
-                    ${draft}
+                <div style="display:flex; align-items:flex-start; gap:8px;">
+                    <input type="checkbox" class="queuePick" ${queueHas(r.id) ? 'checked' : ''}
+                           title="Put this report in the queue"
+                           style="margin-top:3px; cursor:pointer; flex:0 0 auto;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="display:flex; align-items:baseline; gap:6px;">
+                            <span style="font-size:12px; font-weight:700; color:#fff;">${fmtPickerDate(r.report_date)}</span>
+                            ${shift ? `<span style="font-size:10px; color:rgba(255,255,255,0.55);">${shift}</span>` : ''}
+                            ${draft}
+                        </div>
+                        <div style="font-size:10.5px; color:rgba(255,255,255,0.6); margin-top:2px; line-height:1.35;">${acts}</div>
+                    </div>
                 </div>
-                <div style="font-size:10.5px; color:rgba(255,255,255,0.6); margin-top:2px; line-height:1.35;">${acts}</div>
             `;
+            const pick = row.querySelector('input.queuePick');
+            if (pick) {
+                pick.addEventListener('click', (ev) => {
+                    ev.stopPropagation();          // not a report selection
+                    toggleQueue(r);
+                });
+            }
             list.appendChild(row);
         });
     });
+}
+
+// ============================================
+// THE QUEUE
+// ============================================
+// One entry per report, each carrying the record number and shift PMWeb needs.
+// Held in chrome.storage so it survives the popup closing - which it does every
+// time Terry clicks into the PMWeb page.
+//
+// status: 'pending' -> 'sent' (the run was started) -> 'done' or 'problems',
+// the last two set from what the page reports back when it finishes.
+
+let queue = { items: [] };
+
+async function loadQueue() {
+    const stored = await chrome.storage.local.get(['pmwebQueue']);
+    queue = (stored.pmwebQueue && Array.isArray(stored.pmwebQueue.items))
+        ? stored.pmwebQueue
+        : { items: [] };
+    await applyLastRun();
+    renderQueue();
+}
+
+async function saveQueue() {
+    await chrome.storage.local.set({ pmwebQueue: queue });
+}
+
+function queueHas(id) {
+    return queue.items.some((i) => i.id === id);
+}
+
+function toggleQueue(report) {
+    const at = queue.items.findIndex((i) => i.id === report.id);
+    if (at >= 0) {
+        queue.items.splice(at, 1);
+    } else {
+        queue.items.push({
+            id: report.id,
+            date: report.report_date || '',
+            record: '',
+            shift: 'Day',
+            mode: getResourceMode(),
+            status: 'pending',
+        });
+    }
+    saveQueue();
+    renderQueue();
+    renderReportList();
+}
+
+// What the page said when it finished. injected.js raises PMWEB_RUN_RESULT,
+// content.js writes it to storage; the popup is usually shut by then.
+async function applyLastRun() {
+    const stored = await chrome.storage.local.get(['pmwebLastRun']);
+    const run = stored.pmwebLastRun;
+    if (!run) return;
+    const item = queue.items.find((i) => i.id === run.reportId && i.status === 'sent')
+        || queue.items.find((i) => i.date && i.date === run.reportDate && i.status === 'sent');
+    if (item) {
+        item.status = (run.problems && run.problems.length) ? 'problems' : 'done';
+        item.problems = run.problems || [];
+        await saveQueue();
+    }
+    await chrome.storage.local.remove(['pmwebLastRun']);
+}
+
+function nextInQueue() {
+    return queue.items.find((i) => i.status === 'pending') || null;
+}
+
+function renderQueue() {
+    const list = document.getElementById('queueList');
+    const empty = document.getElementById('queueEmpty');
+    const count = document.getElementById('queueCount');
+    const runBtn = document.getElementById('queueRunBtn');
+    const skipBtn = document.getElementById('queueSkipBtn');
+    if (!list || !runBtn) return;
+
+    if (count) count.textContent = String(queue.items.length);
+    if (empty) empty.style.display = queue.items.length ? 'none' : 'block';
+
+    const CHIP = {
+        pending: ['waiting', 'rgba(255,255,255,0.5)'],
+        sent: ['running', '#ffc107'],
+        done: ['done', '#4ade80'],
+        problems: ['check it', '#ff6b6b'],
+    };
+
+    list.innerHTML = '';
+    queue.items.forEach((item, idx) => {
+        const [label, colour] = CHIP[item.status] || CHIP.pending;
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.07);';
+        row.innerHTML = `
+            <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:11.5px; font-weight:700; color:#fff; flex:1; min-width:0;">
+                    ${item.date || '(no date)'}
+                </span>
+                <span class="qChip" title="Click to put it back to waiting"
+                      style="font-size:9.5px; text-transform:uppercase; letter-spacing:0.05em;
+                             color:${colour}; cursor:pointer;">
+                    ${label}
+                </span>
+                <span class="qDrop" title="Take it out of the queue"
+                      style="cursor:pointer; color:rgba(255,255,255,0.45); font-size:13px; padding:0 2px;">✕</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
+                <input class="qRecord" type="text" value="${item.record || ''}" placeholder="Record #"
+                       style="flex:1; min-width:0; padding:4px 6px; font-size:11.5px; font-weight:600; color:#fff;
+                              background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);
+                              border-radius:5px;">
+                <select class="qShift" style="padding:4px; font-size:11px; color:#fff;
+                              background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);
+                              border-radius:5px;">
+                    <option value="Day">☀️ Day</option>
+                    <option value="Evening">🌙 Evening</option>
+                    <option value="Night">🌑 Night</option>
+                </select>
+                <select class="qMode" title="What to do with resource rows already there"
+                        style="padding:4px; font-size:11px; color:#fff;
+                               background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);
+                               border-radius:5px;">
+                    <option value="add">add</option>
+                    <option value="fill">fill</option>
+                </select>
+            </div>
+            ${(item.problems && item.problems.length)
+                ? `<div style="font-size:10px; color:#ff9b9b; margin-top:3px; line-height:1.35;">
+                       ${item.problems.map((p) => '• ' + p).join('<br>')}
+                   </div>`
+                : ''}
+        `;
+        const rec = row.querySelector('.qRecord');
+        const shift = row.querySelector('.qShift');
+        const mode = row.querySelector('.qMode');
+        shift.value = item.shift || 'Day';
+        mode.value = item.mode || 'add';
+        rec.addEventListener('input', () => {
+            queue.items[idx].record = rec.value.trim();
+            saveQueue();
+            updateQueueButtons();
+        });
+        shift.addEventListener('change', () => { queue.items[idx].shift = shift.value; saveQueue(); });
+        mode.addEventListener('change', () => { queue.items[idx].mode = mode.value; saveQueue(); });
+        // A run that died part-way leaves its entry marked running, and nothing
+        // else would ever move it. Clicking the chip puts it back to waiting.
+        row.querySelector('.qChip').addEventListener('click', () => {
+            queue.items[idx].status = 'pending';
+            queue.items[idx].problems = [];
+            saveQueue();
+            renderQueue();
+        });
+        row.querySelector('.qDrop').addEventListener('click', () => {
+            queue.items.splice(idx, 1);
+            saveQueue();
+            renderQueue();
+            renderReportList();
+        });
+        list.appendChild(row);
+    });
+
+    updateQueueButtons();
+}
+
+function updateQueueButtons() {
+    const runBtn = document.getElementById('queueRunBtn');
+    const skipBtn = document.getElementById('queueSkipBtn');
+    const msg = document.getElementById('queueMsg');
+    if (!runBtn) return;
+
+    const next = nextInQueue();
+    const left = queue.items.filter((i) => i.status === 'pending').length;
+    if (skipBtn) skipBtn.disabled = !next;
+
+    if (!next) {
+        runBtn.disabled = true;
+        runBtn.textContent = queue.items.length ? '✓ Nothing left to run' : '▶ Run the next one';
+        if (msg) {
+            msg.textContent = queue.items.length
+                ? 'Every report in the queue has been run. Anything marked "check it" has '
+                  + 'a note under it saying what did not go in.'
+                : '';
+        }
+        return;
+    }
+
+    runBtn.disabled = !next.record;
+    runBtn.textContent = next.record
+        ? `▶ Run ${next.date} (#${next.record} ${next.shift})`
+        : `▶ Type a record # for ${next.date}`;
+    if (msg) {
+        msg.textContent = `${left} to go. Open ${next.date}'s record in PMWeb, then press Run - `
+            + 'the queue sets the report, its record number, its shift and the resource mode for you. '
+            + 'Opening the next record is still by hand until the list page has been read.';
+    }
+}
+
+// Runs the next report by driving the controls the proven path already uses,
+// rather than building a second copy of the payload. One path, so a fix to it
+// fixes both.
+async function runQueueNext() {
+    const item = nextInQueue();
+    if (!item) return;
+    if (!item.record) {
+        alert(`${item.date} has no record number yet.`);
+        return;
+    }
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url || !tab.url.includes('pmweb.com')) {
+        alert('Open the PMWeb record for ' + item.date + ' first, then press Run.');
+        return;
+    }
+
+    await selectReport(item.id);                       // the app's context follows the queue
+    const recordInput = document.getElementById('recordNumInput');
+    const shiftSelect = document.getElementById('shiftSelect');
+    if (recordInput) recordInput.value = item.record;
+    if (shiftSelect) shiftSelect.value = item.shift || 'Day';
+    resourceModeEls().forEach((el) => { el.value = item.mode || 'add'; });
+
+    item.status = 'sent';
+    item.problems = [];
+    await saveQueue();
+    renderQueue();
+
+    await autoFillEverything();
+}
+
+function wireQueue() {
+    const run = document.getElementById('queueRunBtn');
+    const skip = document.getElementById('queueSkipBtn');
+    const clear = document.getElementById('queueClearBtn');
+    if (run && !run.dataset.wired) {
+        run.dataset.wired = '1';
+        run.addEventListener('click', runQueueNext);
+    }
+    if (skip && !skip.dataset.wired) {
+        skip.dataset.wired = '1';
+        skip.addEventListener('click', () => {
+            const next = nextInQueue();
+            if (!next) return;
+            next.status = 'done';
+            next.problems = ['skipped by hand'];
+            saveQueue();
+            renderQueue();
+        });
+    }
+    if (clear && !clear.dataset.wired) {
+        clear.dataset.wired = '1';
+        clear.addEventListener('click', () => {
+            if (!queue.items.length) return;
+            if (!confirm(`Empty the queue? ${queue.items.length} report(s) come out of it. `
+                + 'Nothing already written to PMWeb is touched.')) return;
+            queue.items = [];
+            saveQueue();
+            renderQueue();
+            renderReportList();
+        });
+    }
 }
 
 function wireReportSearch() {
@@ -1032,10 +1494,14 @@ document.addEventListener('DOMContentLoaded', () => {
     checkMonday();
     const autoFillBtn = document.getElementById('autoFillBtn');
     if(autoFillBtn) autoFillBtn.addEventListener('click', autoFillEverything);
+    initResourceMode();
+    wireQueue();
+    loadQueue();
     document.getElementById('fetchBtn').addEventListener('click', fetchData);
     document.getElementById('fillBtn').addEventListener('click', fillPMWeb);
     document.getElementById('clearBtn').addEventListener('click', clearPMWeb);
     document.getElementById('fetchActBtn').addEventListener('click', fetchActivities);
     document.getElementById('fillActBtn').addEventListener('click', fillActivities);
+    document.getElementById('fillNotesBtn').addEventListener('click', fillNotesOnly);
     document.getElementById('syncResourcesBtn').addEventListener('click', syncPMWebResources);
 });
