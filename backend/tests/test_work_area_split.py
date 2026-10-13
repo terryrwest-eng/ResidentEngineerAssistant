@@ -46,9 +46,31 @@ def act(work_area, crew=(), gear=()):
 check("three parts: location, company, title",
       split_work_area(act("Marian Bear Park, Blow-off #5 - OHLA - 8-inch blow-off trench", ["OHLA"])),
       ("Marian Bear Park, Blow-off #5", "OHLA", "8-inch blow-off trench"))
-check("three parts: the company is taken as written even when no row names it",
-      split_work_area(act("Vault #7 - OHLA / Dean's Welding / Penhall - drain tap", ["OHLA"])),
-      ("Vault #7", "OHLA / Dean's Welding / Penhall", "drain tap"))
+check("three parts: a company no row names is taken as written",
+      split_work_area(act("Marian Bear Park - GC fence - Caltrans Fence Installation", ["OHLA"])),
+      ("Marian Bear Park", "GC fence", "Caltrans Fence Installation"))
+
+# ── Several companies named: PMWeb gets the first (Terry, 2026-10-13) ─────────
+
+check("three companies split by slashes give the first",
+      split_work_area(act("Marian Bear Park, Blow-off #5 - OHLA / Dean's Welding / Penhall - 8-inch blow-off assembly",
+                          ["OHLA", "Dean's Welding"])),
+      ("Marian Bear Park, Blow-off #5", "OHLA", "8-inch blow-off assembly"))
+check("two companies joined by & give the first",
+      split_work_area(act("Executive - OHLA & Picket Fences - Irrigation & Utility Investigation", ["OHLA"])),
+      ("Executive", "OHLA", "Irrigation & Utility Investigation"))
+check("an & inside one name is not a split",
+      split_work_area(act("Genesee Ave - SDG&E - gas service relocation", ["SDG&E"])),
+      ("Genesee Ave", "SDG&E", "gas service relocation"))
+check("Pickett Fences is PMWeb's Picket Fences",
+      split_work_area(act("Genesee Avenue Median - Pickett Fences - Site Work", ["Pickett Fences"])),
+      ("Genesee Avenue Median", "Picket Fences", "Site Work"))
+check("a two-part work area naming several companies gives the first",
+      split_work_area(act("OHLA / Dean's Welding - 8-inch blow-off welding", ["OHLA", "Dean's Welding"])),
+      ("", "OHLA", "8-inch blow-off welding"))
+check("a two-part work area whose second part names several companies",
+      split_work_area(act("Executive Dr - OHLA & Picket Fences", ["Picket Fences"])),
+      ("Executive Dr", "OHLA", ""))
 check("hyphens inside words do not split",
       split_work_area(act("30-inch force main - OHLA - interior joint patching", ["OHLA"])),
       ("30-inch force main", "OHLA", "interior joint patching"))

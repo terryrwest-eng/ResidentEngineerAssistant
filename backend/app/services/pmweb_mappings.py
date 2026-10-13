@@ -556,12 +556,31 @@ def _companies_on(act: dict, tables: tuple) -> list[str]:
     return list(seen.values())
 
 
+# PMWeb's Company box holds one company. A work area naming several, "OHLA /
+# Dean's Welding / Penhall" or "OHLA & Picket Fences", gives PMWeb the first one
+# named; the description still names the rest. Terry, 2026-10-13, approving
+# that rule. A spelling PMWeb's company list does not hold is mapped to the
+# list's name where the firm is plainly the same one.
+_MANY_COMPANIES = re.compile(r"\s+[/&]\s+")
+_COMPANY_SPELLINGS = {"pickett fences": "Picket Fences", "pickette fences": "Picket Fences"}
+
+
+def _one_company(name: str) -> str:
+    first = _MANY_COMPANIES.split((name or "").strip())[0].strip()
+    return _COMPANY_SPELLINGS.get(first.lower(), first)
+
+
 def split_work_area(act: dict) -> tuple[str, str, str]:
     """(location, company, title) for one activity, from its work_area.
 
     With no company named in a short work area, the company is the one company
     the activity's crew rows name, or blank when they name none or several.
     """
+    location, company, title = _split_parts(act)
+    return location, _one_company(company), title
+
+
+def _split_parts(act: dict) -> tuple[str, str, str]:
     work_area = act.get("work_area", "") or ""
     parts = [p.strip() for p in work_area.split(" - ")]
     if len(parts) >= 3:
@@ -573,9 +592,12 @@ def split_work_area(act: dict) -> tuple[str, str, str]:
     if len(parts) == 1:
         return parts[0], crew_company, ""
 
+    def names_a_company(part: str) -> bool:
+        return any(_company_key(n) in named for n in _MANY_COMPANIES.split(part))
+
     first, second = parts
-    if _company_key(first) in named:
+    if names_a_company(first):
         return "", first, second
-    if _company_key(second) in named:
+    if names_a_company(second):
         return first, second, ""
     return first, crew_company, second
