@@ -26,6 +26,7 @@ from app.services.database import (
     get_report_count,
     find_report_by_date,
 )
+from app.services.pmweb_mappings import split_work_area
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user
@@ -392,16 +393,9 @@ async def get_activities_consolidated(report_id: str):
     company_aliases = {"OHLA": "OHL NA", "ohla": "OHL NA", "Ohla": "OHL NA"}
 
     for act in activities:
-        work_area = act.get("work_area", "")
-        parts = [p.strip() for p in work_area.split(" - ")]
-
-        location = parts[0] if len(parts) >= 1 else work_area
-        company = parts[1] if len(parts) >= 2 else ""
-        title = parts[2] if len(parts) >= 3 else ""
-
-        # If only 2 parts, second might be the title (no company)
-        # But user confirmed format is always Location - Company - Title
-        # So we keep the 3-part split
+        # Terry's format is Location - Company - Title; a shorter work area is
+        # read by what its parts are (app/services/pmweb_mappings.py).
+        location, company, title = split_work_area(act)
 
         # Normalize company aliases
         company = company_aliases.get(company, company)

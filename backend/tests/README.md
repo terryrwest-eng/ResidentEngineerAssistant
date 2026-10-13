@@ -15,6 +15,7 @@ python3 backend/tests/test_conversation_draft.py
 python3 backend/tests/test_shift_times.py
 python3 backend/tests/test_rewrite_shape.py
 python3 backend/tests/test_migration.py
+python3 backend/tests/test_work_area_split.py
 ```
 
 `test_multiuser.py` is the one that matters for privacy: it registers two

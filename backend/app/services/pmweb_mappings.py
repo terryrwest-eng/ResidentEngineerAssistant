@@ -520,3 +520,62 @@ def lookup_company(user_input: str) -> str:
 
     # 5. Nothing is sure. Keep the name that was given.
     return raw
+
+
+# ── An activity's work area, as PMWeb's On Site row wants it ─────────────────
+#
+# Terry's format is "Location - Company - Title", and a work area in that form
+# is read by position exactly as before. A work area with fewer parts used to be
+# read by position too, so "AR Concrete - curb ramps and concrete flatwork" put
+# the company in Location and the description in Company, where PMWeb's company
+# list does not find it: the row went into PMWeb with Company and Activities
+# blank (2026-01-06 and 2026-01-07, found 2026-10-13). A short work area is now
+# read by what its parts are. The part that names a company working on the
+# activity is the company; the other part is the location when it comes first
+# and the description when it comes after the company.
+
+_RESOURCE_TABLES = ("manpower", "equipment", "extra_work_manpower",
+                    "extra_work_equipment", "consultant_manpower", "consultant_equipment")
+_CREW_TABLES = ("manpower", "extra_work_manpower", "consultant_manpower")
+_OHLA_NAMES = {"ohla", "ohl", "ohl na"}
+
+
+def _company_key(name: str) -> str:
+    key = (name or "").strip().lower()
+    return "ohl na" if key in _OHLA_NAMES else key
+
+
+def _companies_on(act: dict, tables: tuple) -> list[str]:
+    """The companies named on the activity's rows in these tables, first-seen order, one each."""
+    seen: dict[str, str] = {}
+    for table in tables:
+        for item in act.get(table) or []:
+            name = (item.get("company") or "").strip()
+            if name and _company_key(name) not in seen:
+                seen[_company_key(name)] = name
+    return list(seen.values())
+
+
+def split_work_area(act: dict) -> tuple[str, str, str]:
+    """(location, company, title) for one activity, from its work_area.
+
+    With no company named in a short work area, the company is the one company
+    the activity's crew rows name, or blank when they name none or several.
+    """
+    work_area = act.get("work_area", "") or ""
+    parts = [p.strip() for p in work_area.split(" - ")]
+    if len(parts) >= 3:
+        return parts[0], parts[1], parts[2]
+
+    named = {_company_key(c) for c in _companies_on(act, _RESOURCE_TABLES)}
+    crew = _companies_on(act, _CREW_TABLES)
+    crew_company = crew[0] if len(crew) == 1 else ""
+    if len(parts) == 1:
+        return parts[0], crew_company, ""
+
+    first, second = parts
+    if _company_key(first) in named:
+        return "", first, second
+    if _company_key(second) in named:
+        return first, second, ""
+    return first, crew_company, second

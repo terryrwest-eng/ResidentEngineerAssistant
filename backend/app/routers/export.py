@@ -23,6 +23,7 @@ from app.services.word import (
     build_report_filename,
 )
 from app.services.reports import get_report
+from app.services.pmweb_mappings import split_work_area
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user_or_download_token
@@ -197,11 +198,7 @@ async def get_pmweb_full(report_id: str):
     company_aliases = {"OHLA": "OHL NA", "ohla": "OHL NA", "Ohla": "OHL NA"}
     activities_rows = []
     for act in report.get("activities", []):
-        work_area = act.get("work_area", "")
-        parts = [p.strip() for p in work_area.split(" - ")]
-        location = parts[0] if len(parts) >= 1 else work_area
-        company = parts[1] if len(parts) >= 2 else ""
-        title = parts[2] if len(parts) >= 3 else ""
+        location, company, title = split_work_area(act)
         company = company_aliases.get(company, company)
 
         # Sum ALL hours (manpower + equipment) across all resource tables
