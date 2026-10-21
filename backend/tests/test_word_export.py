@@ -241,18 +241,33 @@ morena_pipelines_multi = {
 }
 
 mp_preview = build_report_preview(morena_pipelines_multi)
-mp_sec1 = mp_preview["sections"][0]["lines"]
-check("Morena Pipelines preview has 8 sections", len(mp_preview["sections"]) == 8,
-      str(len(mp_preview["sections"])))
-check("Morena Pipelines Section 1 includes interview activity",
-      any("Potholed at four locations" in line for line in mp_sec1), str(mp_sec1))
-check("Morena Pipelines Section 1 includes dictated 2nd activity",
-      any("Constructed formwork at the vault" in line for line in mp_sec1), str(mp_sec1))
-check("Morena Pipelines Section 1 labels 2nd activity work area + stations",
-      any("Activity: Morena Blvd - Carpentry & Vault Formwork (Sta 118+00)" in line for line in mp_sec1),
-      str(mp_sec1))
-check("Morena Pipelines empty section is marked is_empty=True",
-      mp_preview["sections"][1]["is_empty"] is True)
+act_headers = [s["title"] for s in mp_preview["sections"] if s.get("is_activity_header")]
+check("Morena Pipelines renders a title header at the top of each activity",
+      act_headers == [
+          "Potholing — Sta 124+55 to Sta 133+48",
+          "Morena Blvd - Carpentry & Vault Formwork — Sta 118+00",
+      ],
+      str(act_headers))
+check("Morena Pipelines renders 8 sections per activity (2 headers + 16 sections = 18 blocks)",
+      len(mp_preview["sections"]) == 18, str(len(mp_preview["sections"])))
+act1_sec1 = mp_preview["sections"][1]["lines"]
+act1_sec7 = mp_preview["sections"][7]["lines"]
+act2_sec1 = mp_preview["sections"][10]["lines"]
+act2_sec7 = mp_preview["sections"][16]["lines"]
+check("Activity 1 Section 1 holds only Activity 1 narrative",
+      any("Potholed at four locations" in line for line in act1_sec1)
+      and not any("Constructed formwork" in line for line in act1_sec1),
+      str(act1_sec1))
+check("Activity 1 Section 7 holds only Activity 1 crew (7 Laborers)",
+      any("Laborers: 7" in line for line in act1_sec7), str(act1_sec7))
+check("Activity 2 Section 1 holds only Activity 2 narrative",
+      any("Constructed formwork at the vault" in line for line in act2_sec1)
+      and not any("Potholed at four locations" in line for line in act2_sec1),
+      str(act2_sec1))
+check("Activity 2 Section 7 holds only Activity 2 crew (2 Laborers, 1 Carpenter)",
+      any("Laborers: 2" in line for line in act2_sec7)
+      and any("Carpenter: 1" in line for line in act2_sec7),
+      str(act2_sec7))
 mp_stream = generate_report_document(morena_pipelines_multi)
 check("Morena Pipelines multi-activity docx generates cleanly",
       mp_stream.getvalue()[:2] == b"PK", f"{len(mp_stream.getvalue())} bytes")

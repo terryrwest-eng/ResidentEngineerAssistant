@@ -21,6 +21,7 @@ interface PreviewSection {
   /** Nothing was reported here — shown greyed so it is not mistaken for
    *  content, and not mistaken for a section nobody filled in either. */
   is_empty: boolean;
+  is_activity_header?: boolean;
 }
 
 interface PreviewData {
@@ -125,28 +126,42 @@ export function ReportPreview({ reportId, onBeforeOpen, onClose }: ReportPreview
                 </p>
               ))}
 
-              {data.sections.map((s) => (
-                <div key={`${s.number}-${s.title}`} style={{ marginTop: 'var(--space-lg)' }}>
-                  <h3 style={{ margin: '0 0 6px', fontSize: '0.9375rem' }}>
-                    {s.number ? `${s.number}. ` : ''}{s.title}
-                  </h3>
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {s.lines.map((line, i) => (
-                      <li
-                        key={i}
-                        style={{
-                          fontSize: '0.875rem', lineHeight: 1.5, marginBottom: 3,
-                          // Greyed when the section had nothing: it is a
-                          // statement that nothing happened, not content.
-                          color: s.is_empty ? 'var(--color-text-tertiary)' : 'inherit',
-                          fontStyle: s.is_empty ? 'italic' : 'normal',
-                        }}
-                      >
-                        {line}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+              {data.sections.map((s, idx) => (
+                s.is_activity_header ? (
+                  <h2
+                    key={`act-${idx}-${s.title}`}
+                    style={{
+                      margin: '24px 0 8px',
+                      fontSize: '1.0625rem',
+                      fontWeight: 700,
+                      textDecoration: 'underline',
+                    }}
+                  >
+                    {s.title}
+                  </h2>
+                ) : (
+                  <div key={`${idx}-${s.number}-${s.title}`} style={{ marginTop: 'var(--space-lg)' }}>
+                    <h3 style={{ margin: '0 0 6px', fontSize: '0.9375rem' }}>
+                      {s.number ? `${s.number}. ` : ''}{s.title}
+                    </h3>
+                    <ul style={{ margin: 0, paddingLeft: 20 }}>
+                      {s.lines.map((line, i) => (
+                        <li
+                          key={i}
+                          style={{
+                            fontSize: '0.875rem', lineHeight: 1.5, marginBottom: 3,
+                            // Greyed when the section had nothing: it is a
+                            // statement that nothing happened, not content.
+                            color: s.is_empty ? 'var(--color-text-tertiary)' : 'inherit',
+                            fontStyle: s.is_empty ? 'italic' : 'normal',
+                          }}
+                        >
+                          {line}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
               ))}
 
               {emptyCount > 0 && (
