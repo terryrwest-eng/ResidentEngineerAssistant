@@ -182,5 +182,81 @@ check("bullets survive as real UTF-8", _has_bullet,
       "found" if _has_bullet else "NO BULLET IN OUTPUT")
 
 
+# ── Morena Pipelines multi-activity export (Interview + Dictate) ────────────
+from app.services.word import build_report_preview, generate_report_document  # noqa: E402
+
+morena_pipelines_multi = {
+    "general": {
+        "project_name": "Morena Pipelines",
+        "profile_key": "morena_pipelines",
+        "report_date": "2026-10-19",
+    },
+    "interview": {
+        "profile": "morena_pipelines",
+        "composed": [
+            {
+                "id": "work_summary",
+                "number": 1,
+                "title": "Work Summary & Pipe Installation",
+                "body": (
+                    "Starting stations: Excavation: Sta 124+55\n"
+                    "Potholing: Potholed at four locations on Morena Blvd."
+                ),
+            },
+            {
+                "id": "tm_tracking",
+                "number": 2,
+                "title": "Time & Material (T&M) Tracking",
+                "body": "No time and material work was performed this shift.",
+            },
+        ],
+    },
+    "activities": [
+        {
+            "work_area": "Daily Progress",
+            "stations": "Sta 124+55 to Sta 133+48",
+            "summary": (
+                "1. Work Summary & Pipe Installation\n"
+                "Starting stations: Excavation: Sta 124+55\n"
+                "Potholing: Potholed at four locations on Morena Blvd.\n\n"
+                "2. Time & Material (T&M) Tracking\n"
+                "No time and material work was performed this shift."
+            ),
+            "manpower": [{"trade": "LL-03- Laborers", "qty": 7}],
+            "equipment": [{"name": "LE-109- Skid Steer", "qty": 1}],
+            "interview_pass": 1,
+        },
+        {
+            "work_area": "Morena Blvd - Carpentry & Vault Formwork",
+            "stations": "Sta 118+00",
+            "summary": (
+                "• Start Time: 7:00 PM\n"
+                "• End Time: 5:00 AM\n"
+                "• Constructed formwork at the vault location."
+            ),
+            "manpower": [{"trade": "LL-03- Laborers", "qty": 2}, {"trade": "Carpenter", "qty": 1}],
+            "equipment": [{"name": "Light Tower", "qty": 1}],
+        },
+    ],
+}
+
+mp_preview = build_report_preview(morena_pipelines_multi)
+mp_sec1 = mp_preview["sections"][0]["lines"]
+check("Morena Pipelines preview has 8 sections", len(mp_preview["sections"]) == 8,
+      str(len(mp_preview["sections"])))
+check("Morena Pipelines Section 1 includes interview activity",
+      any("Potholed at four locations" in line for line in mp_sec1), str(mp_sec1))
+check("Morena Pipelines Section 1 includes dictated 2nd activity",
+      any("Constructed formwork at the vault" in line for line in mp_sec1), str(mp_sec1))
+check("Morena Pipelines Section 1 labels 2nd activity work area + stations",
+      any("Activity: Morena Blvd - Carpentry & Vault Formwork (Sta 118+00)" in line for line in mp_sec1),
+      str(mp_sec1))
+check("Morena Pipelines empty section is marked is_empty=True",
+      mp_preview["sections"][1]["is_empty"] is True)
+mp_stream = generate_report_document(morena_pipelines_multi)
+check("Morena Pipelines multi-activity docx generates cleanly",
+      mp_stream.getvalue()[:2] == b"PK", f"{len(mp_stream.getvalue())} bytes")
+
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

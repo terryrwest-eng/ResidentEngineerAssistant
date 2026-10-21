@@ -51,6 +51,8 @@ export interface InterviewSection {
   repeat_from: string;
   /** Field each item pre-fills, so the location is never typed twice. */
   repeat_label: string;
+  /** Optional yes/no question id that gates this entire section. */
+  gate?: string;
   questions: InterviewQuestion[];
 }
 

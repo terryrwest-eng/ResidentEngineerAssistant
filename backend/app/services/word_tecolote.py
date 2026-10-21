@@ -26,9 +26,18 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 
-from app.services.report_profiles import TECOLOTE_EQUIPMENT_GROUPS, profile_for_report
+from app.services.report_profiles import MORENA_PIPELINES_EQUIPMENT_GROUPS, profile_for_report
 
 logger = logging.getLogger(__name__)
+
+_GENERIC_WORK_AREAS = {
+    '',
+    'daily progress',
+    'morena pipelines',
+    'morena pipeline',
+    'tecolote channel',
+    'tecolote',
+}
 
 
 
@@ -221,13 +230,13 @@ def _group_equipment(report: dict) -> list[tuple[str, list[str]]]:
         if row.get('note'):
             notes[name] = str(row['note'])
 
-    grouped: dict[str, list[str]] = {label: [] for label, _ in TECOLOTE_EQUIPMENT_GROUPS}
+    grouped: dict[str, list[str]] = {label: [] for label, _ in MORENA_PIPELINES_EQUIPMENT_GROUPS}
     # Entry order, NOT alphabetical. The inspector lists the yard the way they
     # walked it, and re-sorting it is the app overruling them for no reason.
     for name in totals:
         lowered = name.lower()
         placed = False
-        for label, keywords in TECOLOTE_EQUIPMENT_GROUPS:
+        for label, keywords in MORENA_PIPELINES_EQUIPMENT_GROUPS:
             if keywords and any(k in lowered for k in keywords):
                 grouped[label].append(_equipment_line(name, totals[name], notes.get(name, '')))
                 placed = True
@@ -235,7 +244,7 @@ def _group_equipment(report: dict) -> list[tuple[str, list[str]]]:
         if not placed:
             # Catch-all is the last group, so an unrecognised machine is listed
             # rather than silently dropped off the report.
-            grouped[TECOLOTE_EQUIPMENT_GROUPS[-1][0]].append(
+            grouped[MORENA_PIPELINES_EQUIPMENT_GROUPS[-1][0]].append(
                 _equipment_line(name, totals[name], notes.get(name, ''))
             )
 
@@ -275,29 +284,54 @@ def _composed(report: dict) -> dict[str, str]:
 
 
 
-def _summary_sections(report: dict) -> dict[int, list[str]]:
+def _summary_sections(report: dict) -> tuple[dict[int, list[str]], bool]:
     """
     Sections read out of the activity summaries.
 
-    WHY: the interview is one way to fill this report in, not the only one. An
-    inspector who types the whole day into the summary was getting an empty
-    document - every section printing "nothing happened this shift" while their
-    text sat in the report untouched, because the export only ever looked at
-    interview answers.
+    Returns (blocks_by_section_number, has_numbered_interview_activity).
 
-    Two shapes are handled. Text that already carries "1. Work Summary"
-    headings - because Rewrite produced it, or the interview did - is split on
-    those headings and each part filed under its number. Text with no headings
-    at all is one block of work, and goes to the work summary section where a
-    reader expects to find it. Nothing is dropped either way.
+    WHY: the interview is one way to fill this report in, not the only one — and
+    even when the interview is used for one activity, additional activities may
+    be added via Dictate or the Activity Editor. Every activity on the report
+    must contribute its narrative so nothing is dropped when the Word document
+    is generated.
     """
     blocks: dict[int, list[str]] = {}
     heading = re.compile(r"^\s*(\d+)\.\s+(\S.*)$")
+    activities = [
+        a for a in (report.get("activities", []) or [])
+        if str(a.get("summary") or "").strip()
+    ]
+    multiple = len(activities) > 1
+    has_numbered = False
 
-    for activity in report.get("activities", []) or []:
+    for idx, activity in enumerate(activities):
         summary = str(activity.get("summary") or "").strip()
         if not summary:
             continue
+
+        work_area = str(activity.get("work_area") or "").strip()
+        stations = str(activity.get("stations") or "").strip()
+        activity_has_headings = any(heading.match(raw) for raw in summary.split("\n"))
+        if activity_has_headings or activity.get("interview_pass") == 1:
+            has_numbered = True
+
+        # When multiple activities exist and this activity has a specific work
+        # area (or is a second/subsequent activity), introduce its work summary
+        # block with its work area and station range so the reader can see each
+        # activity clearly.
+        if multiple and not activity_has_headings:
+            header_parts = []
+            if work_area and work_area.lower() not in _GENERIC_WORK_AREAS:
+                header_parts.append(work_area)
+            elif idx > 0:
+                header_parts.append(f"Activity {idx + 1}")
+            if stations and stations.lower() not in summary.lower():
+                header_parts.append(f"({stations})")
+            if header_parts:
+                header_text = " ".join(header_parts)
+                if header_text.lower() not in summary.split("\n")[0].lower():
+                    blocks.setdefault(1, []).append(f"Activity: {header_text}")
 
         # Anything before the first heading belongs to the work summary: it is
         # the day's work, written without the format's numbering.
@@ -310,33 +344,63 @@ def _summary_sections(report: dict) -> dict[int, list[str]]:
             if match:
                 current = int(match.group(1))
                 continue
-            blocks.setdefault(current, []).append(
-                line.strip().lstrip("\u2022").strip() or line.strip()
-            )
+            cleaned = line.strip().lstrip("\u2022").strip() or line.strip()
+            blocks.setdefault(current, []).append(cleaned)
 
-    return blocks
+    return blocks, has_numbered
+
+
+def _is_empty_statement(line: str, empty_statement: str) -> bool:
+    a = line.strip().rstrip('.').lower()
+    b = (empty_statement or '').strip().rstrip('.').lower()
+    return bool(a and b and a == b)
+
 
 def _section_body(report: dict, section) -> list[str]:
     """
     The lines printed under one section heading.
 
-    Built from the interview answers for that section's questions, in the order
-    the questions were asked, so the printed report follows the format rather
-    than the order things happened to be entered.
+    Combines composed interview prose with all activities in `report.activities`
+    so that:
+    1. A report built with "Walk me through it" for one activity AND "Dictate"
+       (or manual entry) for a second activity prints BOTH activities.
+    2. Edits made in the Activity Editor to an activity's summary are reflected
+       in the printed report.
+    3. Default empty statements are stripped when real content exists.
     """
-    # Written prose wins over the answers. Printing "Label: answer" for each
-    # question is a question-and-answer display, not a report.
     written = _composed(report).get(section.id, '')
-    if written:
-        return [line.rstrip() for line in written.split('\n') if line.strip()]
+    written_lines = [
+        line.rstrip() for line in written.split('\n')
+        if line.strip() and not _is_empty_statement(line, section.empty_statement)
+    ]
 
-    # Then whatever is in the report itself. The interview is ONE way to fill
-    # this in, not the only one — an inspector who typed the day into the
-    # summary was getting a document that declared every section empty while
-    # their text sat in the report untouched.
-    from_summary = _summary_sections(report).get(section.number, [])
+    summary_blocks, has_numbered = _summary_sections(report)
+    from_summary = [
+        line for line in summary_blocks.get(section.number, [])
+        if line.strip() and not _is_empty_statement(line, section.empty_statement)
+    ]
+
     if from_summary:
+        # If `report.activities` already contains the numbered interview
+        # activity (from `materializeActivities`), `from_summary` already holds
+        # both that activity (including any editor changes) AND any additional
+        # dictated/manual activities. If `report.activities` only holds
+        # unnumbered dictated activities while `composed` holds the interview,
+        # combine both so neither is lost.
+        if not has_numbered and written_lines:
+            combined = list(written_lines)
+            for line in from_summary:
+                if line not in combined:
+                    combined.append(line)
+            logger.debug(
+                f"[morena_pipelines] Section {section.number} ({section.id}): "
+                f"merged {len(written_lines)} composed + {len(from_summary)} activity lines"
+            )
+            return combined
         return from_summary
+
+    if written_lines:
+        return written_lines
 
     answers = _answers(report)
     lines: list[str] = []
@@ -363,6 +427,33 @@ def _section_body(report: dict, section) -> list[str]:
         else:
             lines.append(f'{label}:')
             lines.extend(f'    {part}' for part in parts)
+
+    # Also include any additional activities recorded in the interview if
+    # `report.activities` was not yet materialized.
+    if section.id == 'work_summary' and str(answers.get('more_activities') or '').lower() == 'yes':
+        pass_num = 1
+        while pass_num <= 30:
+            suffix = '' if pass_num == 1 else f'#{pass_num}'
+            area = str(answers.get(f'extra_activity_area{suffix}', '') or '').strip()
+            stations = str(answers.get(f'extra_activity_stations{suffix}', '') or '').strip()
+            start = str(answers.get(f'extra_activity_start{suffix}', '') or '').strip()
+            stop = str(answers.get(f'extra_activity_stop{suffix}', '') or '').strip()
+            work = str(answers.get(f'extra_activity_summary{suffix}', '') or '').strip()
+            if not (area or work):
+                break
+            header = area or f'Activity {pass_num + 1}'
+            if stations:
+                header = f'{header} ({stations})'
+            lines.append(f'Activity: {header}')
+            if start:
+                lines.append(f'Start Time: {start}')
+            if stop:
+                lines.append(f'End Time: {stop}')
+            if work:
+                lines.extend(p.strip() for p in work.split('\n') if p.strip())
+            if str(answers.get(f'__more__:additional_activity:{pass_num}', '') or '').lower() != 'yes':
+                break
+            pass_num += 1
 
     return lines
 
@@ -454,8 +545,8 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
     doc.save(stream)
     stream.seek(0)
     logger.info(
-        f"[tecolote] Built report for {(report.get('general') or {}).get('report_date', '')} "
-        f"({len(content['sections'])} sections)"
+        f"[morena_pipelines] Built report for {(report.get('general') or {}).get('report_date', '')} "
+        f"({len(content['sections'])} sections, {len(report.get('activities') or [])} activities)"
     )
     return stream
 
@@ -489,6 +580,8 @@ def build_tecolote_content(report: dict) -> dict[str, Any]:
 
     sections: list[dict[str, Any]] = []
     for section in profile.sections:
+        if not section.number:
+            continue
         if section.id == 'labor':
             lines = [
                 f'{trade}: {qty}' + (f' ({note})' if note else '')

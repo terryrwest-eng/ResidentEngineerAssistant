@@ -129,6 +129,7 @@ class Section:
         repeat_prompt: str = '',
         repeat_from: str = '',
         repeat_label: str = '',
+        gate: str = '',
     ):
         self.id = id
         self.number = number
@@ -150,6 +151,8 @@ class Section:
         # Which field each item pre-fills — the location becomes the first part
         # of that activity's title, so it is never typed twice.
         self.repeat_label = repeat_label
+        # Optional yes/no question id that gates this entire section.
+        self.gate = gate
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -161,16 +164,17 @@ class Section:
             'repeat_prompt': self.repeat_prompt,
             'repeat_from': self.repeat_from,
             'repeat_label': self.repeat_label,
+            'gate': self.gate,
             'questions': [q.to_dict() for q in self.questions],
         }
 
 
 # ============================================
-# Tecolote Channel — Construction Daily Progress Report
+# Morena Pipelines — Construction Daily Progress Report
 # Mapped field by field from the format supplied by the RE.
 # ============================================
 
-TECOLOTE_SECTIONS = [
+MORENA_PIPELINES_SECTIONS = [
     Section(
         'work_summary', 1, 'Work Summary & Pipe Installation',
         [
@@ -580,19 +584,97 @@ TECOLOTE_SECTIONS = [
                     'active or idle.'
                 ),
             ),
-
+            Question(
+                'more_activities',
+                'Was there another activity or separate crew on shift today?',
+                'yesno', phase='end',
+                help='Tap Yes to walk through an additional activity or crew on this report.',
+            ),
         ],
         empty_statement='No contractor equipment was on site this shift.',
     ),
 
-
+    # Interview-only repeating section (number=0) for shifts with more than one
+    # activity on Morena Pipelines. Materializes into additional Activity cards
+    # and prints inside Section 1 (Work Summary), Section 7 (Labor), and
+    # Section 8 (Equipment).
+    Section(
+        'additional_activity', 0, 'Additional Activity',
+        [
+            Question(
+                'extra_activity_area',
+                'Where was this activity, or what was the operation?',
+                'text', phase='end', required=True,
+                example='Morena Blvd at Balboa Ave — Vault formwork',
+                extract_hint='Keep the location and operation name exactly as spoken.',
+                print_label='Activity',
+            ),
+            Question(
+                'extra_activity_stations',
+                'What station or station range was this activity at?',
+                'station_range', phase='end',
+                example='Sta 120+00 to Sta 122+50',
+                extract_hint='Keep the station figures exactly as spoken.',
+                print_label='Stations',
+            ),
+            Question(
+                'extra_activity_start',
+                'What time did this crew start?',
+                'time', phase='end',
+                print_label='Start Time',
+            ),
+            Question(
+                'extra_activity_stop',
+                'What time did this crew stop?',
+                'time', phase='end',
+                print_label='End Time',
+            ),
+            Question(
+                'extra_activity_summary',
+                'What work was performed on this activity?',
+                'narrative', phase='end', required=True,
+                help='Include work performed, materials placed, testing, or traffic control for this crew.',
+                extract_hint=(
+                    'Write complete sentences in third-person past tense covering every '
+                    'piece of work, station, quantity, and material spoken.'
+                ),
+            ),
+            Question(
+                'extra_activity_crew',
+                'Who was on this crew, how many of each craft, and what hours did they work?',
+                'crew', phase='end', required=True,
+                example='1 foreman 10 hours, 2 laborers 10 hours, 1 carpenter 10 hours',
+                extract_hint=(
+                    'One row per craft: the craft, the count, and the hours for THAT '
+                    'craft when hours were given.'
+                ),
+            ),
+            Question(
+                'extra_activity_equipment',
+                'What equipment did this crew use?',
+                'equipment', phase='end',
+                example='1 Service Truck, 1 Light Tower',
+                extract_hint=(
+                    'One row per machine type with a count. Keep makes and model numbers '
+                    'exactly as spoken.'
+                ),
+            ),
+        ],
+        empty_statement='',
+        repeats=True,
+        repeat_prompt='Was there another activity on shift today?',
+        gate='more_activities',
+    ),
 ]
 
+# Backward-compatible alias for imports
+TECOLOTE_SECTIONS = MORENA_PIPELINES_SECTIONS
 
-# Equipment groupings used by the Tecolote export. A machine falls in the first
-# group whose keywords it matches; anything unmatched prints under Support Units
-# rather than being dropped.
-TECOLOTE_EQUIPMENT_GROUPS = [
+
+# Equipment groupings used by the Morena Pipelines export. A machine falls in
+# the first group whose keywords it matches; anything unmatched prints under
+# Support Units rather than being dropped.
+MORENA_PIPELINES_EQUIPMENT_GROUPS = [
     ('Heavy Machinery', [
         'excavator', 'loader', 'skid steer', 'skidsteer', 'dozer', 'bulldozer',
         'grader', 'backhoe', 'crane', 'roller', 'compactor',
@@ -605,6 +687,8 @@ TECOLOTE_EQUIPMENT_GROUPS = [
     ]),
     ('Support Units', []),  # catch-all — must stay last
 ]
+
+TECOLOTE_EQUIPMENT_GROUPS = MORENA_PIPELINES_EQUIPMENT_GROUPS
 
 
 # ============================================
@@ -805,7 +889,7 @@ class ReportProfile:
         self.renderer = renderer
 
     def question_count(self) -> int:
-        return sum(len(s.questions) for s in self.sections)
+        return sum(len(s.questions) for s in self.sections if s.number > 0)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -829,15 +913,11 @@ PROFILES: dict[str, ReportProfile] = {
         renderer='classic',
     ),
     # Morena PIPELINES, not Morena Conveyance North - two different projects.
-    # Tecolote Channel is a LOCATION within this one, not a project of its own;
-    # it was registered as the project name by mistake, which meant a report
-    # correctly labelled "Morena Pipelines" matched nothing and silently came
-    # back in the other project's format.
     'morena_pipelines': ReportProfile(
         'morena_pipelines',
         'Morena Pipelines',
         'Construction Daily Progress Report',
-        TECOLOTE_SECTIONS,
+        MORENA_PIPELINES_SECTIONS,
         contractor='OHLA',
         renderer='tecolote',
         aliases=('tecolote', 'tecolote channel', 'morena pipeline'),

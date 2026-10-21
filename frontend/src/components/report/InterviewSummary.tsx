@@ -58,7 +58,7 @@ export function InterviewSummary({ profileKey, answers, onEdit }: InterviewSumma
         </span>
       </div>
 
-      {profile.sections.map((section) => {
+      {profile.sections.filter((s) => s.number > 0).map((section) => {
         const rows = section.questions
           .filter((q) => q.kind !== 'yesno')
           .map((q) => ({ q, value: (answers[q.id] || '').trim() }))

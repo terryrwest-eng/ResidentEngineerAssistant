@@ -185,6 +185,12 @@ export function GuidedInterview({
         continue;
       }
 
+      // If the repeating section itself is gated on a yes/no question (e.g.
+      // `more_activities` on Morena Pipelines), skip until that gate is yes.
+      if (section.gate && (answers[section.gate] || '').toLowerCase() !== 'yes') {
+        continue;
+      }
+
       // Driven by a list answer: the things named earlier ARE the passes, so
       // the inspector is never asked "another one?" after each location. They
       // already said where they worked.
@@ -194,7 +200,7 @@ export function GuidedInterview({
         : MAX_PASSES;
 
       for (let pass = 1; pass <= passCount; pass++) {
-        const label = labels[pass - 1] || '';
+        const label = labels[pass - 1] || (!section.repeat_from ? `Activity ${pass + 1}` : '');
         for (const question of section.questions) {
           const key = instanceKey(question.id, pass);
           // A gate inside a repeating section refers to its own pass.

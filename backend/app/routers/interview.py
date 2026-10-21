@@ -521,7 +521,7 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     blocks: list[str] = []
     wanted: list[Any] = []
     for section in profile.sections:
-        if section.id in ('labor', 'equipment'):
+        if not section.number or section.id in ('labor', 'equipment'):
             continue
         lines = []
         for question in section.questions:

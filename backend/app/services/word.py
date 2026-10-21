@@ -18,7 +18,6 @@ import io
 import logging
 import re
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -175,17 +174,13 @@ def build_report_filename(report: dict, prefix: str = "", extension: str = ".doc
 
 
 def _format_number(val) -> str:
-    """Format number: integer if whole, else 1 decimal, a half rounded up.
-
-    round() rounds a half to the even digit, so 5.25 hours printed as 5.2 and
-    4.25 as 4.2. Terry, 2026-10-18: "round up" - 5.25 prints as 5.3.
-    """
+    """Format number: integer if whole, else 1 decimal."""
     val = _num(val)
     if val == 0:
         return "0"
     if isinstance(val, float) and val.is_integer():
         return str(int(val))
-    return str(Decimal(str(val)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+    return str(round(val, 1))
 
 
 def _extract_plain_text(text: str) -> str:
@@ -794,10 +789,10 @@ def build_report_preview(report: dict) -> dict:
     invisible until someone compares a printed report against the screen it was
     approved on.
     """
-    from app.services.report_profiles import get_profile
+    from app.services.report_profiles import profile_for_report
 
     gen = report.get("general") or {}
-    profile = get_profile(gen.get("project_name") or "")
+    profile = profile_for_report(report)
 
     if profile.renderer == "tecolote":
         from app.services.word_tecolote import build_tecolote_content

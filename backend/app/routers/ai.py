@@ -2440,7 +2440,7 @@ async def ai_rewrite(request: RewriteRequest):
         if request.project and profile.renderer == 'tecolote':
             section_list = '\n'.join(
                 f'{s.number}. {s.title}   (when empty: "{s.empty_statement}")'
-                for s in profile.sections
+                for s in profile.sections if s.number
             )
             formatted = _gemini_call_with_retry(
                 client, model_name,

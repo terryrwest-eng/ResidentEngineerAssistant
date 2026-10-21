@@ -244,6 +244,8 @@ export interface ProfileSection {
   title?: string;
   repeats?: boolean;
   repeat_from?: string;
+  repeat_prompt?: string;
+  gate?: string;
   empty_statement?: string;
   questions: ProfileQuestion[];
 }
@@ -425,7 +427,7 @@ function buildDayActivity(
   for (const section of composed?.length ? [] : sections) {
     // Crew and equipment become ROWS, not prose — they belong in the resource
     // tables where they can be counted, not buried in a summary.
-    if (section.id === 'labor' || section.id === 'equipment') continue;
+    if (!section.number || section.id === 'labor' || section.id === 'equipment') continue;
 
     const body: string[] = [];
     for (const q of section.questions) {
@@ -527,5 +529,85 @@ function buildDayActivity(
     interview_pass: 1,
   } as unknown as Activity;
 
-  return [dayActivity, ...manual];
+  // Build additional activities captured during the interview (when more than
+  // one activity took place on Morena Pipelines).
+  const extraActivities: Activity[] = [];
+  if (at('more_activities').toLowerCase() === 'yes') {
+    for (let p = 1; p <= 30; p++) {
+      const area = at(passKey('extra_activity_area', p));
+      const extraStations = at(passKey('extra_activity_stations', p));
+      const extraStart = at(passKey('extra_activity_start', p)) || start;
+      const extraStop = at(passKey('extra_activity_stop', p)) || stop;
+      const extraHours = shiftHours(extraStart, extraStop, false) || hours;
+      const extraWork = at(passKey('extra_activity_summary', p));
+      const extraCrewRows = rows[passKey('extra_activity_crew', p)] || [];
+      const extraEquipRows = rows[passKey('extra_activity_equipment', p)] || [];
+
+      if (!area && !extraWork && !extraCrewRows.length && !extraEquipRows.length) {
+        break;
+      }
+
+      const passNum = p + 1;
+      const priorExtra = existing.find(
+        (a) => (a as unknown as { interview_pass?: number }).interview_pass === passNum,
+      );
+      const extraLines: string[] = [];
+      if (at(passKey('extra_activity_start', p))) {
+        extraLines.push(`Start Time: ${at(passKey('extra_activity_start', p))}`);
+      }
+      if (at(passKey('extra_activity_stop', p))) {
+        extraLines.push(`End Time: ${at(passKey('extra_activity_stop', p))}`);
+      }
+      extraLines.push(...toBullets(extraWork));
+
+      extraActivities.push({
+        id: priorExtra?.id || newId(),
+        work_area: area || priorExtra?.work_area || `Activity ${passNum}`,
+        stations: extraStations || priorExtra?.stations || '',
+        summary: extraLines.join('\n') || priorExtra?.summary || '',
+        manpower: withPmwebCodes(extraCrewRows.map((r) => ({
+          id: newId(),
+          trade: String(r.trade ?? r.name ?? '').trim(),
+          name: String(r.person ?? '').trim(),
+          qty: num(r.qty, 1),
+          hours: rowHours(r.hours, extraHours, false),
+          start_time: extraStart,
+          stop_time: extraStop,
+          company: String(r.company ?? '').trim(),
+          classification: String(r.note ?? '').trim(),
+          is_3rd_party: false,
+          is_extra_work: false,
+          is_consultant: false,
+          locked: false,
+          apply_end_time: true,
+        })).filter((r) => r.trade), 'crew'),
+        equipment: withPmwebCodes(extraEquipRows.map((r) => ({
+          id: newId(),
+          name: String(r.name ?? r.trade ?? '').trim(),
+          description: String(r.note ?? '').trim(),
+          qty: num(r.qty, 1),
+          hours: rowHours(r.hours, extraHours, false),
+          start_time: extraStart,
+          stop_time: extraStop,
+          company: String(r.company ?? '').trim(),
+          is_3rd_party: false,
+          is_extra_work: false,
+          is_consultant: false,
+          is_rental: false,
+          locked: false,
+          apply_end_time: true,
+        })).filter((r) => r.name), 'equipment'),
+        extra_work_manpower: priorExtra?.extra_work_manpower || [],
+        extra_work_equipment: priorExtra?.extra_work_equipment || [],
+        consultant_manpower: priorExtra?.consultant_manpower || [],
+        interview_pass: passNum,
+      } as unknown as Activity);
+
+      if (at(`__more__:additional_activity:${p}`).toLowerCase() !== 'yes') {
+        break;
+      }
+    }
+  }
+
+  return [dayActivity, ...extraActivities, ...manual];
 }
