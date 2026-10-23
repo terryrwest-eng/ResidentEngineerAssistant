@@ -272,6 +272,19 @@ mp_stream = generate_report_document(morena_pipelines_multi)
 check("Morena Pipelines multi-activity docx generates cleanly",
       mp_stream.getvalue()[:2] == b"PK", f"{len(mp_stream.getvalue())} bytes")
 
+morena_with_notes = dict(
+    morena_pipelines_multi,
+    general=dict(
+        morena_pipelines_multi["general"],
+        notes="Cloudy evening turned to rain around 10:00 PM\nOHLA worked at Morena Boulevard.",
+    ),
+)
+mp_notes_preview = build_report_preview(morena_with_notes)
+check("Morena Pipelines includes General Notes section at top when general.notes is present",
+      mp_notes_preview["sections"][0]["title"] == "General Notes"
+      and any("OHLA worked at Morena Boulevard." in line for line in mp_notes_preview["sections"][0]["lines"]),
+      str(mp_notes_preview["sections"][0]))
+
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

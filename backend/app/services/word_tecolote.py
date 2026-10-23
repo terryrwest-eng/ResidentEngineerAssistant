@@ -471,7 +471,12 @@ def generate_tecolote_document(report: dict) -> io.BytesIO:
         heading = doc.add_paragraph()
         heading.paragraph_format.space_before = Pt(14)
         heading.paragraph_format.space_after = Pt(6)
-        run = heading.add_run(f"{section['number']}. {section['title']}")
+        heading_text = (
+            f"{section['number']}. {section['title']}"
+            if section.get('number')
+            else section['title']
+        )
+        run = heading.add_run(heading_text)
         run.bold = True
         run.font.size = Pt(12)
 
@@ -562,6 +567,19 @@ def build_tecolote_content(report: dict) -> dict[str, Any]:
     first_section = numbered_sections[0] if numbered_sections else None
 
     sections: list[dict[str, Any]] = []
+    notes_lines = [
+        line.strip()
+        for line in str(gen.get('notes') or '').split('\n')
+        if line.strip()
+    ]
+    if notes_lines:
+        sections.append({
+            'number': 0,
+            'title': 'General Notes',
+            'lines': notes_lines,
+            'is_empty': False,
+        })
+
     for idx, activity in enumerate(raw_activities, 1):
         activity_blocks = _activity_summary_blocks(activity)
         use_interview_fallback = (

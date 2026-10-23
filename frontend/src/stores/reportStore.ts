@@ -195,6 +195,7 @@ export const useReportStore = create<ReportStoreState>((set, get) => ({
         isDirty: false,      // Just loaded — no changes yet
         isLoading: false,
         lastSavedAt: data.updated_at,
+        revision: get().revision + 1,
       });
       console.debug(`[ReportStore] Loaded report ${id}`);
     } catch (err) {

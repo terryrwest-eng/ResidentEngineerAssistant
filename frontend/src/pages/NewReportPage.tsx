@@ -569,7 +569,7 @@ export function NewReportPage() {
 
       {/* --- General Info Form --- */}
       <div id="section-details">
-        <GeneralInfoForm key={`gen-${revision}`} />
+        <GeneralInfoForm key={`gen-${report.id}-${revision}`} />
       </div>
 
       {/* --- Schedule (collapsible, above activities) --- */}
@@ -579,7 +579,7 @@ export function NewReportPage() {
 
       {/* --- Activities --- */}
       <div id="section-activities" style={{ marginTop: 'var(--space-lg)' }}>
-        <ActivityList key={`act-${revision}`} />
+        <ActivityList key={`act-${report.id}-${revision}`} />
       </div>
 
       {/* --- Floating AI Chat Button --- */}
