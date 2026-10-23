@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useCallback, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useReportStore } from '@/stores/reportStore';
 import { NavigationGuard } from '@/components/ui/NavigationGuard';
 import { DuplicateDateWarning } from '@/components/report/DuplicateDateWarning';
@@ -60,6 +60,7 @@ import {
 export function NewReportPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
 
   // Load the synced PMWeb catalogue before anything needs to match against it.
@@ -116,6 +117,12 @@ export function NewReportPage() {
   // Load existing report or create new
   useEffect(() => {
     if (id) {
+      setFlowStage('editor');
+      setJumpTo('');
+      setShowPreview(false);
+      setAnswers({});
+      setAnswerRows({});
+      setProfileKey('');
       loadReport(id);
       // Auto-set Chrome extension context so PMWeb Auto-Fill knows which report is active
       reportApi.setExtensionContext(id).catch(() => {
@@ -126,6 +133,14 @@ export function NewReportPage() {
       if (isSaved && isDirty) {
         saveReport().then(() => console.debug('[NewReportPage] Auto-saved before new report'));
       }
+      // Reset local interview/flow state so answers from a previous report
+      // can never bleed into the next report started in the same session.
+      setFlowStage('checking');
+      setProfileKey('');
+      setJumpTo('');
+      setShowPreview(false);
+      setAnswers({});
+      setAnswerRows({});
       // Always start fresh when navigating to /report/new
       closeReport();
       // Clear stale extension context so Chrome extension doesn't serve previous report
@@ -147,13 +162,17 @@ export function NewReportPage() {
         newReport();
       });
     }
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, id ? '' : location.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bring saved interview answers back into state when a report loads. Without
   // this, walking the questions again on an existing report would start from a
   // blank sheet and re-ask everything already answered.
   useEffect(() => {
-    if (!report?.id) return;
+    if (!report?.id) {
+      setAnswers({});
+      setAnswerRows({});
+      return;
+    }
     const saved = report.interview;
     if (saved?.answers) {
       // Overwrite, do not merge. These are THIS report's answers, and the
@@ -168,8 +187,9 @@ export function NewReportPage() {
 
     // A report written before the interview existed, or filled in by dictation
     // or Quick Create. Seed the locations question from the activities already
-    // on it, so walking the questions shows what is there and adds to it -
-    // rather than starting blank and asking for locations the report covers.
+    // on it (only on the 'morena' repeating-locations format), so walking the
+    // questions shows what is there and adds to it.
+    if (getProfileKey(report) !== 'morena') return;
     const covered = (report.activities || [])
       .map((a) => String(a.work_area || '').trim())
       .filter(Boolean);
@@ -244,7 +264,13 @@ export function NewReportPage() {
       <ResumeOrStart
         reportDate={report?.general?.report_date || new Date().toISOString().slice(0, 10)}
         onResume={(existing: ExistingReport) => navigate(`/report/${existing.id}`, { replace: true })}
-        onStartNew={() => setFlowStage('picking')}
+        onStartNew={() => {
+          setAnswers({});
+          setAnswerRows({});
+          setProfileKey('');
+          setJumpTo('');
+          setFlowStage('picking');
+        }}
       />
     );
   }
@@ -270,6 +296,9 @@ export function NewReportPage() {
         reportDate={report?.general?.report_date || new Date().toISOString().slice(0, 10)}
         fallbackZip={fallbackZip}
         onPicked={(profile, weather: WeatherSnapshot | null) => {
+          setAnswers({});
+          setAnswerRows({});
+          setJumpTo('');
           setProfileKey(profile.key);
           // Store the KEY, not just the display name. The name is free text the
           // user can change; the key is what decides the report's format.

@@ -108,7 +108,7 @@ const passKey = (questionId: string, pass: number) =>
 
 /** "7:30 AM" -> minutes since midnight. Returns null when unparseable. */
 function timeToMinutes(raw: string): number | null {
-  const m = (raw || '').trim().match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])?$/);
+  const m = (raw || '').trim().match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/);
   if (!m) return null;
   let hour = parseInt(m[1], 10);
   const mins = parseInt(m[2], 10);
@@ -117,6 +117,10 @@ function timeToMinutes(raw: string): number | null {
   if (suffix === 'AM' && hour === 12) hour = 0;
   if (hour > 23 || mins > 59) return null;
   return hour * 60 + mins;
+}
+
+function hasExplicitMeridiem(raw: string): boolean {
+  return /\b[AaPp][Mm]\b/.test(raw || '');
 }
 
 /**
@@ -189,8 +193,22 @@ export function shiftHours(start: string, stop: string, deductLunch: boolean): n
   const a = timeToMinutes(start);
   const b = timeToMinutes(stop);
   if (a === null || b === null) return 0;
+
+  // When stop time is entered as 12-hour without AM/PM (e.g. start "9:00 PM",
+  // stop "11:45", or start "7:00 AM", stop "3:30"), infer the meridiem that
+  // gives the realistic shift span rather than treating "11:45" as 11:45 AM
+  // the next day (14.75 hours).
   let span = b - a;
   if (span < 0) span += 24 * 60;
+  if (!hasExplicitMeridiem(stop) && b <= 12 * 60) {
+    const bPm = b < 12 * 60 ? b + 12 * 60 : b;
+    let spanPm = bPm - a;
+    if (spanPm < 0) spanPm += 24 * 60;
+    if (spanPm > 0 && spanPm < span) {
+      span = spanPm;
+    }
+  }
+
   if (deductLunch) span -= 30;
   if (span <= 0) return 0;
   return Math.round((span / 60) * 100) / 100;
@@ -469,7 +487,9 @@ function buildDayActivity(
   const firstLine = (id: string) => {
     const line = (at(id).split('\n')[0] || '').trim();
     const colon = line.indexOf(':');
-    return colon >= 0 ? line.slice(colon + 1).trim() : line;
+    const val = colon >= 0 ? line.slice(colon + 1).trim() : line;
+    if (!val || /^(n\/?a|none|nothing|no|null|-+)$/i.test(val)) return '';
+    return val;
   };
   const from = firstLine('starting_stations') || firstLine('excavation_start');
   const to = firstLine('ending_stations') || firstLine('excavation_end');

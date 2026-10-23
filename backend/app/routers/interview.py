@@ -518,8 +518,15 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     profile = get_profile(request.profile)
     answers = request.answers or {}
 
+    def _clean_val(raw: Any) -> str:
+        val = str(raw or '').strip()
+        if val.lower() in ('none', 'nothing', 'n/a', 'na'):
+            return ''
+        return val
+
     blocks: list[str] = []
     wanted: list[Any] = []
+    valid_qids: set[str] = set()
     for section in profile.sections:
         if not section.number or section.id in ('labor', 'equipment'):
             continue
@@ -527,7 +534,8 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
         for question in section.questions:
             if question.kind == 'yesno':
                 continue
-            value = str(answers.get(question.id, '') or '').strip()
+            valid_qids.add(question.id)
+            value = _clean_val(answers.get(question.id, ''))
             if value:
                 lines.append(f'- {question.prompt}\n  ANSWER: {value}')
         wanted.append(section)
@@ -544,11 +552,15 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     client, model_name = _get_gemini_client()
     from google.genai import types as genai_types
 
-    # Every answer, so a fact collected by one section's question can be routed
-    # to the section that actually covers it — backfill stations arrive in the
-    # combined stations answer but belong in the backfilling section.
+    # Every answer belonging to THIS profile's composed sections, so a fact
+    # collected by one section's question can be routed to the section that
+    # actually covers it — backfill stations arrive in the combined stations
+    # answer but belong in the backfilling section. Foreign keys from other
+    # profiles are ignored so another project's answers can never bleed in.
     everything = '\n'.join(
-        f'- {k}: {v}' for k, v in answers.items() if str(v or '').strip()
+        f'- {k}: {_clean_val(v)}'
+        for k, v in answers.items()
+        if k.split('#')[0] in valid_qids and _clean_val(v)
     )
 
     prompt = (
