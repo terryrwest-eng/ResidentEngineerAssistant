@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { ChevronRight, Mic, FileText } from 'lucide-react';
+import { ChevronDown, ChevronRight, Mic, FileText } from 'lucide-react';
 import { interviewApi, type InterviewProfile } from '@/lib/interviewApi';
 
 interface InterviewSummaryProps {
@@ -25,6 +25,7 @@ interface InterviewSummaryProps {
 
 export function InterviewSummary({ profileKey, answers, onEdit }: InterviewSummaryProps) {
   const [profile, setProfile] = useState<InterviewProfile | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,23 +47,42 @@ export function InterviewSummary({ profileKey, answers, onEdit }: InterviewSumma
       marginBottom: 'var(--space-md)',
       overflow: 'hidden',
     }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 12px', background: 'var(--color-surface-active)',
-        fontSize: '0.8125rem', fontWeight: 600,
-      }}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+          padding: '8px 12px', background: 'var(--color-surface-active)',
+          fontSize: '0.8125rem', fontWeight: 600, border: 'none',
+          cursor: 'pointer', textAlign: 'left', color: 'inherit',
+        }}
+      >
         <FileText size={14} />
-        <span style={{ flex: 1 }}>{profile.title}</span>
-        <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)', fontSize: '0.75rem' }}>
-          {answeredCount} answered
+        <span style={{ flex: 1 }}>
+          Interview answers ({answeredCount} answered)
         </span>
-      </div>
+        <span style={{ fontWeight: 400, color: 'var(--color-text-secondary)', fontSize: '0.75rem' }}>
+          {expanded ? 'Hide raw answers' : 'Review or edit answers'}
+        </span>
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      </button>
 
-      {profile.sections.filter((s) => s.number > 0).map((section) => {
+      {expanded && profile.sections.filter((s) => s.number > 0).map((section) => {
         const rows = section.questions
           .filter((q) => q.kind !== 'yesno')
-          .map((q) => ({ q, value: (answers[q.id] || '').trim() }))
-          .filter((r) => r.value);
+          .flatMap((q) => {
+            const entries: { key: string; q: typeof q; value: string; passLabel?: string }[] = [];
+            const v1 = (answers[q.id] || '').trim();
+            if (v1) entries.push({ key: q.id, q, value: v1 });
+            if (section.repeats) {
+              for (let p = 2; p <= 30; p++) {
+                const k = `${q.id}#${p}`;
+                const vp = (answers[k] || '').trim();
+                if (vp) entries.push({ key: k, q, value: vp, passLabel: `#${p}` });
+              }
+            }
+            return entries;
+          });
 
         return (
           <div key={section.id} style={{ borderTop: '1px solid var(--color-border)' }}>
@@ -81,10 +101,10 @@ export function InterviewSummary({ profileKey, answers, onEdit }: InterviewSumma
               }}>
                 {section.empty_statement}
               </div>
-            ) : rows.map(({ q, value }) => (
+            ) : rows.map(({ key, q, value, passLabel }) => (
               <button
-                key={q.id}
-                onClick={() => onEdit(q.id)}
+                key={key}
+                onClick={() => onEdit(key)}
                 title="Answer this one again"
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: 8, width: '100%',
@@ -93,9 +113,9 @@ export function InterviewSummary({ profileKey, answers, onEdit }: InterviewSumma
                 }}
               >
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  {q.print_label && (
+                  {(q.print_label || passLabel) && (
                     <span style={{ color: 'var(--color-text-secondary)' }}>
-                      {q.print_label}:{' '}
+                      {q.print_label || q.id}{passLabel ? ` (${passLabel})` : ''}:{' '}
                     </span>
                   )}
                   <span style={{ whiteSpace: 'pre-wrap' }}>{value}</span>

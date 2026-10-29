@@ -18,6 +18,7 @@ gap is worse than a visible one in a document that can end up as evidence.
 """
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,7 +37,7 @@ from app.routers.ai import (
 )
 from app.routers.ai import _strip_reasoning
 from app.services.report_profiles import get_profile, list_profiles
-from app.services.summary_format import normalise_time_lines
+from app.services.summary_format import normalise_time_lines, with_opening_times
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/interview', tags=['interview'])
@@ -512,8 +513,8 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     back with a label in front of each one - a question-and-answer display,
     not a document. The answers are notes; this writes from them.
 
-    Crew and equipment are excluded here: they are rows, printed as counts by
-    the export, and prose about them would duplicate the tables.
+    Handles both single-day numbered profiles (Morena Pipelines) and
+    repeating-location profiles (Morena Conveyance North).
     """
     profile = get_profile(request.profile)
     answers = request.answers or {}
@@ -524,27 +525,208 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
             return ''
         return val
 
+    def _pass_key(qid: str, pass_num: int) -> str:
+        return qid if pass_num <= 1 else f'{qid}#{pass_num}'
+
+    def _split_locations(raw: Any) -> list[str]:
+        text = str(raw or '').strip()
+        if not text:
+            return []
+        items: list[str] = []
+        for part in re.split(r'\r?\n|;', text):
+            cleaned = re.sub(r'^[-•\d.)\s]+', '', part).strip()
+            if cleaned and cleaned.lower() not in ('none', 'nothing', 'n/a', 'na'):
+                items.append(cleaned)
+        return items
+
     blocks: list[str] = []
-    wanted: list[Any] = []
+    wanted: list[dict[str, Any]] = []
     valid_qids: set[str] = set()
-    for section in profile.sections:
-        if not section.number or section.id in ('labor', 'equipment'):
-            continue
-        lines = []
-        for question in section.questions:
-            if question.kind == 'yesno':
+
+    repeating = next((s for s in profile.sections if s.repeats and s.repeat_from), None)
+
+    if repeating is not None:
+        # ── Repeating-location profile (Morena Conveyance North) ──
+        valid_qids.add(repeating.repeat_from)
+        locations = _split_locations(answers.get(repeating.repeat_from, ''))
+        if not locations:
+            has_pass_one = any(
+                _clean_val(answers.get(q.id, ''))
+                for q in repeating.questions
+                if q.kind != 'yesno'
+            )
+            if has_pass_one:
+                locations = ['Work Performed']
+
+        for idx, loc_name in enumerate(locations):
+            pass_num = idx + 1
+            loc_start = _clean_val(answers.get(_pass_key('start_time', pass_num), ''))
+            loc_stop = _clean_val(answers.get(_pass_key('stop_time', pass_num), ''))
+            lines: list[str] = []
+            for question in repeating.questions:
+                valid_qids.add(question.id)
+                if question.kind == 'yesno':
+                    continue
+                if question.gate:
+                    gate_val = _clean_val(answers.get(_pass_key(question.gate, pass_num), '')).lower()
+                    if gate_val == 'no':
+                        continue
+                value = _clean_val(answers.get(_pass_key(question.id, pass_num), ''))
+                if not value:
+                    continue
+                if question.kind in ('crew', 'equipment'):
+                    lines.append(
+                        f'- {question.prompt} (context only — name the trade or machine '
+                        f'naturally in the work sentences where helpful; do NOT list '
+                        f'rosters or counts, as counts print in the tables below)\n'
+                        f'  ANSWER: {value}'
+                    )
+                else:
+                    lines.append(f'- {question.prompt}\n  ANSWER: {value}')
+
+            sec_id = f'location:{pass_num}'
+            wanted.append({
+                'id': sec_id,
+                'number': pass_num,
+                'title': loc_name,
+                'empty_statement': repeating.empty_statement,
+                'start_time': loc_start,
+                'stop_time': loc_stop,
+                'has_times': True,
+            })
+            blocks.append(
+                f'SECTION {sec_id} — "Location {pass_num}: {loc_name}" (LOCATION ACTIVITY WRITE-UP)\n'
+                'FORMAT FOR THIS SECTION: Write a complete Morena Conveyance North location '
+                'activity narrative from the answers below. Open with "Start Time: <time>" and '
+                '"End Time: <time>" on their own lines when shift times are provided. Then write '
+                'the narrative in chronological order as complete, formal third-person past-tense '
+                'sentences (one bullet "• ..." per distinct operation or observation): '
+                '(1) the traffic control that was set, street/area, direction of travel, and '
+                'lane closures if reported; (2) the work performed in complete sentences with '
+                'every station, measurement, quantity, material, and trade/machine from the '
+                'answers; (3) any additional site observations, deliveries, testing, or delays; '
+                'and (4) whether traffic control was picked up at the end of the shift or left '
+                'standing and why.\n'
+                + ('\n'.join(lines) if lines
+                   else f'(no answers — use exactly: "{repeating.empty_statement}")')
+                + f'\nEMPTY STATEMENT IF NOTHING HAPPENED: "{repeating.empty_statement}"'
+            )
+
+        day_close = next((s for s in profile.sections if s.id == 'day_close'), None)
+        if day_close is not None:
+            day_lines: list[str] = []
+            for question in day_close.questions:
+                valid_qids.add(question.id)
+                if question.kind == 'yesno':
+                    continue
+                if question.gate:
+                    gate_val = _clean_val(answers.get(question.gate, '')).lower()
+                    if gate_val == 'no':
+                        continue
+                value = _clean_val(answers.get(question.id, ''))
+                if value:
+                    day_lines.append(f'- {question.prompt}\n  ANSWER: {value}')
+            if day_lines:
+                wanted.append({
+                    'id': 'general_notes',
+                    'number': 0,
+                    'title': 'General Notes',
+                    'empty_statement': '',
+                    'start_time': '',
+                    'stop_time': '',
+                    'has_times': False,
+                })
+                blocks.append(
+                    'SECTION general_notes — "General Notes (Day-Level Observations)"\n'
+                    'FORMAT FOR THIS SECTION: Write complete, formal third-person past-tense '
+                    'sentences covering the day-level extra work/T&M, visitors, inspections, '
+                    'deliveries, or shift observations below.\n'
+                    + '\n'.join(day_lines)
+                )
+    else:
+        # ── Single-day numbered-section profile (Morena Pipelines) ──
+        shift_start_val = _clean_val(answers.get('shift_start', ''))
+        shift_end_val = _clean_val(answers.get('shift_end', ''))
+        valid_qids.update(('shift_start', 'shift_end'))
+
+        for section in profile.sections:
+            if not section.number or section.id in ('labor', 'equipment'):
                 continue
-            valid_qids.add(question.id)
-            value = _clean_val(answers.get(question.id, ''))
-            if value:
-                lines.append(f'- {question.prompt}\n  ANSWER: {value}')
-        wanted.append(section)
-        blocks.append(
-            f'SECTION {section.id} — "{section.number}. {section.title}"\n'
-            + (('\n'.join(lines)) if lines
-               else f'(no answers — use exactly: "{section.empty_statement}")')
-            + f'\nEMPTY STATEMENT IF NOTHING HAPPENED: "{section.empty_statement}"'
-        )
+            lines = []
+            if section.id == 'work_summary':
+                if shift_start_val:
+                    lines.append(f'- What time did the crew start?\n  ANSWER: {shift_start_val}')
+                if shift_end_val:
+                    lines.append(f'- What time did the crew stop?\n  ANSWER: {shift_end_val}')
+            for question in section.questions:
+                valid_qids.add(question.id)
+                if question.kind == 'yesno':
+                    continue
+                if question.gate:
+                    gate_val = _clean_val(answers.get(question.gate, '')).lower()
+                    if gate_val == 'no':
+                        continue
+                value = _clean_val(answers.get(question.id, ''))
+                if value:
+                    lines.append(f'- {question.prompt}\n  ANSWER: {value}')
+            wanted.append({
+                'id': section.id,
+                'number': section.number,
+                'title': section.title,
+                'empty_statement': section.empty_statement,
+                'start_time': shift_start_val if section.id == 'work_summary' else '',
+                'stop_time': shift_end_val if section.id == 'work_summary' else '',
+                'has_times': section.id == 'work_summary',
+            })
+            blocks.append(
+                f'SECTION {section.id} — "{section.number}. {section.title}"\n'
+                + (('\n'.join(lines)) if lines
+                   else f'(no answers — use exactly: "{section.empty_statement}")')
+                + f'\nEMPTY STATEMENT IF NOTHING HAPPENED: "{section.empty_statement}"'
+            )
+
+        extra_sec = next((s for s in profile.sections if s.id == 'additional_activity'), None)
+        if extra_sec is not None and _clean_val(answers.get('more_activities', '')).lower() == 'yes':
+            for p in range(1, 31):
+                area = _clean_val(answers.get(_pass_key('extra_activity_area', p), ''))
+                extra_start = _clean_val(answers.get(_pass_key('extra_activity_start', p), ''))
+                extra_stop = _clean_val(answers.get(_pass_key('extra_activity_stop', p), ''))
+                extra_work = _clean_val(answers.get(_pass_key('extra_activity_summary', p), ''))
+                if not area and not extra_work:
+                    break
+                extra_lines: list[str] = []
+                for q in extra_sec.questions:
+                    valid_qids.add(q.id)
+                    val = _clean_val(answers.get(_pass_key(q.id, p), ''))
+                    if not val:
+                        continue
+                    if q.kind in ('crew', 'equipment'):
+                        extra_lines.append(
+                            f'- {q.prompt} (context only — counts print in Sections 7 & 8)\n'
+                            f'  ANSWER: {val}'
+                        )
+                    else:
+                        extra_lines.append(f'- {q.prompt}\n  ANSWER: {val}')
+                sec_id = f'extra_activity:{p}'
+                wanted.append({
+                    'id': sec_id,
+                    'number': 0,
+                    'title': area or f'Activity {p + 1}',
+                    'empty_statement': '',
+                    'start_time': extra_start,
+                    'stop_time': extra_stop,
+                    'has_times': True,
+                })
+                blocks.append(
+                    f'SECTION {sec_id} — "Additional Activity {p}: {area or f"Activity {p + 1}"}"\n'
+                    'FORMAT FOR THIS SECTION: Write a complete Morena Pipelines Section 1 '
+                    'narrative for this additional activity, opening with "Start Time: <time>" '
+                    'and "End Time: <time>" when shift times are provided, followed by '
+                    'labelled sub-topics in complete third-person past-tense sentences.\n'
+                    + '\n'.join(extra_lines)
+                )
+                if _clean_val(answers.get(f'__more__:additional_activity:{p}', '')).lower() != 'yes':
+                    break
 
     if not blocks:
         return ComposeResponse(sections=[], status='empty', reason='Nothing was answered.')
@@ -603,13 +785,18 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     }
 
     out = []
-    for section in wanted:
+    for item in wanted:
+        sec_id = item['id']
         # A section the model dropped falls back to its empty statement rather
         # than vanishing from the report.
-        body = by_id.get(section.id) or section.empty_statement
+        body = by_id.get(sec_id) or item['empty_statement']
+        if item.get('has_times') and body and body != item['empty_statement']:
+            body = with_opening_times(item['start_time'], item['stop_time'], body)
+        if not body and not item['empty_statement']:
+            continue
         out.append(ComposedSection(
-            id=section.id, number=section.number, title=section.title, body=body,
+            id=sec_id, number=item['number'], title=item['title'], body=body,
         ))
 
-    logger.info(f'[compose] Wrote {len(out)} sections for {request.report_date}')
+    logger.info(f'[compose] Wrote {len(out)} sections for {request.report_date} (profile={profile.key})')
     return ComposeResponse(sections=out)

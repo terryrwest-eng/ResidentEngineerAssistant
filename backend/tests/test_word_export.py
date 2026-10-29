@@ -286,5 +286,121 @@ check("Morena Pipelines includes General Notes section at top when general.notes
       str(mp_notes_preview["sections"][0]))
 
 
+# ---------------------------------------------------------------------------
+# 10. Guided Interview compose_report: Morena Conveyance North & Morena Pipelines
+# ---------------------------------------------------------------------------
+import asyncio
+import json
+from unittest.mock import patch
+from app.routers.interview import ComposeRequest, compose_report
+
+
+class _FakeGeminiResp:
+    def __init__(self, payload: dict):
+        self.text = json.dumps(payload)
+        self.candidates = []
+
+
+with patch("app.routers.interview._get_gemini_client", return_value=(object(), "fake-model")), \
+     patch("app.routers.interview._gemini_call_with_retry") as mock_gemini:
+
+    mock_gemini.return_value = _FakeGeminiResp({
+        "sections": [
+            {
+                "id": "location:1",
+                "body": (
+                    "• Northbound lane 2 on Morena Blvd was closed with cones and arrow boards.\n"
+                    "• The crew excavated the trench from Sta 10+00 to Sta 10+50 using an excavator.\n"
+                    "• Traffic control was picked up at 3:00 PM."
+                ),
+            },
+            {
+                "id": "location:2",
+                "body": (
+                    "• Performed tie-in preparation at Genesee Ave.\n"
+                    "• Steel plates were placed over the excavation at the end of the shift."
+                ),
+            },
+            {
+                "id": "general_notes",
+                "body": "City water inspector visited the site at 10:00 AM.",
+            },
+        ]
+    })
+
+    morena_req = ComposeRequest(
+        profile="morena",
+        report_date="2026-10-28",
+        answers={
+            "locations": "Morena Blvd & Buenos Ave\nGenesee Ave Tie-In",
+            "start_time": "7:00 AM",
+            "stop_time": "3:30 PM",
+            "stations": "Sta 10+00 to Sta 10+50",
+            "traffic_control": "yes",
+            "traffic_control_detail": "northbound lane 2 closed on morena blvd",
+            "summary": "dug trench 10+00 to 10+50",
+            "traffic_control_removed": "picked up at 3pm",
+            "start_time#2": "8:00 AM",
+            "stop_time#2": "2:30 PM",
+            "summary#2": "prepped tie in and plated trench",
+            "visitors": "city water inspector here at 10am",
+        },
+    )
+    morena_composed = asyncio.run(compose_report(morena_req, _user={"id": "u1"}))
+    by_sec_id = {s.id: s for s in morena_composed.sections}
+
+    check("Morena Conveyance North compose returns location:1, location:2, and general_notes",
+          set(by_sec_id.keys()) == {"location:1", "location:2", "general_notes"},
+          str(list(by_sec_id.keys())))
+    check("Morena Conveyance North location:1 opens with Start Time and End Time lines",
+          by_sec_id["location:1"].body.startswith("Start Time: 7:00 AM\nEnd Time: 3:30 PM\n"),
+          repr(by_sec_id["location:1"].body))
+    check("Morena Conveyance North location:2 opens with Start Time and End Time lines",
+          by_sec_id["location:2"].body.startswith("Start Time: 8:00 AM\nEnd Time: 2:30 PM\n"),
+          repr(by_sec_id["location:2"].body))
+    check("Morena Conveyance North general_notes holds composed day_close prose",
+          "City water inspector visited" in by_sec_id["general_notes"].body,
+          repr(by_sec_id["general_notes"].body))
+
+    mock_gemini.return_value = _FakeGeminiResp({
+        "sections": [
+            {
+                "id": "work_summary",
+                "body": "Trench Excavation: Advanced excavation from Sta 143+98 to Sta 142+40.",
+            },
+            {
+                "id": "extra_activity:1",
+                "body": "Vault Formwork: Constructed formwork at the vault at Sta 118+00.",
+            },
+        ]
+    })
+
+    mp_req = ComposeRequest(
+        profile="morena_pipelines",
+        report_date="2026-10-28",
+        answers={
+            "shift_start": "7:00 AM",
+            "shift_end": "3:30 PM",
+            "starting_stations": "Excavation: Sta 143+98",
+            "ending_stations": "Excavation: Sta 142+40",
+            "more_activities": "yes",
+            "extra_activity_area": "Morena Blvd — Vault Formwork",
+            "extra_activity_start": "7:30 AM",
+            "extra_activity_stop": "4:00 PM",
+            "extra_activity_summary": "built formwork at vault sta 118+00",
+        },
+    )
+    mp_composed = asyncio.run(compose_report(mp_req, _user={"id": "u1"}))
+    mp_by_id = {s.id: s for s in mp_composed.sections}
+
+    check("Morena Pipelines compose includes Start/End Time on work_summary",
+          mp_by_id["work_summary"].body.startswith("Start Time: 7:00 AM\nEnd Time: 3:30 PM\n"),
+          repr(mp_by_id["work_summary"].body))
+    check("Morena Pipelines compose includes extra_activity:1 with Start/End Time",
+          "extra_activity:1" in mp_by_id
+          and mp_by_id["extra_activity:1"].body.startswith("Start Time: 7:30 AM\nEnd Time: 4:00 PM\n"),
+          repr(mp_by_id.get("extra_activity:1")))
+
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -7,6 +7,7 @@
  */
 
 import type { Report, Activity } from '@/types';
+import { cleanSummaryBullets } from '@/lib/formatters';
 import { getResourceMatcher } from '@/lib/resourceMatcher';
 
 /**
@@ -305,14 +306,21 @@ export function materializeActivities(
     const lunch = at('lunch_deducted').toLowerCase() === 'yes';
     const hours = shiftHours(start, stop, lunch);
 
-    // The summary carries the work, then the things asked about separately, so
-    // nothing answered is left sitting only in the interview record.
+    // Composed prose from /api/interview/compose wins over raw interview answers.
+    // Fallback preserves start/end times and all answered fields if compose has
+    // not run yet.
+    const composedLoc = (composed?.find((s) => s.id === `location:${pass}`)?.body || '').trim();
     const lines = [
-      ...toBullets(at('summary')),
+      ...(start ? [`Start Time: ${start}`] : []),
+      ...(stop ? [`End Time: ${stop}`] : []),
       ...(at('traffic_control_detail')
         ? toBullets(`Traffic control: ${at('traffic_control_detail')}`) : []),
+      ...toBullets(at('summary')),
       ...toBullets(at('anything_missed')),
+      ...(at('traffic_control_removed')
+        ? toBullets(`Traffic control end of shift: ${at('traffic_control_removed')}`) : []),
     ];
+    const summaryText = composedLoc ? cleanSummaryBullets(composedLoc) : lines.join('\n');
 
     // Match by pass first, then by work area. The second case is the one that
     // matters on a report that already had activities: naming a location the
@@ -337,7 +345,7 @@ export function materializeActivities(
       id: prior?.id || newId(),
       work_area: location || prior?.work_area || '',
       stations: keep(at('stations'), prior?.stations || '', emptyStr),
-      summary: keep(lines.join('\n'), prior?.summary || '', emptyStr),
+      summary: keep(summaryText, prior?.summary || '', emptyStr),
       manpower: keep(withPmwebCodes((rows[passKey('crew', pass)] || []).map((r) => ({
         id: newId(),
         trade: String(r.trade ?? r.name ?? '').trim(),
@@ -434,15 +442,16 @@ function buildDayActivity(
   // day written up. Falling back to the labelled answers means a failed compose
   // still produces something readable rather than nothing.
   const lines: string[] = [];
-  if (composed?.length) {
-    for (const section of composed) {
+  const numberedComposed = (composed || []).filter((s) => s.number > 0);
+  if (numberedComposed.length) {
+    for (const section of numberedComposed) {
       lines.push(`${section.number}. ${section.title}`);
       lines.push(...section.body.split('\n').map((l) => l.replace(/\s+$/, '')).filter(Boolean));
       lines.push('');
     }
   }
 
-  for (const section of composed?.length ? [] : sections) {
+  for (const section of numberedComposed.length ? [] : sections) {
     // Crew and equipment become ROWS, not prose — they belong in the resource
     // tables where they can be counted, not buried in a summary.
     if (!section.number || section.id === 'labor' || section.id === 'equipment') continue;
@@ -571,14 +580,19 @@ function buildDayActivity(
       const priorExtra = existing.find(
         (a) => (a as unknown as { interview_pass?: number }).interview_pass === passNum,
       );
+      const composedExtra = (composed?.find((s) => s.id === `extra_activity:${p}`)?.body || '').trim();
       const extraLines: string[] = [];
-      if (at(passKey('extra_activity_start', p))) {
-        extraLines.push(`Start Time: ${at(passKey('extra_activity_start', p))}`);
+      if (composedExtra) {
+        extraLines.push(...composedExtra.split('\n').map((l) => l.replace(/\s+$/, '')).filter(Boolean));
+      } else {
+        if (at(passKey('extra_activity_start', p))) {
+          extraLines.push(`Start Time: ${at(passKey('extra_activity_start', p))}`);
+        }
+        if (at(passKey('extra_activity_stop', p))) {
+          extraLines.push(`End Time: ${at(passKey('extra_activity_stop', p))}`);
+        }
+        extraLines.push(...toBullets(extraWork));
       }
-      if (at(passKey('extra_activity_stop', p))) {
-        extraLines.push(`End Time: ${at(passKey('extra_activity_stop', p))}`);
-      }
-      extraLines.push(...toBullets(extraWork));
 
       extraActivities.push({
         id: priorExtra?.id || newId(),

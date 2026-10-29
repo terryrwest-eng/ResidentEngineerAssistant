@@ -44,7 +44,10 @@ interface GuidedInterviewProps {
   onExit: () => void;
   /** May be slow — the report is written from the answers here. Awaited so
    *  the button can show it is working instead of looking dead. */
-  onComplete: () => void | Promise<void>;
+  onComplete: (
+    finalAnswers?: Record<string, string>,
+    finalRows?: Record<string, Record<string, unknown>[]>,
+  ) => void | Promise<void>;
 }
 
 interface AskedItem {
@@ -379,8 +382,11 @@ export function GuidedInterview({
    */
   const ROW_KINDS = useMemo(() => new Set(['crew', 'equipment', 'list']), []);
 
-  const commit = useCallback(async (value: string) => {
-    if (!current) return;
+  const commit = useCallback(async (value: string): Promise<{
+    nextAnswers: Record<string, string>;
+    nextRows: Record<string, Record<string, unknown>[]>;
+  }> => {
+    if (!current) return { nextAnswers: answers, nextRows: rows };
     const existing = rows[current.key] || [];
 
     // A spoken answer is transcribed AND parsed by the server, which is where
@@ -389,8 +395,10 @@ export function GuidedInterview({
     // typed rather than spoken produced an empty manpower table in the
     // finished report. The text was saved; it just never became rows.
     if (!ROW_KINDS.has(current.question.kind) || !value.trim()) {
+      const nextAnswers = { ...answers, [current.key]: value };
+      const nextRows = existing.length ? { ...rows, [current.key]: existing } : rows;
       onAnswer(current.key, value, existing);
-      return;
+      return { nextAnswers, nextRows };
     }
 
     setIsThinking(true);
@@ -403,21 +411,35 @@ export function GuidedInterview({
         text: value,
         report_date: reportDate,
       });
-      onAnswer(current.key, result.value || value, result.rows || []);
+      const resolvedValue = result.value || value;
+      const resolvedRows = result.rows || [];
+      const nextAnswers = { ...answers, [current.key]: resolvedValue };
+      const nextRows = resolvedRows.length ? { ...rows, [current.key]: resolvedRows } : rows;
+      onAnswer(current.key, resolvedValue, resolvedRows);
+      return { nextAnswers, nextRows };
     } catch (err) {
       // Never lose the answer over a failed parse. Keep the text, keep going,
       // and say so - an empty table in the finished report is the thing this
       // whole path exists to prevent, and silence is how it happened before.
       console.error('[Interview] Could not parse a typed answer:', err);
+      const nextAnswers = { ...answers, [current.key]: value };
+      const nextRows = existing.length ? { ...rows, [current.key]: existing } : rows;
       onAnswer(current.key, value, existing);
       setError('Saved what you typed, but could not read it into rows — check the table in the editor.');
+      return { nextAnswers, nextRows };
     } finally {
       setIsThinking(false);
     }
-  }, [current, onAnswer, rows, ROW_KINDS, profileKey, reportDate]);
+  }, [current, answers, onAnswer, rows, ROW_KINDS, profileKey, reportDate]);
 
   const goNext = useCallback(async () => {
-    if (draft !== (answers[current?.key ?? ''] || '')) await commit(draft);
+    let finalAnswers = answers;
+    let finalRows = rows;
+    if (draft !== (answers[current?.key ?? ''] || '')) {
+      const committed = await commit(draft);
+      finalAnswers = committed.nextAnswers;
+      finalRows = committed.nextRows;
+    }
     if (index + 1 < asked.length) { setIndex(index + 1); return; }
 
     // Last question: write the report. Awaited and flagged, so the button
@@ -425,7 +447,7 @@ export function GuidedInterview({
     setFinishing(true);
     setError(null);
     try {
-      await onComplete();
+      await onComplete(finalAnswers, finalRows);
     } catch (err) {
       console.error('[Interview] Finishing failed:', err);
       setError(
@@ -435,7 +457,7 @@ export function GuidedInterview({
     } finally {
       setFinishing(false);
     }
-  }, [draft, answers, current, commit, index, asked.length, onComplete]);
+  }, [draft, answers, rows, current, commit, index, asked.length, onComplete]);
 
   if (loadError) {
     return (
@@ -456,7 +478,7 @@ export function GuidedInterview({
       <div style={box}>
         <Check size={20} style={{ color: 'var(--color-success)' }} />
         <p style={{ margin: '8px 0' }}>All questions answered.</p>
-        <button className="btn btn-primary" onClick={onComplete}>Go to the report</button>
+        <button className="btn btn-primary" onClick={() => void onComplete(answers, rows)}>Go to the report</button>
       </div>
     );
   }

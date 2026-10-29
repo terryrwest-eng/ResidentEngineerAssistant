@@ -351,10 +351,44 @@ export function NewReportPage() {
             profileKey || getProfileKey(report), nextAnswers, nextRows, false,
           ));
         }}
-        onExit={() => setFlowStage('editor')}
-        onComplete={async () => {
+        onExit={async () => {
+          const hasAnyAnswer = Object.values(answers).some((v) => (v || '').trim());
+          if (hasAnyAnswer) {
+            const key = profileKey || getProfileKey(report);
+            let composed: { id: string; number: number; title: string; body: string }[] | undefined;
+            try {
+              const written = await interviewApi.compose({
+                profile: key,
+                answers,
+                report_date: report?.general?.report_date || '',
+              });
+              if (written.sections?.length) {
+                composed = written.sections;
+                setInterview(buildInterviewState(key, answers, answerRows, false, composed));
+                const generalNotes = composed.find((s) => s.id === 'general_notes')?.body?.trim();
+                if (generalNotes) {
+                  updateGeneral({ notes: generalNotes });
+                }
+              }
+            } catch (err) {
+              console.warn('[NewReportPage] Compose on exit skipped:', err);
+            }
+            try {
+              const profile = await interviewApi.profile(key);
+              replaceActivities(materializeActivities(
+                profile.sections, answers, answerRows, report?.activities || [], composed,
+              ));
+            } catch (err) {
+              console.error('[NewReportPage] Could not build activities on exit:', err);
+            }
+          }
+          setFlowStage('editor');
+        }}
+        onComplete={async (finalAnswers, finalRows) => {
+          const resolvedAnswers = finalAnswers || answers;
+          const resolvedRows = finalRows || answerRows;
           const key = profileKey || getProfileKey(report);
-          setInterview(buildInterviewState(key, answers, answerRows, true));
+          setInterview(buildInterviewState(key, resolvedAnswers, resolvedRows, true));
 
           // Write the report from the answers. Without this the activity is the
           // answers echoed back with a label in front of each one - a
@@ -363,12 +397,28 @@ export function NewReportPage() {
           try {
             const written = await interviewApi.compose({
               profile: key,
-              answers,
+              answers: resolvedAnswers,
               report_date: report?.general?.report_date || '',
             });
             if (written.sections?.length) {
               composed = written.sections;
-              setInterview(buildInterviewState(key, answers, answerRows, true, composed));
+              setInterview(buildInterviewState(key, resolvedAnswers, resolvedRows, true, composed));
+              const generalNotes = composed.find((s) => s.id === 'general_notes')?.body?.trim();
+              const firstStart = (resolvedAnswers.start_time || resolvedAnswers.shift_start || '').trim();
+              const firstStop = (resolvedAnswers.stop_time || resolvedAnswers.shift_end || '').trim();
+              const genUpdates: Record<string, unknown> = {};
+              if (generalNotes) {
+                genUpdates.notes = generalNotes;
+              }
+              if (firstStart && !report?.general?.start_time) {
+                genUpdates.start_time = firstStart;
+              }
+              if (firstStop && !report?.general?.end_time) {
+                genUpdates.end_time = firstStop;
+              }
+              if (Object.keys(genUpdates).length > 0) {
+                updateGeneral(genUpdates);
+              }
             }
           } catch (err) {
             // Rethrown so the Finish button can say it failed. The answers are
@@ -384,7 +434,7 @@ export function NewReportPage() {
           try {
             const profile = await interviewApi.profile(key);
             replaceActivities(materializeActivities(
-              profile.sections, answers, answerRows, report?.activities || [], composed,
+              profile.sections, resolvedAnswers, resolvedRows, report?.activities || [], composed,
             ));
           } catch (err) {
             // The answers are already saved on the report, so nothing is lost —
