@@ -34,7 +34,8 @@ from typing import Any
 
 from app.routers.interview import HOUSE_STYLE
 from app.services.day_record import DayRecord
-from app.services.summary_format import with_opening_times
+from app.services.narrative_model import polish_inspector_prose_if_enabled
+from app.services.summary_format import clean_inspector_prose, with_opening_times
 
 logger = logging.getLogger(__name__)
 
@@ -248,10 +249,14 @@ RETURN JSON EXACTLY:
     written: dict[str, str] = {}
     for item in (out.get('locations') or []):
         label = str(item.get('location', '')).strip()
-        text = str(item.get('narrative', '')).strip()
+        text = polish_inspector_prose_if_enabled(
+            str(item.get('narrative', '')).strip(), f'composer.{label}', mode='prose'
+        )
         if label in labels and text:
             written[label] = text
-    written['__day_notes__'] = str(out.get('day_notes', '') or '').strip()
+    written['__day_notes__'] = polish_inspector_prose_if_enabled(
+        str(out.get('day_notes', '') or '').strip(), 'composer.day_notes', mode='prose'
+    )
     return written
 
 

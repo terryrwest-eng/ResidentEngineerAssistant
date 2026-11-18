@@ -65,3 +65,10 @@ desktop/web/
 
 # Installer output — 14 MB build artifact, rebuilt by ISCC from the .iss
 desktop/installer/*.exe
+
+# Local fine-tuning dataset (contains MCN daily report text) & trained weights
+training_data/*.jsonl
+training_data/dataset_manifest.json
+training_data/checkpoints/
+training_data/terry-inspector-lora/
+training_data/terry-inspector-gguf/

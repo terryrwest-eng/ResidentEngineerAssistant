@@ -30,9 +30,15 @@ from app.core.config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_THINKING_L
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user
+from app.services.narrative_model import (
+    call_narrative_endpoint,
+    polish_inspector_prose_if_enabled,
+)
 from app.services.summary_format import (
     DICTATION_SHAPE_RULES,
+    INSPECTOR_VOICE_RULES,
     REWRITE_SHAPE_RULES,
+    clean_inspector_prose,
     shift_times,
     with_opening_times,
 )
@@ -187,18 +193,18 @@ FIELD RULES:
    - Do NOT mark overtime pay as extra work scope — they are unrelated
 
 STYLE — MANDATORY:
-1. Use DIRECT field language. "The crew excavated from Sta 10+00 to 12+50" NOT "The construction workforce proceeded with excavation activities."
-2. NO adjectives YOU added: "efficiently," "successfully," "smoothly" — DELETE. But NEVER delete a conformance statement the speaker made ("per plan," "per spec," "in accordance with the approved submittal"): the author is the Resident Engineer and that verdict is the point of the report. Keep those verbatim. Only "properly"/"correctly" standing alone, with no plan or spec named, should go.
-3. NO corporate vocabulary: "utilized" → "used," "commenced" → "started," "implemented" → "installed."
-4. STATION FORMAT: Always use "Sta XX+XX" (e.g. "Sta 10+50 to 12+00").
-5. FIRST PERSON TO THIRD PERSON — ONLY when the sentence uses a first-person pronoun (we/I/our/us/my). Use the real subject (company, trade) when known. ALWAYS use "The crew" instead of "crews" when referring to a group of workers. Do NOT prepend "The crew" to bullets already in third person.
-6. Fix spelling, grammar, punctuation. Do NOT change technical terms or proper nouns.
-7. Use "• " (bullet character) for ALL bullets in summary_html. NEVER use * or -. Do NOT use HTML tags (<ul>, <li>, <p>, etc.). Use PLAIN TEXT.
+1. Use DIRECT field language. "The crew excavated from Sta 10+00 to 12+50."
+2. Keep every conformance statement the speaker made verbatim — such as "per plan", "per spec", "in accordance with the approved submittal", "passing at 96%", "tested good": the author is the Resident Engineer and that verdict is the point of the report. Leave out unrequested praise or filler adjectives.
+3. STATION FORMAT: Always use "Sta XX+XX" such as "Sta 10+50 to 12+00".
+4. AUTHOR vs CREW PERSPECTIVE: When the Resident Engineer says "I" about their own inspection, site walks, meetings, or directions to the contractor, keep "I" or use a direct active past-tense verb such as "Visited...", "Met with...", "Reminded the contractor...". When a note uses "we" or "our" for physical construction work by a crew, name the actual company or trade when known, or "The crew" when no company is named. Do NOT prepend "The crew" to bullets that already have a subject or start with an action verb.
+5. Fix spelling, grammar, punctuation. Do NOT change technical terms or proper nouns.
+6. Write zero parentheses anywhere in summary_html. Use plain digits for counts and plain commas for clauses.
+7. Use "• " for ALL bullets in summary_html. Use PLAIN TEXT with no HTML tags.
 8. Use periods between thoughts, NOT semicolons.
-9. Everything in past tense. "Placed concrete" NOT "Performing concrete work."
-10. DO NOT fabricate or guess content. Only extract what is explicitly in the document.
-11. Output ONLY the JSON. No commentary, no "Here is your report."
-"""
+9. Everything in past tense.
+10. Only extract what is explicitly in the document.
+11. Output ONLY the JSON. No commentary.
+""" + "\n" + INSPECTOR_VOICE_RULES
 
 NOTE_SCAN_PROMPT = f"""You are an expert construction field assistant helping to digitize handwritten notes.
 
@@ -419,6 +425,7 @@ def _clean_summary_bullets(text: str) -> str:
     t = re.sub(r"<[^>]+>", "", t)
     # Decode common HTML entities
     t = t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replace("&quot;", '"')
+    t = clean_inspector_prose(t, "clean_summary_bullets")
 
     # Process lines: trim each line and ensure bullet format
     raw_lines = [line.strip() for line in t.split("\n")]
@@ -711,15 +718,20 @@ def _other_day_context(text, reference_date='', exclude_report_id=''):
     if not blocks:
         if lookup_failed:
             return (
-                '\n\nOTHER DAYS THE SPEAKER MENTIONED: could not read the report for '
+                '\n\nOTHER DAYS THE SPEAKER MENTIONED: database lookup failed for '
                 + ', '.join(dates)
-                + '. Tell the user the lookup failed and to try again. Do NOT say '
-                'the day has no report, and do NOT invent what was on it.\n'
+                + '. Only if the speaker explicitly asked you to copy crew or equipment '
+                'from that date in a chat reply, tell them in your chat reply that the '
+                'lookup failed. NEVER mention missing or unreadable reports inside '
+                'general_notes, summary, or summary_html.\n'
             )
         return (
-            '\n\nOTHER DAYS THE SPEAKER MENTIONED: no report exists for '
+            '\n\nOTHER DAYS THE SPEAKER MENTIONED: no saved report in the database for '
             + ', '.join(dates)
-            + '. Say so plainly. Do NOT invent what was on it.\n'
+            + '. Only if the speaker explicitly asked you to copy crew or equipment '
+            'from that date in a chat reply, tell them in your chat reply. NEVER write '
+            'any sentence about a missing report into general_notes, summary, or '
+            'summary_html, and do NOT invent rows from that date.\n'
         )
 
     return (
@@ -819,6 +831,10 @@ async def scan_notes(
             for fname, part in file_parts:
                 logger.info(f'[scan-notes] split: {fname}')
                 activities.extend(_run_gemini([part]))
+
+        for act in activities:
+            if isinstance(act, dict) and act.get('summary_html'):
+                act['summary_html'] = clean_inspector_prose(str(act['summary_html']), 'scan-notes')
 
         logger.info(f'[scan-notes] total activities: {len(activities)}')
         return ScanResponse(activities=activities)
@@ -1048,7 +1064,9 @@ Return JSON:
                 act['summary_html'] = with_opening_times(
                     str(act.get('start_time') or ''),
                     str(act.get('end_time') or ''),
-                    str(act.get('summary_html') or ''),
+                    polish_inspector_prose_if_enabled(
+                        str(act.get('summary_html') or ''), 'transcribe', mode='bullets'
+                    ),
                 )
 
         logger.info(f'[transcribe] Pass 2 result: {len(activities)} activities extracted')
@@ -1068,19 +1086,19 @@ Return JSON:
 
 # ============================================
 # CONSTRUCTION VOCABULARY (shared by smart dictation + AI assistant)
-# Ported verbatim from legacy app — field-tuned over many sessions.
+# Zero parenthetical definitions — prevents priming the model to output "( )".
 # ============================================
 
 CONSTRUCTION_VOCAB = """
 PREFERRED TERMINOLOGY:
 - Excavation, Backfill, Embedment, Shoring, Trench Box
 - Restrained Joint, Thrust Block, Line and Grade, Invert Elevation
-- CLSM (Control Low Strength Material), Slurry, Paving
-- Dewatering, Sump Pump, BMPs (Best Management Practices)
+- CLSM, Slurry, Paving
+- Dewatering, Sump Pump, BMPs, SWPPP
 - High Line, Lateral, Tie-in, Coupling
-- RFI (Request for Information), Submittal, Non-Compliance
+- RFI, Submittal, Non-Compliance
 
-Pipe types: RCP, HDPE, PVC, DIP (ductile iron), VCP, CMP, CIPP, steel casing
+Pipe types: RCP, HDPE, PVC, DIP, ductile iron, VCP, CMP, CIPP, steel casing
 Activities: trenching, pipe laying, pipe pull, bell-and-spigot, fusion welding, tie-in,
   tap, tapping sleeve, air test, hydrostatic test, CCTV inspection, manhole installation,
   vault construction, shoring, dewatering, backfill, compaction, subgrade prep, paving,
@@ -1098,34 +1116,32 @@ TRADE ABBREVIATIONS:
 
 # ============================================
 # DICTATION SYSTEM PROMPT
-# Ported verbatim — DO NOT simplify.
-# WHY: This prompt was iterated over field sessions to produce authentic
-#      construction-industry prose without AI filler or fabricated details.
 # ============================================
 
-DICTATION_SYSTEM_PROMPT = """You are an expert Pipeline Construction Inspector writing for a formal Daily Inspection Report.
+DICTATION_SYSTEM_PROMPT = """You are a 20-year Pipeline Construction Resident Engineer and Field Inspector transcribing field notes for your daily report.
 
-TASK: You will receive an AUDIO RECORDING of a field inspector describing work for a daily report.
+TASK: You will receive an AUDIO RECORDING of a Resident Engineer / field inspector describing work for a daily report.
 
-YOUR JOB IS SIMPLE — TRANSCRIBE AND POLISH. That's it.
+YOUR JOB IS SIMPLE — TRANSCRIBE AND CLEAN UP GRAMMAR IN PLAIN FIELD ENGLISH.
 
 WHAT YOU MUST DO:
-1. Transcribe EVERYTHING the user says — every detail, every piece of information.
-2. Clean up sentence structure and grammar so it reads professionally.
-3. Apply proper punctuation (periods, commas, semicolons).
-4. Use correct pipeline/construction industry terminology where appropriate.
+1. Transcribe EVERYTHING the speaker says — every detail, every piece of information.
+2. Clean up speech-to-text stumbles and grammar while keeping direct, plain field inspector wording.
+3. Apply plain punctuation — periods, commas, and colons only. Write zero parentheses anywhere in WORK DESCRIPTION.
+4. Use correct pipeline and construction industry terminology where spoken.
 5. Rearrange words only when needed for clarity — do NOT change the meaning.
+6. When the speaker says "I" about their own inspection, site walks, meetings, or directions to a contractor, keep "I" or use a direct active past-tense verb. Never refer to the speaker in the third person.
 
 OUTPUT FORMAT — ORGANIZE INTO SECTIONS:
 Separate the transcribed content into three labeled sections. Only include a section if the user mentioned relevant details.
-IMPORTANT: Use the ACTUAL bullet character "•" for ALL bullet points. NEVER use asterisks (*) or dashes (-) as bullet markers.
+IMPORTANT: Use the ACTUAL bullet character "•" for ALL bullet points. NEVER use asterisks or dashes as bullet markers.
 
 WORK DESCRIPTION:
 STATIONS: [Station range if mentioned, e.g. "Sta 100+00 to 101+50" — put on its own line]
 • [Bullet points describing traffic control, work performed, observations, progress, etc.]
 
 MANPOWER:
-• [Trade/Role] - [Name if mentioned] - [Quantity] - [Hours] - [Company if mentioned] - [Start Time if mentioned] - [Stop Time if mentioned] - [Pay rate if mentioned (ST/OT/DT)] - [Flags: Extra Work / 3rd Party / Consultant if mentioned]
+• [Trade/Role] - [Name if mentioned] - [Quantity] - [Hours] - [Company if mentioned] - [Start Time if mentioned] - [Stop Time if mentioned] - [Pay rate if mentioned ST/OT/DT] - [Flags: Extra Work / 3rd Party / Consultant if mentioned]
 • Example: Laborer - 4 - 8 hrs - OHL - 7:00 AM - 3:30 PM - Straight Time
 • Example: Operator - Joe - 1 - 10 hrs - Kiewit - 6:00 AM - 4:30 PM - Double Time - Extra Work
 • Example: Survey Crew - 2 - 8 hrs - Psomas - 7:00 AM - 3:30 PM - 3rd Party
@@ -1137,7 +1153,7 @@ EQUIPMENT:
 • Example: Vac Truck - Badger - 1 - 8 hrs - Clean Earth - 7:00 AM - 3:30 PM - 3rd Party, Rental
 
 CRITICAL — WHAT YOU MUST NOT DO:
-- DO NOT summarize or compress. If the user spoke 8 sentences of detail, output 8 sentences (or more) of detail.
+- DO NOT summarize or compress. If the user spoke 8 sentences of detail, output 8 sentences or more of detail.
 - DO NOT remove context. If they described traffic control setup, manpower counts, equipment used, work performed — ALL of it must appear in your output.
 - DO NOT add context, facts, or details the user did not say.
 - DO NOT collapse multiple distinct points into a single short sentence.
@@ -1146,13 +1162,13 @@ CRITICAL — WHAT YOU MUST NOT DO:
 - DO NOT mix manpower/equipment into the work description. They go in their own sections.
 
 WHAT YOU ARE ALLOWED TO DO:
-- You CAN rearrange text and add connecting words to make the spoken notes make sense and read properly.
+- You CAN rearrange text and add simple connecting words so spoken notes read cleanly as plain field sentences.
 
 TERMINOLOGY PREFERENCES:
 - excavation, trench excavation, shoring installed/set, trench box, bedding placed, embedment placed
-- pipe was set to line and grade, joint alignment verified, restrained joint, thrust block placed
+- pipe set to line and grade, joint alignment verified, restrained joint, thrust block placed
 - backfill placed in lifts and compacted, compaction verified, spoils hauled/off-hauled
-- dewatering performed, sump pump utilized, trench safety per Cal/OSHA
+- dewatering performed, sump pump used, trench safety per Cal/OSHA
 - stationing format: Sta 100+00 to 101+50
 
 PAY RATE vs SCOPE — IMPORTANT DISTINCTION:
@@ -1280,19 +1296,21 @@ async def transcribe_smart(request: SmartDictationRequest):
             '6. Keep ALL station numbers, measurements, quantities, pipe sizes, and specific details.\n'
             '7. Do NOT use HTML tags (<p>, <ul>, <li>, etc.). Use PLAIN TEXT with \u2022 bullet characters separated by newlines.\n'
             '8. COMPANY NAMES ARE CRITICAL: When the speaker mentions a company, contractor, or subcontractor name, ALWAYS include it in the "company" field of EVERY manpower and equipment row for that company. Never leave company blank if it was spoken.\n'
-            '9. TIME FORMAT: Use standard 12-hour AM/PM format (e.g., "7:00 AM", "3:30 PM"). NEVER use military/24-hour time (e.g., NOT "15:00" or "0700").\n\n'
+            '9. TIME FORMAT: Use standard 12-hour AM/PM format such as "7:00 AM" and "3:30 PM". Never use 24-hour time.\n\n'
+            + INSPECTOR_VOICE_RULES + '\n\n'
             + DICTATION_SHAPE_RULES + '\n'
+            + _vocabulary_block() + '\n'
             + 'TRANSCRIPTION TO PARSE:\n'
             '---\n'
             + raw_transcription + '\n'
             '---\n\n'
             'Return a JSON object with exactly these fields:\n'
-            '- "work_area": string (Location - Company - Work Type, e.g. "Station 10+50 - OHL - Pipe Installation"). Use: "' + (work_area or 'Not specified') + '"\n'
-            '- "start_time": string (AM/PM - the shift at this location, only if it was spoken; otherwise empty)\n'
-            '- "end_time": string (AM/PM - same rule as start_time)\n'
-            '- "summary_html": string (PLAIN TEXT, not HTML. Each detail on its own line starting with \u2022 character. Example: "\u2022 Crew excavated from Sta 10+00 to 12+50\\n\u2022 Installed 200 LF of 12-inch DIP")\n'
-            '- "manpower": array of objects, each with: trade (string), name (string), company (string — MUST include if speaker mentioned it), qty (number), hours (number), start_time (string, AM/PM format), stop_time (string, AM/PM format), is_extra_work (boolean), is_3rd_party (boolean), is_consultant (boolean)\n'
-            '- "equipment": array of objects, each with: name (string, specific unit), description (string, equipment type), company (string — MUST include if speaker mentioned it), qty (number), hours (number), start_time (string, AM/PM format), stop_time (string, AM/PM format), is_extra_work (boolean), is_3rd_party (boolean), is_rental (boolean)\n'
+            '- "work_area": string — Location - Company - Work Type, such as "Station 10+50 - OHL - Pipe Installation". Use: "' + (work_area or 'Not specified') + '"\n'
+            '- "start_time": string — AM/PM shift start at this location only if spoken; otherwise empty\n'
+            '- "end_time": string — AM/PM shift end at this location only if spoken; otherwise empty\n'
+            '- "summary_html": string — PLAIN TEXT with zero HTML tags and zero parentheses. Each detail on its own line starting with \u2022 character. Example: "\u2022 OHLA excavated from Sta 10+00 to 12+50.\\n\u2022 Installed 200 LF of 12-inch DIP."\n'
+            '- "manpower": array of objects, each with: trade, name, company, qty, hours, start_time, stop_time, is_extra_work, is_3rd_party, is_consultant\n'
+            '- "equipment": array of objects, each with: name, description, company, qty, hours, start_time, stop_time, is_extra_work, is_3rd_party, is_rental\n'
         )
 
         # "Same crew as 8/14" spoken into an activity resolves to that day's
@@ -1321,7 +1339,9 @@ async def transcribe_smart(request: SmartDictationRequest):
             data['summary_html'] = with_opening_times(
                 str(data.get('start_time') or ''),
                 str(data.get('end_time') or ''),
-                str(data.get('summary_html') or ''),
+                polish_inspector_prose_if_enabled(
+                    str(data.get('summary_html') or ''), 'transcribe-smart', mode='bullets'
+                ),
             )
         logger.info(f'[transcribe-smart] Pass 2 result: '
                     f'summary={len(data.get("summary_html", ""))} chars, '
@@ -1485,80 +1505,75 @@ async def generate_report(request: GenerateReportRequest):
     AI Assistant Step 2 — Generate polished report text from rough notes + answers.
     Does NOT fabricate details. Only structures what the user explicitly provided.
     """
-    client, model_name = _get_gemini_client()
-
     try:
-        from google.genai import types as genai_types
-
         answers_text = '\n'.join(f'- {k}: {v}' for k, v in (request.answers or {}).items() if v.strip())
 
-        system_prompt = """You are a 20+ year pipeline and water conveyance inspector with hands-on field experience. You are also a professional at writing construction daily reports for Resident Engineers.
+        system_prompt = (
+            """You are a 20+ year pipeline and water conveyance Resident Engineer and Field Inspector writing your own daily construction report.
 
-Your task: take the inspector's rough notes (some produced with voice-to-text, so errors may be present) and create a polished, professional report entry.
+Your task: take rough field notes and answers to clarifying questions and write a direct, factual field report entry in your own Resident Engineer voice.
 
 FORMAT REQUIREMENTS:
-- Use bullet points (• character)
-- Be concise but complete without adding any assumed information.
-- Include quantities, measurements, station numbers, and reference numbers you receive. Do NOT add anything not provided.
-- Use proper construction terminology
-- Write in past tense
-- Focus on WHAT was accomplished, not WHO or WHEN (those are in separate fields)
-
-STYLE:
-- Professional, neutral tone
-- No subjective opinions or evaluations
-- Factual and precise
-- Include all relevant technical details you were provided
-
-BANNED WORDS AND PHRASES:
-- NEVER use: "to facilitate", "in order to", "for the purpose of", "to ensure"
-- NEVER use: "utilized" (say "used"), "commenced" (say "started"), "implement" (say "did/installed"), "establish" (say "set up")
-- NEVER add filler adjectives: "existing", "current", "designated", "respective", "aforementioned"
-- NEVER say something was done "properly", "correctly", "successfully", or "per specifications" unless quoting the user
-- NEVER spell out acronyms the audience knows — "BMP" NOT "Best Management Practice (BMP)"
-
-OUTPUT FORMAT — CRITICAL:
-- Output ONLY bullet points starting with "• ". Zero conversational text.
-- Do NOT write any introduction, preamble, or closing statement.
+- Output ONLY bullet points starting with "• " — zero conversational text, preamble, or closing statement.
 - Use periods at the end of every bullet.
-- Write entirely in past tense."""
+- Write in active past tense with zero parentheses anywhere in the bullets.
+- Include every quantity, measurement, station number, and reference number you were given. Do NOT add or assume anything not provided.
+- Focus on WHAT occurred on site rather than listing crew counts in the prose, since crew and equipment rows sit in separate tables.
 
-        user_prompt = f"""CREATE A PROFESSIONAL REPORT ENTRY FROM:
+"""
+            + INSPECTOR_VOICE_RULES
+            + _vocabulary_block()
+        )
+
+        user_prompt = f"""WRITE THE DAILY REPORT BULLETS FROM:
 
 ORIGINAL NOTES:
 {request.original_text}
 
 ADDITIONAL ANSWERS:
-{answers_text or '(none)'}
+{answers_text or 'none'}
 
 CONTEXT:
 - Location: {request.work_area or 'Not specified'}
 - Manpower: {request.context.get('manpower_summary', '')}
 - Equipment: {request.context.get('equipment_summary', '')}
 
-Generate the professional report text now (bullet points, past tense, factual):"""
+Write the report bullets now:"""
 
-        # Build contents with conversation history for multi-turn memory
-        contents = [system_prompt]
-        for msg in request.chat_history:
-            role = 'user' if msg.get('role') == 'user' else 'model'
-            contents.append(genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=msg.get('content', ''))]))
-        contents.append(user_prompt)
-
-        response = _gemini_call_with_retry(
-            client,
-            model_name,
-            contents=contents,
-            config=genai_types.GenerateContentConfig(
-                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                max_output_tokens=8192,
-            ),
+        report_text = call_narrative_endpoint(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            where='generate-report',
+            chat_history=request.chat_history,
+            temperature=0.1,
+            max_tokens=8192,
         )
+        if report_text is None:
+            client, model_name = _get_gemini_client()
+            from google.genai import types as genai_types
 
-        report_text = response.text.strip()
+            # Build contents with conversation history for multi-turn memory
+            contents = [system_prompt]
+            for msg in request.chat_history:
+                role = 'user' if msg.get('role') == 'user' else 'model'
+                contents.append(genai_types.Content(role=role, parts=[genai_types.Part.from_text(text=msg.get('content', ''))]))
+            contents.append(user_prompt)
+
+            response = _gemini_call_with_retry(
+                client,
+                model_name,
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+                    max_output_tokens=8192,
+                ),
+            )
+            report_text = response.text.strip()
+
         # Strip any accidental markdown fencing
         report_text = re.sub(r'```[a-z]*\n?', '', report_text).strip()
         report_text = _strip_reasoning(report_text, 'generate-report')
+        report_text = clean_inspector_prose(report_text, 'generate-report')
 
         logger.info(f'[generate-report] Generated {len(report_text)} chars')
         return {'status': 'success', 'report_text': report_text}
@@ -1623,6 +1638,7 @@ OUTPUT SCHEMA:
 
         # Pull in any other day the user named, so "same crew as 8/14" copies
         # the real rows instead of inventing a plausible crew.
+        system_prompt += "\n" + INSPECTOR_VOICE_RULES + _vocabulary_block()
         system_prompt += _other_day_context(request.message)
 
         user_prompt = f"""CURRENT ACTIVITIES JSON:
@@ -1654,14 +1670,22 @@ Return JSON:"""
         )
 
         data = _clean_json(response.text)
+        mod_acts = data.get('modified_activities')
+        if isinstance(mod_acts, list):
+            for act in mod_acts:
+                if isinstance(act, dict):
+                    if act.get('summary'):
+                        act['summary'] = _clean_summary_bullets(str(act['summary']))
+                    if act.get('summary_html'):
+                        act['summary_html'] = _clean_summary_bullets(str(act['summary_html']))
         
         logger.info(f'[activity-manager] replied: {data.get("reply", "")[:50]}...')
-        if data.get("modified_activities") is not None:
+        if mod_acts is not None:
             logger.info(f'[activity-manager] returned modified activities')
             
         return ActivityManagerResponse(
             reply=data.get('reply', ''),
-            modified_activities=data.get('modified_activities')
+            modified_activities=mod_acts
         )
 
     except HTTPException:
@@ -2010,16 +2034,16 @@ RULES FOR CROSS-REPORT MOVES:
 - Provide the "source_activity_id" (from the current report) and the "target_report_id" (from the AVAILABLE REPORTS list below).
 
 FORMATTING RULES:
-- Use "•" (bullet character) for summary bullets. Never asterisks or dashes.
-- Do NOT use HTML tags (<ul>, <li>, <p>, <br>, etc.). Use PLAIN TEXT with "• " (bullet character) on each line.
-- Summary text: professional construction language, past tense, factual, specific.
+- Use "•" for summary bullets. Never asterisks or dashes.
+- Do NOT use HTML tags. Use PLAIN TEXT with "• " on each line and zero parentheses in summary bullets or general notes.
+- Summary text and general notes MUST follow the Resident Engineer / Field Inspector Voice rules below.
 - For sky_conditions, use objects: {"id": "sunny", "label": "Sunny", "emoji": "☀️"}.
   Valid: sunny, partly-cloudy, cloudy, overcast, rainy, windy, foggy, hot, cold.
 - Hours default to 8 if not specified. Start time defaults to "7:00 AM", stop time to "3:30 PM".
 
 PERSONA:
 - Talk like a helpful construction colleague, not a corporate AI.
-- Keep replies short and direct. "Got it, changed company to Picket Fences on Activity 1." not "I have successfully processed your request..."
+- Keep replies short and direct. "Got it, changed company to Picket Fences on Activity 1."
 - If something is unclear, ask. Do NOT guess.
 
 OUTPUT JSON:
@@ -2031,7 +2055,7 @@ OUTPUT JSON:
   "deleted_activity_ids": null or [ "id-1", "id-2" ],
   "cross_report_moves": null or [ { "source_activity_id": "act-1", "target_report_id": "report-id-here" } ]
 }
-"""
+""" + "\n" + INSPECTOR_VOICE_RULES + _vocabulary_block()
 
         # ─── Inject active schedule context if present ───
         if schedule:
@@ -2151,7 +2175,13 @@ Return JSON:"""
                   'fix a specific part, or say "shorten it" if that is what you want.'
             )
 
-        # Sanitize summary bullets to plain text with dot bullets
+        # Sanitize general notes and summary bullets
+        if isinstance(modified_general, dict):
+            for notes_key in ('notes', 'daily_notes'):
+                if modified_general.get(notes_key):
+                    modified_general[notes_key] = clean_inspector_prose(
+                        str(modified_general[notes_key]), 'report-chat.general'
+                    )
         if modified_activities is not None:
             for act in modified_activities:
                 if isinstance(act, dict):
@@ -2212,11 +2242,7 @@ async def email_summary(request: EmailSummaryRequest):
     if not request.activities:
         raise HTTPException(status_code=400, detail='No activities to summarize')
 
-    client, model_name = _get_gemini_client()
-
     try:
-        from google.genai import types as genai_types
-
         # Build the input: each activity's work area + summary
         activity_blocks: list[str] = []
         for i, act in enumerate(request.activities, 1):
@@ -2231,25 +2257,22 @@ async def email_summary(request: EmailSummaryRequest):
 
         combined_input = '\n\n---\n\n'.join(activity_blocks)
 
-        system_prompt = """You are a SENIOR Pipeline Construction Inspector writing a daily progress update email.
+        system_prompt = (
+            """You are a Resident Engineer writing a daily progress update email.
 
-TASK: Take the individual activity summaries below and combine them into ONE cohesive, flowing narrative.
-This will be dropped directly into an email to project stakeholders, superintendents, and management.
+TASK: Take the individual activity summaries below and combine them into ONE direct, flowing field update email body.
 
 CRITICAL RULES:
 1. PRESERVE ALL CONTENT — every detail, measurement, station number, crew count, quantity, and action from every activity MUST appear in the output. Do NOT summarize, shorten, or omit anything.
-2. FLOW AS ONE — the output should read as one continuous update, NOT as separate sections per activity. Transition naturally between locations and topics.
-3. ORGANIZE LOGICALLY — group related work together even if it came from different activities. Flow geographically or chronologically, whichever reads better.
-4. PROFESSIONAL TONE — past tense, third person, factual. Same style as a Resident Engineer's daily report.
-5. NO HEADERS OR BULLETS — write in paragraph form. This is an email body, not a report form.
-6. NO GREETINGS OR SIGN-OFFS — output ONLY the body text. The user will add their own greeting and signature.
-7. NEUTRAL — no opinions, judgments, or evaluations. Just state what happened.
+2. FLOW AS ONE — write in paragraph form with natural transitions between locations. Do NOT use headers or bullet points.
+3. NO GREETINGS OR SIGN-OFFS — output ONLY the body text.
+4. Write zero parentheses anywhere in the email body. Use plain digits and commas.
+5. Do NOT add information that is not in the source summaries.
 
-BANNED:
-- "to facilitate," "in order to," "for the purpose of," "to ensure"
-- "utilized" (say "used"), "commenced" (say "started")
-- Filler adjectives: "existing," "current," "designated," "respective"
-- Do NOT add information that isn't in the source summaries."""
+"""
+            + INSPECTOR_VOICE_RULES
+            + _vocabulary_block()
+        )
 
         project_context = ''
         if request.project_name:
@@ -2265,20 +2288,32 @@ ACTIVITY SUMMARIES TO COMBINE:
 
 Write the combined email body now:"""
 
-        response = _gemini_call_with_retry(
-            client,
-            model_name,
-            contents=[system_prompt, user_prompt],
-            config=genai_types.GenerateContentConfig(
-                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                max_output_tokens=16384,
-            ),
+        text = call_narrative_endpoint(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            where='email-summary',
+            temperature=0.1,
+            max_tokens=16384,
         )
+        if text is None:
+            client, model_name = _get_gemini_client()
+            from google.genai import types as genai_types
 
-        text = response.text.strip()
+            response = _gemini_call_with_retry(
+                client,
+                model_name,
+                contents=[system_prompt, user_prompt],
+                config=genai_types.GenerateContentConfig(
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+                    max_output_tokens=16384,
+                ),
+            )
+            text = response.text.strip()
+
         # Clean any markdown code fences the model might wrap it in
         text = re.sub(r'```[a-z]*\n?', '', text).strip()
         text = _strip_reasoning(text, 'email-summary')
+        text = clean_inspector_prose(text, 'email-summary')
         logger.info(f'[email-summary] Generated {len(text)} chars from {len(activity_blocks)} activities')
         return {'status': 'success', 'text': text}
 
@@ -2353,19 +2388,13 @@ Access:", not one long paragraph holding both. A reader scanning for one of them
 should find it without reading the other.
 
 VOICE
-- Third person, past tense. NEVER "I", "we", "my" or "our". "i wasnt on site
-  when welding finished" becomes "Welding was not complete at the end of the
-  inspection period."
-- Fix spelling and grammar. Never change a technical term, a proper noun, an
-  abbreviation, a station or a number.
-- Plain English. No "delve", "it is worth noting", "seamless", "robust",
-  "leverage", "furthermore", "moreover"; never open with "additionally" or
-  "overall". Used not utilized, started not commenced, before not prior to.
-- Do NOT grade the work. Never "properly", "successfully", "good", "adequate".
-  Stating that work conformed to a named plan or spec IS the inspection finding
-  and must be kept.
-- Stations as "Sta XX+XX" keeping every decimal. Times 12-hour with AM/PM.
-  Acronyms stay acronyms - BMP, never Best Management Practice.
+- You are the Resident Engineer writing your own report in active past tense.
+- When the notes use "I" for your own inspection, site walks, meetings, or directions to the contractor, keep "I" or use a direct active past-tense verb ("Visited...", "Met with...", "Reminded the contractor...", "I was not on site when welding finished."). Never refer to yourself in the third person.
+- When the notes use "we" or "our" for physical construction work by a crew, name the actual contractor or crew ("OHLA", "Payco", "HMS", "The crew").
+- Fix spelling and grammar without changing any technical term, proper noun, abbreviation, station, or number.
+- Write plain everyday field English with zero parentheses anywhere in the output. Use plain digits for counts and plain commas for clauses.
+- Keep every conformance finding stated against a plan, spec, or test verbatim. Leave out unrequested praise.
+- Stations as "Sta XX+XX" keeping every decimal. Times 12-hour with AM/PM. Acronyms stay bare acronyms.
 
 WHAT YOU MUST NOT DO
 - Do NOT invent. Every station, quantity, count, name, time and material must
@@ -2427,11 +2456,7 @@ async def ai_rewrite(request: RewriteRequest):
     Everything else keeps the original bullet rewrite, which is correct for the
     per-activity format it was written for.
     """
-    client, model_name = _get_gemini_client()
-
     try:
-        from google.genai import types as genai_types
-
         # A project whose report is numbered narrative sections gets rewritten
         # into THAT layout. The generic bullet rewrite below flattens it into a
         # list, which is the wrong document for those jobs.
@@ -2442,27 +2467,39 @@ async def ai_rewrite(request: RewriteRequest):
                 f'{s.number}. {s.title}   (when empty: "{s.empty_statement}")'
                 for s in profile.sections if s.number
             )
-            formatted = _gemini_call_with_retry(
-                client, model_name,
-                contents=[FORMAT_REWRITE_PROMPT.format(
-                    section_list=section_list, text=request.text,
-                )],
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.0,
-                    thinking_config=genai_types.ThinkingConfig(
-                        thinking_level=GEMINI_THINKING_LEVEL),
-                    max_output_tokens=16384,
-                ),
+            format_prompt = FORMAT_REWRITE_PROMPT.format(
+                section_list=section_list, text=request.text,
             )
-            written = (getattr(formatted, 'text', None) or '').strip()
-            written = re.sub(r'```[a-z]*\n?', '', written).strip()
-            if not written:
-                problem = _finish_reason_problem(formatted)
-                logger.warning(f'[rewrite] {profile.key} format rewrite empty: {problem}')
-                raise HTTPException(
-                    status_code=502,
-                    detail=problem or 'The rewrite came back empty. Your text is unchanged.',
+            written = call_narrative_endpoint(
+                system_prompt=INSPECTOR_VOICE_RULES,
+                user_prompt=format_prompt,
+                where=f'rewrite.{profile.key}',
+                temperature=0.0,
+                max_tokens=16384,
+            )
+            if written is None:
+                client, model_name = _get_gemini_client()
+                from google.genai import types as genai_types
+
+                formatted = _gemini_call_with_retry(
+                    client, model_name,
+                    contents=[format_prompt],
+                    config=genai_types.GenerateContentConfig(
+                        temperature=0.0,
+                        thinking_config=genai_types.ThinkingConfig(
+                            thinking_level=GEMINI_THINKING_LEVEL),
+                        max_output_tokens=16384,
+                    ),
                 )
+                written = (getattr(formatted, 'text', None) or '').strip()
+                written = re.sub(r'```[a-z]*\n?', '', written).strip()
+                if not written:
+                    problem = _finish_reason_problem(formatted)
+                    logger.warning(f'[rewrite] {profile.key} format rewrite empty: {problem}')
+                    raise HTTPException(
+                        status_code=502,
+                        detail=problem or 'The rewrite came back empty. Your text is unchanged.',
+                    )
             # Drop the crew and equipment sections if the model wrote them
             # anyway. It knows the format has eight sections and will fill the
             # last two from nothing, announcing "no contractor labor force was
@@ -2478,76 +2515,68 @@ async def ai_rewrite(request: RewriteRequest):
                 if not skipping:
                     kept.append(line)
             written = '\n'.join(kept).strip()
+            written = clean_inspector_prose(written, 'rewrite.format')
 
             logger.info(f'[rewrite] {profile.key} format, {len(written)} chars')
             return {'status': 'success', 'text': written}
 
-        system_prompt = """You are a SENIOR Pipeline Construction Inspector with 20+ years creating formal Daily Inspection Reports for major public works and infrastructure projects.
-
-TASK: Transform rough field notes into polished, professional inspection-report bullet points.
+        system_prompt = (
+            """You are a 20+ year Pipeline Construction Resident Engineer and Field Inspector cleaning up rough field notes into direct, factual daily report bullets in your own voice.
 
 QUALITY STANDARDS:
-1. COMPLETE SENTENCES: Every bullet is a grammatically complete, professional statement.
-2. TECHNICAL PRECISION: Use correct industry terminology (excavation, embedment, restrained joint, CLSM, thrust block, line and grade, etc.).
-3. OBJECTIVE TONE: Write in third person past tense. "Excavation was completed..." not "We did excavation..."
+1. COMPLETE SENTENCES: Every bullet is a clear, direct field statement ending with a period.
+2. TECHNICAL PRECISION: Use exact construction terminology from the notes without substituting synonyms.
+3. ACTIVE FIELD TONE: Write in active past tense. Keep "I" or direct active verbs when describing your own Resident Engineer inspections, walks, meetings, or contractor reminders; name the contractor or "The crew" when describing crew construction work.
 4. PRESERVE ALL DATA: Keep ALL stations, measurements, quantities, dates, and times exactly as provided. Never round or approximate.
-5. FORMAT: Bullet points starting with "• ", one complete thought per bullet - EXCEPT the Start Time / End Time lines described below, which come first and are not bullets.
+5. ZERO PARENTHESES: Never put parentheses anywhere in the bullets. Write counts once as plain digits and work details into the sentence with commas.
+6. CONFORMANCE FINDINGS: Keep every conformance statement ("per plan", "per spec", "per the approved submittal", "passing at 96%", "tested good", "conforms", "verified", "observed", "deficient") verbatim. Leave out bare praise.
+7. OUTPUT FORMAT: Output bullet points starting with "• " apart from the Start Time / End Time lines. Zero conversational text, preamble, or closing statement.
 
-TONE (CRITICAL):
-- The author is a Resident Engineer. Verifying that work conforms to the contract
-  documents is their job, and recording that verdict is the point of the report.
-- KEEP every conformance statement exactly as given: "per plan", "per spec",
-  "in accordance with the approved submittal", "per manufacturer data",
-  "conforms", "meets", "verified", "observed", "acceptable", "rejected",
-  "deficient", "non-conforming". These are professional findings, not opinions.
-  NEVER delete or soften them.
-- Do NOT ADD an evaluation the author did not make. If they said what was done,
-  say what was done — do not decide it was proper, adequate or successful.
-- Drop only bare praise with nothing to check it against: "great job",
-  "excellent workmanship", "nice clean weld", "things went well".
-
-BANNED WORDS AND PHRASES:
-- NEVER use: "to facilitate," "in order to," "for the purpose of," "to ensure"
-- NEVER use: "utilized" (say "used"), "commenced" (say "started"), "implement" (say "did/installed"), "establish" (say "set up")
-- NEVER add filler adjectives: "existing," "current," "designated," "respective," "aforementioned"
-- NEVER spell out acronyms the audience knows — "BMP" NOT "Best Management Practice (BMP)"
-
-OUTPUT FORMAT — CRITICAL:
-- Output bullet points starting exactly with "• ", apart from the Start Time / End Time lines. Do NOT use asterisks (*) or dashes (-).
-- Zero conversational text. No preamble or closing statement.
-- Use periods at the end of every bullet point.
-- Write entirely in past tense."""
-
-        response = _gemini_call_with_retry(
-            client,
-            model_name,
-            contents=[
-                system_prompt + '\n\n' + REWRITE_SHAPE_RULES + _vocabulary_block(),
-                f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}',
-            ],
-            config=genai_types.GenerateContentConfig(
-                # Thinking tokens are spent out of max_output_tokens. The old 4096
-                # budget could be consumed entirely by thinking, leaving no answer
-                # at all, so keep the output ceiling well clear of the thinking.
-                thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
-                max_output_tokens=16384,
-            ),
+"""
+            + INSPECTOR_VOICE_RULES
         )
 
-        raw_text = response.text
-        if not raw_text or not raw_text.strip():
-            # Empty candidate — usually MAX_TOKENS or a safety block, both of
-            # which used to surface as an AttributeError on None.
-            finish_reason = 'unknown'
-            try:
-                finish_reason = str(response.candidates[0].finish_reason)
-            except (AttributeError, IndexError, TypeError):
-                pass
-            logger.error(f'[rewrite] Model returned no text (finish_reason={finish_reason})')
-            raise HTTPException(
-                status_code=502,
-                detail=f'The AI returned an empty response (reason: {finish_reason}). Try again.',
+        full_system = system_prompt + '\n\n' + REWRITE_SHAPE_RULES + _vocabulary_block()
+        user_notes = f'RAW FIELD NOTES TO TRANSFORM:\n{request.text}'
+
+        raw_text = call_narrative_endpoint(
+            system_prompt=full_system,
+            user_prompt=user_notes,
+            where='rewrite',
+            temperature=0.1,
+            max_tokens=16384,
+        )
+        if raw_text is None:
+            client, model_name = _get_gemini_client()
+            from google.genai import types as genai_types
+
+            response = _gemini_call_with_retry(
+                client,
+                model_name,
+                contents=[full_system, user_notes],
+                config=genai_types.GenerateContentConfig(
+                    # Thinking tokens are spent out of max_output_tokens. The old 4096
+                    # budget could be consumed entirely by thinking, leaving no answer
+                    # at all, so keep the output ceiling well clear of the thinking.
+                    thinking_config=genai_types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL),
+                    max_output_tokens=16384,
+                ),
             )
+
+            raw_text = response.text
+            if not raw_text or not raw_text.strip():
+                # Empty candidate — usually MAX_TOKENS or a safety block, both of
+                # which used to surface as an AttributeError on None.
+                finish_reason = 'unknown'
+                try:
+                    finish_reason = str(response.candidates[0].finish_reason)
+                except (AttributeError, IndexError, TypeError):
+                    pass
+                logger.error(f'[rewrite] Model returned no text (finish_reason={finish_reason})')
+                raise HTTPException(
+                    status_code=502,
+                    detail=f'The AI returned an empty response (reason: {finish_reason}). Try again.',
+                )
 
         text = re.sub(r'```[a-z]*\n?', '', raw_text.strip()).strip()
         text = _strip_reasoning(text, 'chat-report')
@@ -2596,12 +2625,15 @@ ISSUE TYPES — use exactly these values for "issue_type":
 
 "ai_language" — Phrasing that reads as machine-written rather than as a field inspector: "delve into", "it is worth noting", "showcasing", "seamless", "robust", "leverage", "navigate the challenges", "plays a crucial role", "stands as a testament", "in the realm of", "furthermore", "moreover", "additionally" as a sentence opener, "overall" as a summary opener. Also flag sentences that state the obvious or add no fact.
 
-ALSO flag SPELLED-OUT ACRONYMS. Expanding an acronym the reader already knows is one of the clearest tells that a model wrote the text — an inspector writes "BMP", never "Best Management Practice (BMP)". Flag the expansion and suggest the bare acronym:
+ALSO flag SPELLED-OUT ACRONYMS and PARENTHETICAL INSERTIONS. Expanding an acronym the reader already knows or wrapping numbers, alternate names, and clauses in parentheses are clear tells that a model wrote the text:
   - "Best Management Practice (BMP)" -> "BMP"
   - "Traffic Control Plan (TCP)" -> "TCP"
   - "Request for Information (RFI)" -> "RFI"
   - "asphalt concrete (AC)" -> "AC"
-This applies to any industry acronym in the project vocabulary below, and to any acronym written as "Full Words (ABC)".
+  - "seven (7)" -> "7"
+  - "12:00 AM (midnight)" -> "12:00 AM"
+  - "Air Release Vault AV-15 (Air Vac Release Vault 15)" -> "Air Release Vault AV-15"
+Also flag third-person references to the report's author ("The inspector visited...", "The Resident Engineer noted...") and suggest a direct active verb ("Visited...", "Noted...") or "I". Do NOT flag named outside inspectors ("San Diego Electrical Inspector", "Kleinfelder inspector").
 
 "judgment" — Praise or opinion with NOTHING to check it against.
 
@@ -2620,7 +2652,7 @@ Do NOT flag: "per plan", "per spec", "per the approved TCP", "in accordance with
 
 "tense" — Anything not in simple past. A daily report records work already performed. Flag present ("crew is placing"), future ("will pour"), and present perfect ("has been completed") where simple past belongs.
 
-"person" — First person: we, I, our, us, my. Report in third person naming the actual party ("OHL", "the pipe crew").
+"person" — Contractor first-person plural ("we excavated", "our crew"). Flag "we" or "our" when describing physical crew work and suggest naming the contractor ("OHLA", "Payco", "The crew"). Do NOT flag "I" when the Resident Engineer describes their own site walk, inspection, meeting, or direction to the contractor.
 
 "corporate_vocab" — Inflated words with a plain equivalent: utilized→used, commenced→started, implemented→installed, facilitated→helped, prior to→before, in order to→to, at this time→now, subsequently→then, in the event that→if.
 
@@ -3184,24 +3216,9 @@ async def bulk_parse(request: BulkParseRequest):
             '"on track", "successful", "as expected", "went well". Say what happened, '
             'not how it went.\n\n'
 
-            "PLAIN ENGLISH — THIS APPLIES TO EVERY WORD YOU WRITE:\n"
-            "Write the way a field inspector talks, not the way a model writes. Short, "
-            "flat, factual. If a plainer word exists, it is the right word.\n"
-            "    - NO AI TONE. Banned outright: delve, it is worth noting, showcasing, "
-            "seamless, robust, leverage, navigate the challenges, plays a crucial role, "
-            "stands as a testament, in the realm of, ensure, furthermore, moreover, and "
-            "additionally or overall opening a sentence.\n"
-            "    - NO CORPORATE WORDS: utilized -> used, commenced -> started, "
-            "implemented -> installed, facilitated -> helped, prior to -> before, "
-            "in order to -> to, at this time -> now, subsequently -> then.\n"
-            "    - NO FILLER ADJECTIVES: existing, current, designated, respective, "
-            "aforementioned, various.\n"
-            "    - NO OPINION about how the work went. Say what was done, never how well.\n"
-            "    - PAST TENSE, THIRD PERSON. Never we, I, our, us. Name the party - the "
-            "company, the crew, the trade.\n"
-            "    - Do NOT spell out an acronym the reader knows: BMP, never Best "
-            "Management Practice (BMP).\n\n"
-            'ORDERING — THIS IS SPEECH, NOT WRITING:\n'
+            + INSPECTOR_VOICE_RULES + '\n\n'
+            + _vocabulary_block() + '\n\n'
+            + 'ORDERING — THIS IS SPEECH, NOT WRITING:\n'
             'The inspector talks through the day out loud and jumps around. They finish '
             'describing one location, then remember something from hours earlier. Your job '
             'is to make the finished report read in the order the day actually happened, '
@@ -3295,8 +3312,16 @@ async def bulk_parse(request: BulkParseRequest):
                 act['summary_html'] = with_opening_times(
                     str(act.get('start_time') or ''),
                     str(act.get('end_time') or ''),
-                    str(act.get('summary_html') or ''),
+                    polish_inspector_prose_if_enabled(
+                        str(act.get('summary_html') or ''), 'bulk-parse', mode='bullets'
+                    ),
                 )
+
+        cleaned_general_notes = polish_inspector_prose_if_enabled(
+            str(data.get('general_notes', '') or ''),
+            'bulk-parse.general_notes',
+            mode='prose',
+        )
 
         # An answered question must never come back a second time — the model is
         # told not to re-ask, but a dropped id would strand the user in a loop
@@ -3322,7 +3347,7 @@ async def bulk_parse(request: BulkParseRequest):
             activities=activities,
             raw_transcription=transcription,
             locations=data.get('locations', ''),
-            general_notes=data.get('general_notes', ''),
+            general_notes=cleaned_general_notes,
             questions=questions,
         )
 
@@ -3529,6 +3554,8 @@ OUTPUT JSON:
             raise HTTPException(status_code=400, detail='No media provided (file or audio_data required)')
 
         data = _clean_json(response.text)
+        if isinstance(data, dict) and data.get('summary_html'):
+            data['summary_html'] = clean_inspector_prose(str(data['summary_html']), 'update-activity')
         logger.info(f'[update-activity] Parsed response: {len(data.get("summary_html", ""))} chars summary')
         return ActivityUpdateResponse(**{k: data.get(k, v) for k, v in ActivityUpdateResponse().model_dump().items()})
 
@@ -4104,34 +4131,34 @@ async def parse_dispatch(file: UploadFile = File(...)):
 #      from the TCP plan PDF + crew/location context.
 # ============================================
 
-TC_GENERATION_PROMPT = """You are a Resident Engineer writing a daily report activity for Traffic Control setup.
+TC_GENERATION_PROMPT = (
+    """You are a Resident Engineer writing a daily report activity for Traffic Control setup.
 
-Write a professional, past-tense, factual description of the traffic control operations for this work day.
+Write a direct, active past-tense field description of the traffic control setup for this work day.
 
 INPUTS PROVIDED:
-- TC Plan PDF (if available): Contains the approved Traffic Control Plan with lane closure details, sign placements, and flagger positions
-- TC Crew: Names and start times of traffic control personnel
-- Sub TC: Subcontractor traffic control company details (if any)
-- Work Location: Streets and stations where work occurred
-- Work Description: What construction activity the TC supported
-- Schedule/Shift: The shift designation
-- Start/End Times: Overall work window
+- TC Plan PDF when available: approved Traffic Control Plan with lane closure details, sign placements, and flagger positions
+- TC Crew: names and start times of traffic control personnel
+- Sub TC: subcontractor traffic control company details when used
+- Work Location: streets and stations where work occurred
+- Work Description: what construction activity the TC supported
+- Schedule/Shift and Start/End Times
 
 WRITING RULES:
-- Past tense, factual, third person (e.g. "Traffic control was established...")
-- Mention the TCP number if visible in the document
-- Note when TC was set up (based on earliest crew start time)
-- Describe lane closures, sign placement, and flagger positions based on the TCP
-- If a sub TC company is used, mention them by name with their crew count
-- Reference specific streets/intersections from the location data
-- Keep it concise: 3-5 bullet points using plain text bullet format ("• " prefix)
-- Each bullet should be on its own line
-- Do NOT invent details not supported by the provided data
-- If no TCP document is provided, write a generic but professional TC description based on the crew and location info
+- Active past tense, plain field inspector English, zero parentheses anywhere in the bullets.
+- Mention the TCP number if visible in the document.
+- Note when TC was set up based on earliest crew start time.
+- Describe lane closures, traffic shifts, sign placement, and flagger positions based on the TCP and location data.
+- If a sub TC company was used, name them directly with their crew count.
+- Keep it concise: 3-5 bullet points using plain text bullet format ("• " prefix), one bullet per line.
+- Do NOT invent details not supported by the provided data.
 
 OUTPUT FORMAT:
-Return ONLY the activity summary text (plain text bullet points starting with •). Do NOT use HTML tags (<ul>, <li>, etc.). No JSON wrapping, no extra commentary.
+Return ONLY the activity summary text as plain text bullet points starting with •. Zero HTML tags, zero JSON wrapping, zero commentary.
+
 """
+    + INSPECTOR_VOICE_RULES
+)
 
 
 class TCGenerateRequest(BaseModel):

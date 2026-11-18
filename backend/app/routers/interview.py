@@ -36,40 +36,33 @@ from app.routers.ai import (
     _transcribe_audio,
 )
 from app.routers.ai import _strip_reasoning
+from app.services.narrative_model import polish_inspector_prose_if_enabled
 from app.services.report_profiles import get_profile, list_profiles
-from app.services.summary_format import normalise_time_lines, with_opening_times
+from app.services.summary_format import (
+    INSPECTOR_VOICE_RULES,
+    clean_inspector_prose,
+    normalise_time_lines,
+    with_opening_times,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/interview', tags=['interview'])
 
 
-# The house writing rules, in the one place the interview can reach them. These
-# match the rules enforced by the proofreader; text produced here should never
-# be something Check would immediately flag.
-HOUSE_STYLE = """HOW TO WRITE THE ANSWER:
-- Plain English. Write the way a field inspector talks, not the way a model
-  writes. Short, flat, factual.
-- Past tense, third person. Never "we", "I" or "our" - name the party.
-- No AI tone: no "delve", "it is worth noting", "seamless", "robust",
-  "leverage", "furthermore", "moreover", and never open with "additionally"
-  or "overall".
-- No corporate words: used not utilized, started not commenced, before not
-  prior to, to not in order to.
-- No filler adjectives: existing, current, designated, respective, various.
-- Do NOT grade the work. Never "good", "properly", "successful", "productive".
-  Stating that work conformed to a named plan, spec or submittal is NOT a
-  grade - it is the inspection finding, and it is expected.
-- Stations are written "Sta XX+XX", keeping every decimal exactly as spoken.
-- Times are 12-hour with AM/PM. Never 24-hour.
-- Never expand an acronym the reader knows. BMP, not Best Management Practice.
-
+# The house writing rules, shared across Guided Interview, V4 Conversation, and
+# V4 Composer. Anchored on INSPECTOR_VOICE_RULES so every path speaks in the
+# Resident Engineer's own voice with zero parentheses or third-person self-reference.
+HOUSE_STYLE = (
+    INSPECTOR_VOICE_RULES
+    + """
 WHAT YOU MUST NOT DO:
 - Do not invent a station, a quantity, a time, a name or a count. If the
   speaker did not say it, leave it out and note it in "missing".
 - Do not repeat a contractor's claim as a finding. If the recording says work
   was extra, or that a delay was someone's fault, report the underlying fact
-  (a crew stood by, a conflict was hit) and drop the argument.
+  such as a crew standing by or a utility conflict hit, and drop the argument.
 """
+)
 
 
 class AnswerRequest(BaseModel):
@@ -333,6 +326,8 @@ async def answer_question(request: AnswerRequest, _user=Depends(require_user)):
 
     if value.lower() in ('none', 'nothing', 'n/a', 'na'):
         value = ''
+    elif value and question.kind in ('text', 'narrative'):
+        value = clean_inspector_prose(value, f'interview.{question.id}')
 
     # Structured kinds routinely come back as rows with no prose. Render them so
     # the answer is visible on screen instead of leaving the box empty.
@@ -389,25 +384,13 @@ Note what that is doing:
 - The label is the work, not the question that was asked.
 
 VOICE - THIS IS THE PART THAT MATTERS MOST
-The answers were spoken quickly in the field and read like it. The report does
-not. Rewrite every one of them:
-- Third person, past tense. NEVER "I", "we", "my" or "our".
-  "i wasnt on site when welding finished" becomes "Welding was not complete at
-  the end of the inspection period."
-  "backfill didnt take place while i was on site" becomes "No backfilling was
-  observed during the inspection period."
-- Fix spelling and grammar. "there trucks" is "their trucks", "didnt" is
-  "did not". Never change a technical term, a proper noun or an abbreviation.
-- Plain English. No "delve", "it is worth noting", "seamless", "robust",
-  "leverage", "furthermore", "moreover", and never open with "additionally" or
-  "overall". No "utilized" for used, "commenced" for started, "prior to" for
-  before.
-- Do NOT grade the work. Never "properly", "successfully", "good", "adequate".
-  Stating that work conformed to a named plan, spec or submittal IS the
-  inspection finding and is expected - "installed per the approved plan" is
-  correct and must be kept.
-- Stations as "Sta XX+XX" keeping every decimal. Times 12-hour with AM/PM.
-  Acronyms stay acronyms - BMP, never Best Management Practice.
+The answers were spoken quickly in the field. Write the report in the Resident Engineer's direct field voice:
+- Active past tense. When the speaker used "I" for their own inspection, site walks, meetings, or contractor reminders, keep "I" or use a direct active verb ("Visited...", "Met with...", "Reminded the contractor...", "I was not on site when welding finished."). Never refer to yourself in the third person.
+- When the speaker used "we" or "our" for physical construction work by a crew, name the actual contractor or crew ("OHLA", "Payco", "HMS", "The crew").
+- Fix spelling and grammar — "there trucks" is "their trucks", "didnt" is "did not" — without changing any technical term, proper noun, or abbreviation.
+- Write plain everyday field English with zero parentheses anywhere in the body. Write counts once as plain digits and work details into the sentence with commas.
+- Keep every conformance finding stated against a named plan, spec, or submittal verbatim. Leave out bare praise.
+- Stations as "Sta XX+XX" keeping every decimal. Times 12-hour with AM/PM. Acronyms stay bare acronyms.
 
 WHAT YOU MUST NOT DO
 - Do NOT invent. Every station, quantity, count, name, time and material must
@@ -599,8 +582,8 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
                 'FORMAT FOR THIS SECTION: Write a complete Morena Conveyance North location '
                 'activity narrative from the answers below. Open with "Start Time: <time>" and '
                 '"End Time: <time>" on their own lines when shift times are provided. Then write '
-                'the narrative in chronological order as complete, formal third-person past-tense '
-                'sentences (one bullet "• ..." per distinct operation or observation): '
+                'the narrative in chronological order as direct, active past-tense field inspector '
+                'sentences with zero parentheses (one bullet "• ..." per distinct operation or observation): '
                 '(1) the traffic control that was set, street/area, direction of travel, and '
                 'lane closures if reported; (2) the work performed in complete sentences with '
                 'every station, measurement, quantity, material, and trade/machine from the '
@@ -637,10 +620,10 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
                     'has_times': False,
                 })
                 blocks.append(
-                    'SECTION general_notes — "General Notes (Day-Level Observations)"\n'
-                    'FORMAT FOR THIS SECTION: Write complete, formal third-person past-tense '
-                    'sentences covering the day-level extra work/T&M, visitors, inspections, '
-                    'deliveries, or shift observations below.\n'
+                    'SECTION general_notes — "General Notes"\n'
+                    'FORMAT FOR THIS SECTION: Write direct, active past-tense field inspector '
+                    'sentences with zero parentheses covering the day-level extra work/T&M, '
+                    'visitors, inspections, deliveries, or shift observations below.\n'
                     + '\n'.join(day_lines)
                 )
     else:
@@ -722,7 +705,8 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
                     'FORMAT FOR THIS SECTION: Write a complete Morena Pipelines Section 1 '
                     'narrative for this additional activity, opening with "Start Time: <time>" '
                     'and "End Time: <time>" when shift times are provided, followed by '
-                    'labelled sub-topics in complete third-person past-tense sentences.\n'
+                    'labelled sub-topics in direct, active past-tense field inspector sentences '
+                    'with zero parentheses.\n'
                     + '\n'.join(extra_lines)
                 )
                 if _clean_val(answers.get(f'__more__:additional_activity:{p}', '')).lower() != 'yes':
@@ -747,6 +731,8 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
 
     prompt = (
         COMPOSE_PROMPT
+        + '\n\n'
+        + INSPECTOR_VOICE_RULES
         + f'\n\nREPORT DATE: {request.report_date}\n\n'
         + 'EVERY ANSWER GIVEN TODAY (for routing — never state a fact twice):\n'
         + everything
@@ -779,8 +765,11 @@ async def compose_report(request: ComposeRequest, _user=Depends(require_user)):
     # model can still write its reasoning INTO a body field - that is exactly
     # how "Let's check Section 5" reached a finished report.
     by_id = {
-        str(item.get('id', '')): normalise_time_lines(_strip_reasoning(
-            str(item.get('body', '') or '').strip(), 'compose'))
+        str(item.get('id', '')): normalise_time_lines(polish_inspector_prose_if_enabled(
+            _strip_reasoning(str(item.get('body', '') or '').strip(), 'compose'),
+            f"compose.{item.get('id', '')}",
+            mode='prose',
+        ))
         for item in (data.get('sections') or []) if isinstance(item, dict)
     }
 

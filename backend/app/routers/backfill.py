@@ -53,6 +53,7 @@ from app.routers.ai import (
     _gemini_call_with_retry,
     _get_gemini_client,
 )
+from app.services.summary_format import INSPECTOR_VOICE_RULES, clean_inspector_prose
 
 logger = logging.getLogger(__name__)
 from app.core.auth import require_user
@@ -262,8 +263,10 @@ HARD RULES:
 - Do not invent a name, a number, an hour, a station, or a quantity.
 - Keep [illegible] verbatim wherever it appears — do not substitute a plausible value.
 - Times are 12-hour with AM/PM. Never 24-hour.
-- Bullets use the "• " character. Plain text — no HTML tags.
+- Bullets use the "• " character. Plain text — no HTML tags and zero parentheses in summary or general_notes.
 - Everything past tense.
+
+""" + INSPECTOR_VOICE_RULES + """
 
 {sub_email_block}
 
@@ -1090,7 +1093,7 @@ def _build_report(
             "id": str(uuid.uuid4()),
             "work_area": act.get("work_area", ""),
             "stations": act.get("stations", ""),
-            "summary": summary,
+            "summary": clean_inspector_prose(summary, "backfill.summary"),
             "manpower": act_manpower,
             "equipment": act_equipment,
             "extra_work_manpower": [],
@@ -1115,7 +1118,7 @@ def _build_report(
 
     notes_parts: list[str] = []
     if parsed.get("general_notes"):
-        notes_parts.append(parsed["general_notes"])
+        notes_parts.append(clean_inspector_prose(str(parsed["general_notes"]), "backfill.general_notes"))
     # The emails themselves are NOT pasted in here any more. They now go through
     # pass 2 and come back as activities in the inspector's voice; dumping the
     # transcription into the notes as well would put the subcontractor's own

@@ -37,6 +37,16 @@ GEMINI_MODEL_NAME: str = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 # How hard the model thinks on every call. One of MINIMAL / LOW / MEDIUM / HIGH.
 # Applied at every call site so no endpoint silently falls back to a model default.
 GEMINI_THINKING_LEVEL: str = os.environ.get("GEMINI_THINKING_LEVEL", "HIGH")
+
+# Optional OpenAI-compatible narrative model endpoint for Resident Engineer prose
+# (e.g., local Ollama `http://127.0.0.1:11434/v1` with a fine-tuned Qwen/Llama GGUF,
+# Groq free tier `https://api.groq.com/openai/v1`, or Fireworks serverless LoRA).
+# When unset or unreachable, narrative generation automatically falls back to Gemini.
+NARRATIVE_API_BASE: str = os.environ.get("NARRATIVE_API_BASE", "").strip()
+NARRATIVE_API_KEY: str = os.environ.get("NARRATIVE_API_KEY", "").strip()
+NARRATIVE_MODEL: str = os.environ.get("NARRATIVE_MODEL", "").strip()
+NARRATIVE_SECOND_PASS: bool = os.environ.get("NARRATIVE_SECOND_PASS", "true").lower() in ("1", "true", "yes")
+
 SECRET_KEY: str = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 DEBUG: bool = os.environ.get("DEBUG", "false").lower() == "true"
 
@@ -44,3 +54,11 @@ if GEMINI_API_KEY:
     logger.info("GEMINI_API_KEY loaded (%s...%s)", GEMINI_API_KEY[:4], GEMINI_API_KEY[-4:])
 else:
     logger.warning("GEMINI_API_KEY not set — AI features will be unavailable")
+
+if NARRATIVE_API_BASE and NARRATIVE_MODEL:
+    logger.info(
+        "NARRATIVE_MODEL configured: model=%s base=%s second_pass=%s",
+        NARRATIVE_MODEL,
+        NARRATIVE_API_BASE,
+        NARRATIVE_SECOND_PASS,
+    )

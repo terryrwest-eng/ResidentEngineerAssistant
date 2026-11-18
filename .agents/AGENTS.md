@@ -21,3 +21,7 @@
 - `python3 backend/tests/*.py` — offline verification scripts (Gemini and
   Open-Meteo are mocked, so they cost nothing). See `backend/tests/README.md`.
 - `cd frontend && npm run build` must finish with zero TypeScript errors.
+
+## Resident Engineer Narrative Voice (Mandatory)
+- Whenever writing, updating, reviewing, or fixing daily reports — or editing any AI prompt or narrative post-processor in `backend/app/` — follow the global `daily-report-voice` skill (`C:\Users\Terry\.gemini\config\skills\daily-report-voice\SKILL.md` / `C:\Users\Terry\.claude\skills\daily-report-voice\SKILL.md`) and `backend/app/services/summary_format.py` (`INSPECTOR_VOICE_RULES` and `clean_inspector_prose`).
+- Never put parentheses `(` or `)` inside prompt instructions (`Anti-Priming Rule`), and run `python backend/tests/test_inspector_voice.py` after any narrative change.

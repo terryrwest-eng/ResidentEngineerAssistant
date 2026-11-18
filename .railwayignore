@@ -8,8 +8,12 @@ backend/venv
 backend/__pycache__
 backend/data
 android
+frontend/android
 chrome-extension
 GEMINI.md
 .env
+.claude
+training_data
+app_data_backup_*
 \[EXTERNAL\]*
 do_schedule_extracted.png
