@@ -127,6 +127,31 @@ check(
     repr(c4),
 )
 
+c5 = summary_format.clean_inspector_prose(
+    "•\u200b **Traffic Control:**\u202fFurthermore, OHLA meticulously leveraged a vac truck — pot-holing SDG&E & AT&T conduits ~300 feet north; the crew promptly and accurately checked each and every utility.",
+    "unit",
+)
+check(
+    "strips zero-width/NBSP, bold-colon bullet, opener cliche, filler adverb, em-dash, semicolon, ~300, spaced &, and doublets while keeping SDG&E and AT&T",
+    c5 == (
+        "• OHLA used a vac truck, pot-holing SDG&E and AT&T conduits about 300 feet north. "
+        "The crew on time checked every utility."
+    ),
+    repr(c5),
+)
+
+c6 = summary_format.clean_inspector_prose(
+    "★ Terry West’s notebook records that OHLA excavated into bedrock with a safety harness → set pipe elevation & landscape restoration at 100 percent passing ✅.",
+    "unit",
+)
+check(
+    "converts dingbat bullet, smart apostrophe, notebook meta-talk, arrow, emoji while keeping construction literals bedrock, safety harness, elevation, landscape, 100 percent",
+    c6 == (
+        "• OHLA excavated into bedrock with a safety harness to set pipe elevation and landscape restoration at 100 percent passing."
+    ),
+    repr(c6),
+)
+
 # ── 3. End-to-End Endpoint Checks (Mocked Gemini) ───────────────────────────
 class FakeFile:
     name = "files/f1"
